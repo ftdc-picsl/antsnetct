@@ -4,7 +4,9 @@ import os
 import sys
 
 import argparse
-from analysis import longitudinal_analysis, cross_sectional_analysis
+from cross_sectional_pipeline import cross_sectional_analysis
+from longitudinal_pipeline import longitudinal_analysis
+
 
 def main():
     parser = argparse.ArgumentParser(description='ANTsPyNet Cortical thickness')
