@@ -6,6 +6,11 @@ __verbose__ = False
 
 # Sets the verbosity of subcommand output
 def set_verbose(verbose):
+    """ Set the verbosity level for system commands
+
+    Args:
+        verbose (bool): If True, enable verbose mode. The command to be run will be printed along with its terminal output.
+    """
     global __verbose__
     __verbose__ = verbose
 
@@ -27,6 +32,20 @@ class PipelineError(Exception):
 # Raises PipelineError if the command returns a non-zero exit code
 #
 def run_command(cmd):
+    """Runs a command and returns the output
+
+    Verbosity is controlled by the set_verbose(verbose) function.
+
+    Args:
+        cmd (list): A list of command line arguments, as used in subprocess.run
+
+    Raises:
+        PipelineError: If the command returns a non-zero exit code. If an error is raised, a stack trace is printed. The full
+        command stdout and stderr are also printed, unless verbose is set (in which case they are already printed).
+
+    Returns:
+        dict: a dictionary with keys 'cmd_str', 'stderr', 'stdout'.
+    """
     # Just to be clear we use the global var set by the main function
     global __verbose__
 
