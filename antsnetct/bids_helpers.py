@@ -1,12 +1,191 @@
+import copy
 import json
 import os
 import re
+import shutil
+
+
+class BIDSImage:
+    """
+    Represents a BIDS image file, including paths, metadata, and utilities for handling BIDS data.
+
+    Attributes:
+        path (str): Absolute path to the image file.
+        ds_path (str): Absolute path to the dataset containing the file.
+        ds_name (str): Name of the dataset, as specified in dataset_description.json.
+        rel_path (str): Relative path from the dataset to the file.
+        sidecar_path (str): Absolute path to the associated .json sidecar file.
+        metadata (dict): JSON metadata loaded from the sidecar file.
+    """
+
+    def __init__(self, dataset, rel_path):
+        """
+        Initializes the BIDSImage object.
+
+        Parameters:
+        ----------
+        dataset (str):
+            The root directory of the BIDS dataset.
+        rel_path (str):
+            The relative path from the dataset to the image file.
+        """
+        self.ds_path = os.path.abspath(dataset)
+        self.rel_path = rel_path
+        self.path = os.path.join(self.ds_path, self.rel_path)
+        self.ds_name = self._load_dataset_name()
+        self.sidecar_path = get_image_sidecar(self.path)
+        self.metadata = {}
+
+        if not os.path.exists(self.path):
+            raise FileNotFoundError(f"{self.path} does not exist")
+
+        self._load_metadata()
+
+    def _load_dataset_name(self):
+        """Loads the dataset name from dataset_description.json."""
+        description_file = os.path.join(self.ds_path, 'dataset_description.json')
+        if not os.path.exists(description_file):
+            raise FileNotFoundError("dataset_description.json not found in dataset path")
+
+        with open(description_file, 'r') as f:
+            description = json.load(f)
+
+        if 'Name' not in description:
+            raise ValueError("Dataset name ('Name') not found in dataset_description.json")
+
+        return description['Name']
+
+    def _load_metadata(self):
+        """Loads metadata from the sidecar JSON file, if present."""
+        if os.path.exists(self.sidecar_path):
+            with open(self.sidecar_path, 'r') as f:
+                self.metadata = json.load(f)
+        else:
+            self.metadata = None
+
+    def copy_image(self, destination_ds):
+        """
+        Copies the image and its sidecar file to the same relative path in a new dataset.
+
+        Parameters:
+        ----------
+        destination_ds (str):
+            The root directory of the destination dataset.
+
+        Returns:
+        --------
+        BIDSImage: A new BIDSImage object representing the copied image.
+        """
+        dest_ds_path = os.path.abspath(destination_ds)
+        dest_file_path = os.path.join(dest_ds_path, self.rel_path)
+        dest_sidecar_path = get_image_sidecar(dest_file_path)
+
+        os.makedirs(os.path.dirname(dest_file_path), exist_ok=True)
+        shutil.copy(self.path, dest_file_path)
+
+        if os.path.exists(self.sidecar_path):
+            shutil.copy(self.sidecar_path, dest_sidecar_path)
+
+        return BIDSImage(dest_ds_path, self.rel_path)
+
+
+    def get_metadata(self):
+        """
+        Returns a copy of the metadata dictionary.
+
+        Returns:
+            dict: A copy of the image's metadata.
+        """
+        return copy.deepcopy(self.metadata)
+
+    def set_metadata(self, metadata):
+        """
+        Replaces the metadata with a new dictionary. The changes are written immediately to the sidecar file.
+
+        Parameters:
+            metadata (dict): A dictionary of metadata.
+        """
+        self.metadata = copy.deepcopy(metadata)
+        with open(self.sidecar_file, 'w') as f:
+            json.dump(self.metadata, f, indent=4)
+
+    # Accessor methods with simple docstrings for brevity
+    def get_path(self):
+        """Returns the absolute path to the image file."""
+        return self.path
+
+    def get_ds_path(self):
+        """Returns the absolute path to the dataset."""
+        return self.ds_path
+
+    def get_ds_name(self):
+        """Returns the name of the dataset."""
+        return self.ds_name
+
+    def get_rel_path(self):
+        """Returns the relative path from the dataset to the image file."""
+        return self.rel_path
+
+    def get_uri(self, relative=False):
+        """Returns the BIDS URI for the image file.
+
+        Parameters:
+        ----------
+        relative (bool): If True, returns the relative URI; otherwise, returns the absolute URI.
+        """
+
+        if relative:
+            return f"bids::{self.rel_path}"
+        else:
+            return f"bids:{self.ds_name}:{self.path}"
+
+    def get_sidecar_file(self):
+        """Returns the path to the sidecar file."""
+        return self.sidecar_file
+
+def image_to_bids(src_image, dataset_dir, dest_rel_path, metadata, overwrite=False):
+    """Create a new bids image from an existing source image, copying it to the dataset at the specified path.
+
+    Parameters:
+    -----------
+    src_image: str
+        Path to the source image file.
+    dataset_dir: str
+        Path to the dataset directory.
+    dest_rel_path: str
+        Relative path from the dataset to the image to be created.
+    metadata: dict
+        Metadata to be written to the sidecar file.
+    overwrite: bool
+        If True, overwrite the destination file if it already exists. If False, raise an exception if the file already exists.
+
+    Returns:
+    --------
+    BIDSImage: BIDSImage object representing the new image
+    """
+
+    dest_file_path = os.path.join(dataset_dir, dest_rel_path)
+    dest_sidecar_path = get_image_sidecar(dest_file_path)
+
+    if os.path.exists(dest_file_path) and not overwrite:
+        raise FileExistsError(f"{dest_file_path} already exists")
+
+    os.makedirs(os.path.dirname(dest_file_path), exist_ok=True)
+    shutil.copy(src_image, dest_file_path)
+
+    with open(dest_sidecar_path, 'w') as f:
+        json.dump(metadata, f, indent=4)
+
+    return BIDSImage(dataset_dir, dest_rel_path)
 
 #
 # Create or update a BIDS output dataset
 #
 def update_output_dataset(output_dataset_dir, output_dataset_name):
     """Create or update a BIDS output dataset
+
+    This is used to make or update an output dataset. If the dataset exists, its GeneratedBy field is updated to include
+    this pipeline, if needed.
 
     Parameters:
     -----------
@@ -56,8 +235,6 @@ def update_output_dataset(output_dataset_dir, output_dataset_name):
 # Container type is assumed to be "docker" unless the variable SINGULARITY_CONTAINER
 # is defined
 def get_generated_by(existing_generated_by=None):
-
-    import copy
 
     generated_by = []
 
@@ -154,16 +331,36 @@ def find_brain_mask(mask_dataset_directory, input_image_uri):
     return {'mask_image': None, 'mask_uri': None}
 
 
-# Search a segmentation dataset for segmentation + posteriors produced from an input image
-#
-# Looks for antsct segmentation matching '*seg-antsct*_dseg.nii.gz'
-#
-# Returns a dict with keys segmentation_image, segmentation_uri, posteriors, posterior_uris
-#
-# Posteriors are a list ordered by CSF, GM, WM, Deep GM, Brainstem, Cerebellum
-#
+
 def find_segmentation_images(seg_dataset_directory, input_image_uri):
-    # Load mask dataset_description.json
+    """Search a segmentation dataset for segmentation + posteriors produced from an input image
+
+    Looks for segmentation images containing the input image in the 'Sources' field of the sidecar JSON file. The segmentation
+    must be a dseg, with classes 1-6 corresponding to CSF, GM, WM, Deep GM, Brainstem, Cerebellum respectively.
+
+     Returns a dict with keys segmentation_image, segmentation_uri, posteriors, posterior_uris
+
+
+    Parameters:
+    -----------
+    seg_dataset_directory: str
+        Path to the segmentation dataset directory
+    input_image_uri: str
+        BIDS URI for the input image. This is used to search for the segmentation and posteriors that used this as a source.
+
+    Returns:
+    --------
+    dict: A dictionary with keys:
+        segmentation_image: BIDSImage
+            The segmentation image, if a suitable one is found, or None.
+        posterior_images: list of BIDSImage
+            Images representing the classes in order: CSF, GM, WM, Deep GM, Brainstem, Cerebellum.
+
+
+
+     Posteriors are a list ordered by CSF, GM, WM, Deep GM, Brainstem, Cerebellum
+    """
+
     with open(os.path.join(seg_dataset_directory, 'dataset_description.json')) as f:
         dataset_description = json.load(f)
         seg_dataset_name = dataset_description['Name']
@@ -287,17 +484,8 @@ def resolve_uri(dataset_path, file_uri):
     #  capture the dataset name (if present) and the rest of the path
     match = re.match(r'bids:([^:]*):(.+)$', file_uri)
     if match:
-        dataset_name = match.group(1) or None
-        full_path = match.group(2)
-
-        # Extract directory and filename
-        image_directory, image_filename = os.path.split(full_path)
-
-        # If the dataset name is not present, assume it's the same as the input dataset
-        if dataset_name is None:
-            dataset_name = dataset_path
-
-        return os.path.join(dataset_name, image_directory, image_filename)
+        rel_path = match.group(2)
+        return os.path.join(dataset_path, rel_path)
     else:
         raise ValueError("URI does not follow expected format.")
 
@@ -310,7 +498,7 @@ def get_uri(dataset_dir, dataset_name, file_path):
     dataset_dir: str
         Path to the dataset directory
     dataset_name: str
-        Name of the dataset
+        Name of the dataset as specified in the dataset_description.json
     file_path: str
         Path to the file, either absolute or relative to the dataset directory
 
@@ -324,3 +512,48 @@ def get_uri(dataset_dir, dataset_name, file_path):
     else:
         return f"bids:{dataset_name}:{file_path}"
 
+
+def get_uri(dataset_dir, file_path):
+    """Get a BIDS URI for a file
+
+    Parameters:
+    -----------
+    dataset_dir: str
+        Path to the dataset directory
+    file_path: str
+        Path to the file, either absolute or relative to the dataset directory
+
+    Returns:
+    --------
+    str: BIDS URI for the file
+    """
+
+    # read dataset name from dataset_description.json
+    with open(os.path.join(dataset_dir, 'dataset_description.json')) as f:
+        dataset_description = json.load(f)
+        dataset_name = dataset_description['Name']
+
+    if file_path.startswith(dataset_dir):
+        return f"bids:{dataset_name}:{os.path.relpath(file_path, dataset_dir)}"
+    else:
+        return f"bids:{dataset_name}:{file_path}"
+
+def get_image_sidecar(image_file):
+    """Get the sidecar file for a NIFTI image
+
+    Parameters:
+    ----------
+    image_file (str):
+        The path to the image file.
+
+    Returns:
+    -------
+    str: The sidecar file for the image.
+    """
+
+    if image_file.endswith('.nii.gz'):
+        return image_file[:-7] + '.json'
+    elif image_file.endswith('.nii'):
+        return image_file[:-4] + '.json'
+    else:
+        raise ValueError(f"Image file {image_file} does not end in .nii or .nii.gz")

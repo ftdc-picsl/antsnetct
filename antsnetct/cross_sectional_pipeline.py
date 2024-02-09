@@ -1,5 +1,6 @@
 import ants_helpers
 import bids_helpers
+import preprocessing
 
 import argparse
 import json
@@ -45,6 +46,11 @@ def cross_sectional_analysis(args):
     If a brain mask dataset or segmentation dataset are specified at run time, there must be masks or segmentations for the
     input data, or an error will be raised. This is to prevent inconsistent processing.
 
+    --- Preprocessing ---
+
+    All input images are conformed to LPI orientation with c3d.
+
+
     --- Brain masking ---
 
     The script will check for a brain mask from the brain mask dataset, if defined. If not, a brain mask may be found in the
@@ -59,11 +65,16 @@ def cross_sectional_analysis(args):
 
     If no segmentation is available, priors are generated with anyspynet and used for segmentation and bias correction.
 
+    Existing segmentations should have the entity "seg-antsnetct" in the filename, and should represent the six classes
+    "CSF", "WM", "SGM", "BS", "CBM" in the order 1-6. If a segmentation is generated, it will be saved with these labels.
 
-    --- Atlas registration ---
+    Posteriors from an existing segmentation may be used as priors for Atropos. Posteriors should have the entity
+    'label-<structure>' where structure includes CSF, CGM, WM, SGM, BS, CBM.
 
-    The bias-corrected image is registered to the atlas. The transforms are saved along with template information. The
-    template should follow templateflow conventions, and be named 'tpl-atlasName[_otherEntities]_desc-brain_T1w.nii.gz`. The
+    --- Template registration ---
+
+    The bias-corrected image is registered to the template. The transforms are saved along with template information. The
+    template should follow templateflow conventions, and be named 'tpl-templateName[_otherEntities]_desc-brain_T1w.nii.gz`. The
     template should also define a sidecar file `template_description.json` that provides an "Identifier" for the template.
     If there are multiple template resolutions, there should be a key "res", detailing the shape and spacing of the template.
     See templateflow's "tpl-MNI152NLin2009cAsym" for an example.
@@ -71,15 +82,17 @@ def cross_sectional_analysis(args):
 
     --- Processing steps ---
 
-    1. Brain masking. If a brain mask is available, it is used. Otherwise, one is generated with anyspynet.
+    1. Preprocessing. The T1w image is conformed to LPI orientation and optionally trimmed to remove neck coverage.
 
-    2. Segmentation and bias correction. If a segmentation is available, it is used according to the user instructions.
+    2. Brain masking. If a brain mask is available, it is used. Otherwise, one is generated with anyspynet.
+
+    3. Segmentation and bias correction. If a segmentation is available, it is used according to the user instructions.
     Otherwise, one is generated with anyspynet. Segmentation may be refined with Atropos. The T1w image is simultaneously
     segmented and bias-corrected.
 
-    3. Cortical thickness estimation. If the number of iterations is greater than 0, cortical thickness is estimated.
+    4. Cortical thickness estimation. If the number of iterations is greater than 0, cortical thickness is estimated.
 
-    4. Atlas registration. If an atlas is defined, the T1w image is registered to the atlas.
+    5. Atlas registration. If an atlas is defined, the T1w image is registered to the atlas.
 
     ''')
 
@@ -90,7 +103,7 @@ def cross_sectional_analysis(args):
     required_parser.add_argument("--session", help="Session to process", type=str)
     required_parser.add_argument("--output-dataset", help="Output BIDS dataset dir", type=str, required_parser=True)
 
-    optional_parser = parser.add_argument_group('Optional arguments')
+    optional_parser = parser.add_argument_group('General optional arguments')
     optional_parser.add_argument("-h", "--help", action="help", help="show this help message and exit")
     optional_parser.add_argument("--t1w-image-suffix", help="Use a specific T1w head image suffix. Eg, "
                                  "'acq-mprage_T1w.nii.gz' selects "
@@ -100,12 +113,19 @@ def cross_sectional_analysis(args):
                                  "'never', 'on_error', or 'always'.", type=str, default='on_error')
     optional_parser.add_argument("--verbose", help="Verbose output", action='store_true')
 
-    atlas_parser = parser.add_argument_group('Template arguments')
-    atlas_parser.add_argument("--template", help="Template to use for registration, or 'none' to disable this step", type=str,
+    neck_trim_parser = parser.add_argument_group('Neck trimming arguments')
+    neck_trim_parser.add_argument("--no-neck-trim", help="Disable neck trimming from the T1w image", target="do_neck_trim",
+                                  action='store_false')
+    neck_trim_parser.add_argument("--neck-trim-pad", help="Padding in mm to add to the trimmed image", type=int, default=10)
+
+    template_parser = parser.add_argument_group('Template arguments')
+    template_parser.add_argument("--template", help="Template to use for registration, or 'none' to disable this step", type=str,
                               default='MNI152NLin2009cAsym')
-    atlas_parser.add_argument("--template-res", help="Resolution of the template, eg 01, 02, etc. Note this is a templateflow "
-                              "index and not a physical spacing", type=str, default='01')
-    atlas_parser.add_argument("--template-reg-quick", help="Do quick registration to the template", action='store_true')
+    template_parser.add_argument("--template-res", help="Resolution of the template, eg 01, 02, etc. Note this is a "
+                                 "templateflow index and not a physical spacing", type=str, default='01')
+    template_parser.add_argument("--template-reg-quick", help="Do quick registration to the template", action='store_true')
+    template_parser.add_argument("--templateflow-home", help="Directory where templateflow templates are stored",
+                                 default=os.environ.get('TEMPLATEFLOW_HOME', None))
 
     brain_mask_parser = parser.add_argument_group('Brain mask arguments')
     brain_mask_parser.add_argument("--brain-mask-dataset", help="Dataset containing brain masks. Masks from here will be used "
@@ -170,12 +190,12 @@ def cross_sectional_analysis(args):
         args.t1w_image_suffix = 'T1w.nii.gz'
 
     # Returns a list of T1w images and URIs
-    bids_input_t1w = bids_helpers.find_images(input_dataset, args.participant, args.session, 'anat', args.t1w_image_suffix)
+    input_t1w_bids = bids_helpers.find_images(input_dataset, args.participant, args.session, 'anat', args.t1w_image_suffix)
 
     # Create the output dataset and add this container to the GeneratedBy, if needed
     bids_helpers.update_output_dataset(output_dataset, input_dataset_description['Name'] + '_antsnetct')
 
-    for bids_t1w in bids_input_t1w:
+    for t1w_bids in input_t1w_bids:
         print("Processing T1w image: " + bids_t1w['image'])
 
         match = re.match('(.*)_T1w\.nii\.gz$', bids_t1w['image'])
@@ -183,13 +203,17 @@ def cross_sectional_analysis(args):
         t1w_source_entities = match.group(1)
 
         # Outputs we will define
-        output_brain_mask_image = os.path.join(output_dataset, 'sub-' + args.participant, 'ses-' + args.session, 'anat',
-                                                t1w_source_entities + '_desc-brain_mask.nii.gz')
+        output_dataset_name = bids_helpers.get_dataset_name(output_dataset)
 
-        output_anat_prefix = os.path.join(output_dataset, 'sub-' + args.participant, 'ses-' + args.session, 'anat',
+        # Relative prefix for the output dataset
+        output_anat_prefix = os.path.join('sub-' + args.participant, 'ses-' + args.session, 'anat',
                                           t1w_source_entities)
 
-        output_dataset_name = bids_helpers.get_dataset_name(output_dataset)
+        output_preproc_t1w_image = output_anat_prefix + '_desc-preproc_T1w.nii.gz'
+
+        output_brain_mask_image = output_anat_prefix + '_desc-brain_mask.nii.gz'
+
+        output_masked_t1w_image = output_anat_prefix + '_desc-brain_T1w.nii.gz'
 
         output_segmentation_image = output_anat_prefix + '_seg-antsnetct_dseg.nii.gz'
         output_segmentation_label_def = output_anat_prefix + '_seg-antsnetct_dseg.tsv'
@@ -200,7 +224,20 @@ def cross_sectional_analysis(args):
         with tempfile.TemporaryDirectory(suffix=f"antsnetct_{t1w_source_entities}.tmpdir") as work_dir_tmpdir:
             working_dir = work_dir_tmpdir.name
 
-            # First find a brain mask using the first available in order of preference:
+            # Preprocessing
+            # Conform to LPI orientation
+            preproc_t1w = preprocessing.conform_image_orientation(bids_t1w['image'], 'LPI', working_dir)
+
+            if args.do_neck_trim:
+                # Trim the neck
+                preproc_t1w = preprocessing.trim_neck(preproc_t1w, working_dir, pad_mm=args.neck_trim_pad)
+
+            # Copy the preprocessed T1w to the output
+            preproc_t1w_bids = bids_helpers.image_to_bids(preproc_t1w, output_dataset, output_preproc_t1w_image,
+                                                              metadata={'Sources': [bids_t1w['uri']], 'SkullStripped': False})
+
+
+            # Find a brain mask using the first available in order of preference:
             # 1. Brain mask dataset
             # 2. Brain mask in input dataset
             # 3. Implicit mask from prior segmentation
@@ -218,7 +255,7 @@ def cross_sectional_analysis(args):
             # Segmentation is either pre-defined, or generated with antspynet. Either an external segmentation or an
             # antspynet segmentation can be used as priors for iterative segmentation and bias correction with N4 and Atropos.
             # If Atropos is not used, the T1w is bias-corrected separately with N4.
-            seg_n4 = segment_and_bias_correct(bids_t1w['image'], brain_mask_image, args.segmentation_dataset,
+            seg_n4 = segment_and_bias_correct(bids_t1w['image'], brain_mask_image, working_dir, args.segmentation_dataset,
                                               args.segmentation_method)
 
             # Copy segmentation to output
@@ -233,6 +270,14 @@ def cross_sectional_analysis(args):
             #5  Brain Stem  BS
             #6  Cerebellum  CBM
 
+            output_segmentation_sidecar = output_segmentation_image.replace('.nii.gz', '.json')
+
+            output_segmentation_sidecar_json = {'Sources': [bids_t1w['uri'], brain_mask_uri],
+                                                'Manual': False}
+
+            with open(output_segmentation_sidecar, 'w') as sidecar_out:
+                json.dump(output_segmentation_sidecar_json, sidecar_out, indent=2, sort_keys=True)
+
             with open(output_segmentation_label_def, 'w') as label_def_out:
                 label_def_out.write('\t'.join(['index', 'name', 'abbreviation']) + '\n')
                 label_def_out.write('\t'.join(['0', 'Background', 'BG']) + '\n')
@@ -246,6 +291,34 @@ def cross_sectional_analysis(args):
             # Copy posteriors to output
             for idx in range(6):
                 shutil.copy(seg_n4['posteriors'][idx], output_segmentation_posteriors[idx])
+                output_posterior_sidecar = output_segmentation_posteriors[idx].replace('.nii.gz', '.json')
+                with open(output_posterior_sidecar, 'w') as sidecar_out:
+                    json.dump(output_segmentation_sidecar_json, sidecar_out, indent=2, sort_keys=True)
+
+            # If thickness is requested, calculate it
+            if args.thickness_iterations > 0:
+                thickness = ants_helpers.cortical_thickness(seg_n4['segmentation_image'], working_dir,
+                                                            segmentation_posteriors=seg_n4['posteriors'],
+                                                            kk_its=args.thickness_iterations)
+                shutil.copy(thickness, output_thickness_image)
+                output_thickness_sidecar = output_thickness_image.replace('.nii.gz', '.json')
+                thickness_sources = [seg_n4['segmentation_uri']].extend(seg_n4['posterior_uris'])
+                output_thickness_sidecar_json = {'Sources': thickness_sources}
+                with open(output_thickness_sidecar, 'w') as sidecar_out:
+                    json.dump(output_thickness_sidecar_json, sidecar_out, indent=2, sort_keys=True)
+
+            # Write a brain-masked T1w image to the output - this will also be used for template registration
+            masked_t1w_image = ants_helpers.apply_mask(bids_t1w['image'], brain_mask_image, working_dir)
+
+            shutil.copy(masked_t1w_image, output_masked_t1w_image)
+            output_masked_t1w_sidecar = output_masked_t1w_image.replace('.nii.gz', '.json')
+            output_masked_t1w_sidecar_json = {'SkullStripped': True, 'Sources': [bids_t1w['uri'], brain_mask_uri]}
+            with open(output_masked_t1w_sidecar, 'w') as sidecar_out:
+                json.dump(output_masked_t1w_sidecar_json, sidecar_out, indent=2, sort_keys=True)
+
+            # If an atlas is defined, register the T1w image to the atlas
+            if args.template is not None:
+                template_reg = ants_helpers.anatomical_template_registration(template_image, brain_image, work_dir)
 
 
 

@@ -1,3 +1,4 @@
+import os
 import subprocess
 import traceback
 
@@ -71,3 +72,31 @@ def run_command(cmd):
             raise PipelineError(f"Error running command: {' '.join(cmd)}")
 
     return { 'cmd_str': ' '.join(cmd), 'stderr': result.stderr, 'stdout': result.stdout }
+
+def get_nifti_file_prefix(image_file):
+    """Get the prefix of a NIFTI image, without directory or extensions
+
+    Will remove .nii or .nii.gz extensions
+
+    Parameters:
+    ----------
+    image_file (str):
+        The image file.
+
+    Returns:
+    -------
+    str: The prefix of the image file
+
+    Example:
+    --------
+    get_image_file_prefix('/path/to/my_image.nii.gz') returns 'my_image'
+
+    """
+
+    if image_file.endswith('.nii.gz'):
+        return os.path.basename(image_file)[:-7]
+    elif image_file.endswith('.nii'):
+        return os.path.basename(image_file)[:-4]
+    else:
+        raise ValueError(f"Image file {image_file} does not end in .nii or .nii.gz")
+
