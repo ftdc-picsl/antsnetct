@@ -1,10 +1,10 @@
 import ants
 import antspynet
-
+import numpy as np
 import os
 import shutil
 
-from system_helpers import run_command
+from system_helpers import run_command, get_nifti_file_prefix
 
 def apply_mask(image, mask, work_dir):
     """Multiply an image by a mask
@@ -23,13 +23,12 @@ def apply_mask(image, mask, work_dir):
     masked_image: str
         Path to masked image
     """
-
     img = ants.image_read(image)
     msk = ants.image_read(mask)
 
     masked_img = ants.utils.mask_image(img, msk, 1, False)
 
-    masked_image_file = os.path.join(work_dir, 'masked_image.nii.gz')
+    masked_image_file = os.path.join(work_dir, f"{get_nifti_file_prefix(image)}_masked.nii.gz")
 
     ants.image_write(masked_img, masked_image_file)
 
@@ -55,14 +54,17 @@ def deep_brain_extraction(anatomical_image, work_dir, modality='t1'):
     brain_mask: str
         Path to brain mask
     """
-
     anat = ants.image_read(anatomical_image)
 
     be_output = antspynet.brain_extraction(anat, modality=modality, verbose=True)
 
     brain_mask = ants.iMath_get_largest_component(ants.threshold_image(be_output, 0.5, 1.5))
 
-    return brain_mask
+    mask_image_file = os.path.join(work_dir, f"{get_nifti_file_prefix(anatomical_image)}_brain_mask.nii.gz")
+
+    ants.image_write(brain_mask, mask_image_file)
+
+    return mask_image_file
 
 
 def deep_atropos(anatomical_image, work_dir):
@@ -78,24 +80,21 @@ def deep_atropos(anatomical_image, work_dir):
     segmentation: str
         Path to segmentation image
     posteriors: list of str
-        List of paths to segmentation posteriors in order 1-6 for CSF, GM, WM, deep GM, brainstem, cerebellum
-        The posteriors are written to disk with numeric format %02d, so that they can be read by Atropos.
-    posterior_spec: str
-        Ants Atropos posterior specification containing the paths to the posteriors with c-style numeric
-        format %02d. This can be used as input to ants_atropos_n4.
+        List of paths to segmentation posteriors in order 1-6 for CSF, GM, WM, deep GM, brainstem, cerebellum.
     """
     anat = ants.image_read(anatomical_image)
     seg = antspynet.deep_atropos(anat)
 
     # write results to disk
-    segmentation_fn = os.path.join(work_dir, '_deep_atropos_segmentation.nii.gz')
+    segmentation_fn = os.path.join(work_dir, f"{get_nifti_file_prefix(anatomical_image)}_deep_atropos_segmentation.nii.gz")
     ants.write_image(seg['segmentation_image'], segmentation_fn)
 
     posteriors_fn = []
 
     # Write posteriors to disk with numeric format %02d
     for i, p in enumerate(seg['probability_images']):
-        posterior_fn = os.path.join(work_dir, '_deep_atropos_posterior%02d.nii.gz' % i)
+        posterior_fn = os.path.join(work_dir, f"{get_nifti_file_prefix(anatomical_image)}_deep_atropos" +
+                                    '_posterior%02d.nii.gz' % i)
         ants.write_image(p, posterior_fn)
         posteriors_fn.append(posterior_fn)
 
@@ -143,7 +142,7 @@ def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=
     --------
     segmentation_n4_dict: dict
         Dictionary containing the following keys:
-        'bias_corrected': list of str
+        'bias_corrected_anatomical_images': list of str
             List of paths to bias corrected images for each input modality
         'segmentation': str
             Path to segmentation image
@@ -151,13 +150,12 @@ def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=
             List of paths to segmentation posteriors in order 1-6 for CSF, GM, WM, deep GM, brainstem, cerebellum
 
     """
-
     # Convert to list if only one image is provided
     if isinstance(anatomical_images, str):
         anatomical_images = [anatomical_images]
 
     # Write list of priors to work_dir in c-style numeric format %02d
-    prior_spec = f"{work_dir}/prior_%02d.nii.gz"
+    prior_spec = f"{work_dir}/{get_nifti_file_prefix(anatomical_images[0])}_prior_%02d.nii.gz"
 
     for i, p in enumerate(priors):
         shutil.copy(p, prior_spec % i)
@@ -166,44 +164,46 @@ def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=
 
     n4_prior_classes_string = ' -y '.join([str(i) for i in n4_prior_classes])
 
+    stage_1_output_prefix = os.path.join(work_dir, f"{get_nifti_file_prefix(anatomical_images[0])}_ants_atropos_n4_")
+
     command = ['antsAtroposN4.sh', '-d', '3', '-a', anatomical_input_string, '-x', brain_mask, '-p', prior_spec,
-               '-c', str(len(priors)), '-o', f"{work_dir}/ants_atropos_n4_", '-m', str(iterations),
+               '-c', str(len(priors)), '-o', stage_1_output_prefix, '-m', str(iterations),
                '-n', str(atropos_iterations), '-r', f"[ {atropos_mrf_weight}, 1x1x1 ]", '-w', str(atropos_mrf_weight),
                '-g', str(1 if denoise else 0), '-b', 'Socrates [ ' + str(1 if use_mixture_model_proportions else 0) + ' ]',
                '-y', n4_prior_classes_string, '-w', str(atropos_prior_weight), '-e', n4_convergence,
                '-f', str(n4_shrink_factor), '-q', f"[ {n4_spline_spacing} ]"]
 
-    output = run_command(command)
+    run_command(command)
 
     # Following the bash script, we run antsAtroposN4.sh again
     # using the corrected image as input
 
-    anatomical_input_string = ' -a '.join([f"{work_dir}/ants_atropos_n4_Segmentation{i}N4.nii.gz" \
+    anatomical_input_string = ' -a '.join([os.path.join(work_dir, f"{stage_1_output_prefix}Segmentation{i}N4.nii.gz") \
                                             for i in range(len(anatomical_images))])
 
+    stage_2_output_prefix = os.path.join(work_dir, f"{get_nifti_file_prefix(anatomical_images[0])}_ants_atropos_n4_stage_2_")
+
     command = ['antsAtroposN4.sh', '-d', '3', '-a', anatomical_input_string, '-x', brain_mask, '-p', prior_spec,
-               '-c', str(len(priors)), '-o', f"{work_dir}/ants_atropos_n4_", '-m', str(2),
+               '-c', str(len(priors)), '-o', stage_2_output_prefix, '-m', str(2),
                '-n', str(atropos_iterations), '-r', f"[ {atropos_mrf_weight}, 1x1x1 ]", '-w', str(atropos_mrf_weight),
                '-g', str(1 if denoise else 0), '-b', 'Socrates [ ' + str(1 if use_mixture_model_proportions else 0) + ' ]',
                '-y', n4_prior_classes_string, '-w', str(atropos_prior_weight), '-e', n4_convergence,
                '-f', str(n4_shrink_factor), '-q', f"[ {n4_spline_spacing} ]"]
 
-    # Output files are
-    # {work_dir}/ants_atropos_n4_Segmentation[i]N4..nii.gz for input modality i
-    # {work_dir}/ants_atropos_n4_Segmentation.nii.gz
-    # {work_dir}/ants_atropos_n4_SegmentationPosteriors_0%2d.nii.gz
+    run_command(command)
+
     segmentation_n4_dict = {
-                            'bias_corrected': [ f"{work_dir}/ants_atropos_n4_Segmentation{i}N4.nii.gz"
+                            'bias_corrected_anatomical_images': [ f"{stage_2_output_prefix}Segmentation{i}N4.nii.gz"
                                                for i in range(len(anatomical_images)) ],
-                            'segmentation': f"{work_dir}/ants_atropos_n4_Segmentation.nii.gz",
-                            'posteriors': [ f"{work_dir}/ants_atropos_n4_SegmentationPosteriors_%02d.nii.gz" % i \
+                            'segmentation': f"{stage_2_output_prefix}Segmentation.nii.gz",
+                            'posteriors': [ f"{stage_2_output_prefix}SegmentationPosteriors_%02d.nii.gz" % i \
                                 for i in range(1,7) ]
                             }
 
     return segmentation_n4_dict
 
 
-def n4_bias_correction(anatomical_image, work_dir, segmentation_posteriors, n4_convergence='[ 50x50x50x50,1e-7 ]',
+def n4_bias_correction(anatomical_image, brain_mask, segmentation_posteriors, work_dir, n4_convergence='[ 50x50x50x50,1e-7 ]',
                        n4_shrink_factor=3, n4_spline_spacing=180):
     """Correct bias field in an anatomical image.
 
@@ -214,11 +214,13 @@ def n4_bias_correction(anatomical_image, work_dir, segmentation_posteriors, n4_c
     -----------
     anatomical_image: str
         Anatomical image to correct
-    work_dir: str
-        Path to working directory
+    brain_mask: str
+        Path to brain mask
     segmentation_posteriors: (str)
         List of segmentation posteriors in order 1-6 for CSF, GM, WM, deep GM, brainstem, cerebellum. Posteriors
         2-6 are used to create a pure tissue mask for N4 bias correction.
+    work_dir: str
+        Path to working directory
     n4_convergence: str
         Convergence criteria for N4
     n4_shrink_factor: int
@@ -231,14 +233,15 @@ def n4_bias_correction(anatomical_image, work_dir, segmentation_posteriors, n4_c
     bias_corrected_image: str
         Path to bias corrected image
     """
-
     # Make a pure tissue mask from the segmentation posteriors
-    pure_tissue_mask = f"{work_dir}/pure_tissue_mask.nii.gz"
+    pure_tissue_mask = os.path.join(work_dir, f"{get_nifti_file_prefix(anatomical_image)}_pure_tissue_mask.nii.gz")
 
     # Everything except CSF goes into mask
     command = ['ImageMath', '3', pure_tissue_mask, 'PureTissueN4WeightMask'].extend(segmentation_posteriors[1:])
 
-    bias_corrected_anatomical = f"{work_dir}/n4_bias_corrected.nii.gz"
+    run_command(command)
+
+    bias_corrected_anatomical = os.path.join(work_dir, f"{get_nifti_file_prefix(anatomical_image)}_n4_bias_corrected.nii.gz")
     shutil.copy(anatomical_image, bias_corrected_anatomical)
 
     # run iteratively as is done in antsCorticalThickness.sh
@@ -248,54 +251,55 @@ def n4_bias_correction(anatomical_image, work_dir, segmentation_posteriors, n4_c
                      '0.995', '256'])
         # bias correct
         run_command(['N4BiasFieldCorrection', '-d', '3', '-i', bias_corrected_anatomical, '-o', bias_corrected_anatomical,
-               '-c', n4_convergence, '-s', str(n4_shrink_factor), '-b', str(n4_spline_spacing)])
+                     '-c', n4_convergence, '-s', str(n4_shrink_factor), '-b', str(n4_spline_spacing), '-x', brain_mask,
+                     '-w', pure_tissue_mask])
         # Normalize and rescale
         run_command(['ImageMath', '3', bias_corrected_anatomical, 'Normalize', bias_corrected_anatomical])
         run_command(['ImageMath', '3', bias_corrected_anatomical, 'm', bias_corrected_anatomical, '1000'])
 
     # Alternative idea: apply bias field manually, then normalize by the mask. This would avoid normalizing the image
-    # into the range 0-1000 including the uncorrected background. But we would need to change antsAtroposN4.sh to
-    # stay consistent
+    # into the range 0-1000 including the uncorrected background. But it departs from antsAtroposN4.sh convention.
 
     return bias_corrected_anatomical
 
 
-def cortical_thickness(segmentation, work_dir, segmentation_posteriors=None, kk_its=45, grad_update=0.025, grad_smooth=1.5):
+def cortical_thickness(segmentation, segmentation_posteriors, work_dir, kk_its=45, grad_update=0.025, grad_smooth=1.5,
+                       gm_lab=8, wm_lab=2):
     """Compute cortical thickness from an anatomical image.
 
     Parameters:
     -----------
     segmentation: str
         Path to segmentation image (GM = 2, WM = 3)
-    work_dir: str
-        Path to working directory
     segmentation_posteriors: (str)
         List of segmentation posteriors in order 1-6 for CSF, GM, WM, deep GM, brainstem, cerebellum
+    work_dir: str
+        Path to working directory
     kk_its: int
         Number of iterations for cortical thickness estimation
     grad_update: float
         gradient descent update parameter
     grad_smooth: float
         gradient field smoothing parameter
+    gm_lab: int
+        Label for gray matter in the segmentation image
+    wm_lab: int
+        Label for white matter in the segmentation image
 
     Returns:
     --------
     thickness_image:str
         Path to cortical thickness image
     """
+    kk = ants.kelly_kapowski(s=segmentation, g=segmentation_posteriors[2], w=segmentation_posteriors[3], its=kk_its,
+                             r=grad_update, x=grad_smooth, verbose=True, gm_label=gm_lab, wm_label=wm_lab))
 
-    if segmentation_posteriors is None:
-        kk = ants.kelly_kapowski(s=segmentation, its=kk_its, r=grad_update, x=grad_smooth, verbose=True)
-    else:
-        kk = ants.kelly_kapowski(s=segmentation, g=segmentation_posteriors[2], w=segmentation_posteriors[3], its=kk_its,
-                                 r=grad_update, x=grad_smooth, verbose=True)
-
-    thick_file = os.path.join(work_dir, 'cortical_thickness.nii.gz')
+    thick_file = os.path.join(work_dir, f"{get_nifti_file_prefix(segmentation)}_cortical_thickness.nii.gz"))
     ants.image_write(kk, thick_file)
     return thick_file
 
 def anatomical_template_registration(fixed_image, moving_image, work_dir, fixed_mask=None, moving_mask=None,
-                                     metric='CC', metric_params='[1, 4]', transform='SyN[0.2,3,0]', iterations='30x90x20x10',
+                                     metric='CC', metric_params=[1, 4], transform='SyN[0.2,3,0]', iterations='30x90x20x10',
                                      shrink_factors='6x4x2x1', smoothing_sigmas='3x2x1x0vox', apply_transforms=True):
     """Register an anatomical image to a template
 
@@ -348,17 +352,17 @@ def anatomical_template_registration(fixed_image, moving_image, work_dir, fixed_
         Path to warped fixed image, if apply_transforms is True, else None
     """
 
-    metric_param_str = ','.join(metric_params)
+    metric_param_str = ','.join([str(p) for p in metric_params])
 
-    metric_arg = "{metric}[{fixed_image},{moving_image},{metric_param_str}]"
+    metric_arg = f"{metric}[{fixed_image},{moving_image},{metric_param_str}]"
 
     mask_arg = f"[{fixed_mask},{moving_mask}]"
 
     # Run antsRegistration
 
     # Get output names as the moving file prefix only, eg sub-01_sess-01 for sub-01_sess-01_T1w.nii.gz
-    moving_file_prefix = os.path.basename(moving_image).split('.nii.gz')[0]
-    fixed_file_prefix = os.path.basename(fixed_image).split('.nii.gz')[0]
+    moving_file_prefix = get_nifti_file_prefix(moving_image)
+    fixed_file_prefix = get_nifti_file_prefix(fixed_image)
 
     output_root = os.path.join(work_dir, f"{moving_file_prefix}_To_{fixed_file_prefix}")
     ants_cmd = command = [
@@ -410,7 +414,7 @@ def anatomical_template_registration(fixed_image, moving_image, work_dir, fixed_
             '--reference-image', fixed_image,
             '--output', moving_image_warped,
             '--interpolation', 'Linear',
-            '--transform', composite_fwd_transform
+            '--transform', composite_fwd_transform,
             '--verbose', '1'
         ]
 
@@ -418,14 +422,14 @@ def anatomical_template_registration(fixed_image, moving_image, work_dir, fixed_
 
         fixed_image_warped = f"{output_root}InverseWarped.nii.gz"
 
-        apply_fwd_cmd = [
+        apply_inv_cmd = [
             'antsApplyTransforms',
             '--dimensionality', '3',
             '--input', fixed_image,
             '--reference-image', moving_image,
             '--output', fixed_image_warped,
             '--interpolation', 'Linear',
-            '--transform', composite_inv_transform
+            '--transform', composite_inv_transform,
             '--verbose', '1'
         ]
 
@@ -433,6 +437,128 @@ def anatomical_template_registration(fixed_image, moving_image, work_dir, fixed_
 
     return {'composite_fwd_transform': composite_fwd_transform, 'composite_inv_transform': composite_inv_transform,
             'moving_image_warped': moving_image_warped, 'fixed_image_warped': fixed_image_warped}
+
+
+def apply_transform(fixed_image, moving_image, work_dir, transform='Identity', interpolation='Linear'):
+    """Apply a transform, resampling moving image into fixed image space.
+
+    The default transform is identity, and simply reslices the moving image to the space of the fixed image.
+
+    Parameters:
+    -----------
+    fixed_image: str
+        Path to fixed image
+    moving_image: str
+        Path to moving image
+    work_dir: str
+        Path to working directory
+    transform: str
+        Path to transform file, or 'Identity' for an identity transform
+    interpolation: str
+        Interpolation method, e.g. 'Linear', 'NearestNeighbor'
+
+    Returns:
+    --------
+    moving_image_warped: str
+        Path to warped moving image
+    """
+    moving_image_warped = f"{work_dir}/{get_nifti_file_prefix(moving_image)}_to_" + \
+                                f"{get_nifti_file_prefix(fixed_image)}_warped.nii.gz"
+
+    apply_cmd = [
+        'antsApplyTransforms',
+        '--dimensionality', '3',
+        '--input', moving_image,
+        '--reference-image', fixed_image,
+        '--output', moving_image_warped,
+        '--interpolation', interpolation,
+        '--transform', transform,
+        '--verbose', '1'
+    ]
+
+    run_command(apply_cmd)
+
+    return moving_image_warped
+
+
+def reslice_to_reference(reference_image, source_image, work_dir):
+    """Reslice an image to conform to a reference image. This is a simple wrapper around apply_transform, assuming
+    the identity transform and NearestNeighbor interpolation.
+
+    Parameters:
+    -----------
+    source_image: str
+        Path to source image
+    reference_image: str
+        Path to reference image
+    work_dir: str
+        Path to working directory
+
+    Returns:
+    --------
+    resliced_image: str
+        Path to resliced image
+    """
+    resliced = apply_transform(reference_image, source_image, work_dir, transform='Identity', interpolation='NearestNeighbor')
+    return resliced
+
+
+def posteriors_to_segmentation(posteriors, work_dir, class_labels=[0, 3, 8, 2, 9, 10, 11]):
+    """Convert posteriors to a segmentation image
+
+    Parameters:
+    -----------
+    posteriors: list of str
+        List of paths to segmentation posteriors in order 1-6 for CSF, GM, WM, deep GM, brainstem, cerebellum
+    work_dir: str
+        Path to working directory
+    class_labels: list of int
+        List of labels corresponding to the classes in order 0-6 for background, CSF, GM, WM, deep GM, brainstem, cerebellum.
+        The default labels use BIDS common imaging derivatives labels. To use antscorticalthickness labels, set this to
+        list(range(0,7)).
+
+    Returns:
+    --------
+    segmentation: str
+        Path to segmentation image
+    """
+
+    # Create a segmentation image from the posteriors
+    seg = ants.image_read(posteriors[0])
+    seg.fill(0)
+
+    posterior_images = [ants.image_read(p) for p in posteriors]
+
+    posteriors_np = [posterior.numpy() for posterior in posterior_images]
+
+    # Stack these arrays along a new axis (axis=0 by default in np.stack)
+    stacked_posteriors = np.stack(posteriors_np, axis=0)
+
+    prob_sum = np.sum(stacked_posteriors, axis=0)
+
+    # Background probability, set to 1-(sum of other probabilities)
+    background_np = 1 - prob_sum
+    background_np = np.clip(background_np, 0, 1)
+    background_np_expanded = np.expand_dims(background_np, axis=0)
+    stacked_posteriors_with_background = np.concatenate((background_np_expanded, stacked_posteriors), axis=0)
+
+    # Find the index of the maximum probability for each voxel across the
+    # new axis
+    seg_indices = np.argmax(stacked_posteriors_with_background, axis=0)
+
+    # Map these indices to the class_labels
+    seg_indices_function = np.vectorize(lambda x: class_labels[x])
+    output_seg_indices = seg_indices_function(seg_indices)
+
+    # Convert the numpy array of indices back to an ANTs image if necessary
+    # Use one of the original images to get the space information (e.g., spacing, origin, direction)
+    reference_image = posteriors[0]
+    seg = ants.from_numpy(output_seg_indices, spacing=reference_image.spacing, origin=reference_image.origin,
+                          direction=reference_image.direction)
+
+    ants.image_write(seg, os.path.join(work_dir, 'synthesizedSegmentationFromPosteriors.nii.gz'))
+
+    return seg
 
 
 def binarize_brain_mask(segmentation, work_dir):

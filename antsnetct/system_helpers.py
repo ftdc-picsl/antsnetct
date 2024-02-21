@@ -3,7 +3,7 @@ import subprocess
 import traceback
 
 # Controls verbosity of subcommands
-__verbose__ = False
+_verbose = False
 
 # Sets the verbosity of subcommand output
 def set_verbose(verbose):
@@ -12,8 +12,8 @@ def set_verbose(verbose):
     Args:
         verbose (bool): If True, enable verbose mode. The command to be run will be printed along with its terminal output.
     """
-    global __verbose__
-    __verbose__ = verbose
+    global _verbose
+    _verbose = verbose
 
 
 # Catches pipeline errors from helper functions
@@ -48,15 +48,15 @@ def run_command(cmd):
         dict: a dictionary with keys 'cmd_str', 'stderr', 'stdout'.
     """
     # Just to be clear we use the global var set by the main function
-    global __verbose__
+    global _verbose
 
-    if (__verbose__):
+    if (_verbose):
         print(f"--- Running {cmd[0]} ---")
         print(" ".join(cmd))
 
     result = subprocess.run(cmd, check = False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-    if (__verbose__):
+    if (_verbose):
         print("--- command stdout ---")
         print(result.stdout)
         print("--- command stderr ---")
@@ -66,7 +66,7 @@ def run_command(cmd):
     if result.returncode != 0:
         print(f"Error running command: {' '.join(cmd)}")
         traceback.print_stack()
-        if not __verbose__: # print output if not already printed
+        if not _verbose: # print output if not already printed
             print('command stdout:\n' + result.stdout)
             print('command stderr:\n' + result.stderr)
             raise PipelineError(f"Error running command: {' '.join(cmd)}")

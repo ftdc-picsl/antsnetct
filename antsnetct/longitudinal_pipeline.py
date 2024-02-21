@@ -1,4 +1,6 @@
 import ants_helpers
+import bids_helpers
+import system_helpers
 
 import argparse
 import json
@@ -17,12 +19,11 @@ class RawDefaultsHelpFormatter(
     pass
 
 
-def longitudinal_analysis(args):
+def longitudinal_analysis():
 
     # Handle args with argparse
-    parser = parser = argparse.ArgumentParser(formatter_class=RawDefaultsHelpFormatter,
-                                    add_help = False,
-                                    description='''Longitudinal cortical thickness analysis with ANTsPyNet.
+    parser = argparse.ArgumentParser(formatter_class=RawDefaultsHelpFormatter, add_help = False,
+                                     description='''Longitudinal cortical thickness analysis with ANTsPyNet.
 
     Input can either be by participant or by session. By participant:
 
@@ -53,7 +54,7 @@ def longitudinal_analysis(args):
 
     args = parser.parse_args()
 
-    verbos = args.verbose
+    system_helpers.set_verbose(args.verbose)
 
     # If the only arg is "--longitudinal", print help and exit
     if len(sys.argv) == 1:
