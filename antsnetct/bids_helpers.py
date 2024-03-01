@@ -3,6 +3,7 @@ import json
 import os
 import re
 import shutil
+import templateflow
 
 
 class BIDSImage:
@@ -173,26 +174,132 @@ class BIDSImage:
 
     def get_derivative_path_prefix(self):
         """Get the the prefix for extensions, which includes the full path to the file without its BIDS suffix
+
+        For raw data, only the suffix is removed. For derivatives, the _desc-DESCRIPTION entity is also removed.
+
         """
-        underscore_index = self._path.rfind('_')
+        path_no_desc = re.sub(r'_desc-[A-Za-z0-9]+', '', self._path)
+        underscore_index = path_no_desc('_')
         if underscore_index != -1:  # Check if an underscore was found
-            return self._path[:underscore_index]
+            return path_no_desc[:underscore_index]
         else:
             # shouldn't happen for any valid BIDS file
             raise ValueError(f"File {self._path} does not have a BIDS suffix")
 
     def get_derivative_rel_path_prefix(self):
-        """Get the the prefix for derivatves relative to the dataset
+        """Get the the prefix for derivatives relative to the dataset
+
+        For raw data, only the suffix is removed. For derivatives, the _desc-DESCRIPTION entity is also removed.
         """
-        underscore_index = self._rel_path.rfind('_')
+        path_no_desc = re.sub(r'_desc-[A-Za-z0-9]+', '', self._rel_path)
+        underscore_index = path_no_desc('_')
         if underscore_index != -1:  # Check if an underscore was found
-            return self._rel_path[:underscore_index]
+            return path_no_desc[:underscore_index]
         else:
             # shouldn't happen for any valid BIDS file
             raise ValueError(f"File {self._rel_path} does not have a BIDS suffix")
 
     def __str__(self):
         return f"BIDSImage: {self.get_uri()}"
+
+
+class TemplateImage:
+    """Represents a templateflow image.
+
+    Attributes:
+        _cohort (str): The cohort of the template or None
+        _desc (str): The description of the template or None
+        _name (str): The name of the template
+        _path (str): The absolute path to the image file
+        _resolution (str): The resolution label of the template or None
+        _suffix (str): The suffix of the template
+        _derivative_space_file_string (str): A string for use in derivatives created in this template space
+    """
+
+    def __init__(self, name, suffix, resolution='01', description=None, cohort=None):
+
+        template_metadata = templateflow.get_metadata(name)
+
+        # Almost all templates use res-1 or res-01, but if there's no resolution in the metadata, we'll use None
+        if not 'res' in template_metadata:
+            resolution = None
+
+        res_keys = list(template_metadata['res'].keys())
+
+        template_res_found = False
+
+        if resolution is None or resolution in res_keys:
+            template_res_found = True
+        else:
+            # fmriprep allows res=1 for templates where the resolution label is '01'. We'll allow that, and the converse,
+            # by checking the integer representation of the resolution
+            # But only do this if the resolution is numeric
+            if resolution.isnumeric():
+                res_int = int(resolution)
+                metatadata_res_keys_int = [int(k) for k in res_keys]
+                # if we find res_int in metatadata_res_keys_int, then the resolution to use is res_keys at the same index
+                if res_int in metatadata_res_keys_int:
+                    resolution = res_keys[metatadata_res_keys_int.index(res_int)]
+                    template_res_found = True
+
+        if not template_res_found:
+            raise ValueError(f"Resolution {resolution} not found in template metadata")
+
+        template_matches = templateflow.get(name, resolution=resolution, desc=description, cohort=cohort, suffix=suffix)
+
+        if type(template_matches) is list:
+            raise ValueError(f"Template could not be uniquely identified from the input. Found: {template_matches}")
+
+        self._cohort = cohort
+        self._desc = description
+        self._name = name
+        self._path = str(template_matches)
+        self._resolution = resolution
+        self._suffix = suffix
+
+        derivative_string = f"space-{self._name}"
+
+        if self._cohort is not None:
+            derivative_string += f"_cohort-{self._cohort}"
+
+        if self._resolution is not None:
+            derivative_string += f"_res-{self._resolution}"
+
+        self._derivative_space_string = derivative_string
+
+        _uri = f"bids:templateflow:tpl-{self._name}/" + os.path.basename(self._path)
+
+
+    def get_path(self):
+        """Returns the absolute path to the image file."""
+        return self._path
+
+    def get_name(self):
+        """Returns the name of the template."""
+        return self._name
+
+    def get_resolution(self):
+        """Returns the resolution of the template."""
+        return self._resolution
+
+    def get_desc(self):
+        """Returns the description of the template."""
+        return self._desc
+
+    def get_derivative_space_string(self):
+        """
+        Returns a string for use in derivatives created in this space.
+
+        For example, 'space-MNI152NLin2009cAsym_res-01' or 'space-myTemplate_cohort-01_res-1'
+        """
+        return self._derivative_space_string
+
+    def get_uri(self):
+        """Returns the BIDS URI for the image file."""
+        return self._uri
+
+
+
 
 
 # Gets the dataset_name and relative image path from a BIDS URI
