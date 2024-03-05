@@ -2,8 +2,9 @@ import copy
 import json
 import os
 import re
-import shutil
 import templateflow
+
+from .system_helpers import copy_file
 
 
 class BIDSImage:
@@ -102,7 +103,7 @@ class BIDSImage:
         dest_sidecar_path = get_image_sidecar(dest_file_path)
 
         os.makedirs(os.path.dirname(dest_file_path), exist_ok=True)
-        shutil.copy(self._path, dest_file_path)
+        copy_file(self._path, dest_file_path)
 
         if self.metadata is not None:
             dest_metadata = copy.deepcopy(self._metadata)
@@ -468,7 +469,7 @@ def image_to_bids(src_image, dataset_dir, dest_rel_path, metadata=None, overwrit
             os.remove(dest_sidecar_path)
 
     os.makedirs(os.path.dirname(dest_file_path), exist_ok=True)
-    shutil.copy(src_image, dest_file_path)
+    copy_file(src_image, dest_file_path)
 
     if metadata is not None:
         with open(dest_sidecar_path, 'w') as f:
@@ -497,7 +498,7 @@ def update_output_dataset(output_dataset_dir, output_dataset_name):
     if not os.path.exists(os.path.join(output_dataset_dir, 'dataset_description.json')):
         # Write dataset_description.json
         output_ds_description = {'Name': output_dataset_name, 'BIDSVersion': '1.8.0',
-                                'DatasetType': 'derivative', 'GeneratedBy': get_generated_by()
+                                'DatasetType': 'derivative', 'GeneratedBy': _get_generated_by()
                                 }
         # Write json to output dataset
         with open(os.path.join(output_dataset_dir, 'dataset_description.json'), 'w') as file_out:

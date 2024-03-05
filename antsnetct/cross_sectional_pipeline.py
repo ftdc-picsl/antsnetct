@@ -1,14 +1,13 @@
-import ants_helpers
-import bids_helpers
-import preprocessing
-import system_helpers
+from . import ants_helpers
+from . import bids_helpers
+from . import preprocessing
+from . import system_helpers
 
-from system_helpers import PipelineError
+from .system_helpers import PipelineError
 
 import argparse
 import json
 import os
-import re
 import shutil
 import sys
 import tempfile
@@ -100,10 +99,10 @@ def cross_sectional_analysis():
 
     required_parser = parser.add_argument_group('Required arguments')
     required_parser.add_argument("--input-dataset", help="Input BIDS dataset dir, containing the source images", type=str,
-                          required_parser=True)
-    required_parser.add_argument("--participant", help="Participant to process", type=str)
-    required_parser.add_argument("--session", help="Session to process", type=str)
-    required_parser.add_argument("--output-dataset", help="Output BIDS dataset dir", type=str, required_parser=True)
+                          required=True)
+    required_parser.add_argument("--participant", help="Participant to process", type=str, required=True)
+    required_parser.add_argument("--session", help="Session to process", type=str, required=True)
+    required_parser.add_argument("--output-dataset", help="Output BIDS dataset dir", type=str, required=True)
 
     optional_parser = parser.add_argument_group('General optional arguments')
     optional_parser.add_argument("-h", "--help", action="help", help="show this help message and exit")
@@ -116,7 +115,7 @@ def cross_sectional_analysis():
     optional_parser.add_argument("--verbose", help="Verbose output", action='store_true')
 
     neck_trim_parser = parser.add_argument_group('Neck trimming arguments')
-    neck_trim_parser.add_argument("--no-neck-trim", help="Disable neck trimming from the T1w image", target="do_neck_trim",
+    neck_trim_parser.add_argument("--no-neck-trim", help="Disable neck trimming from the T1w image", dest="do_neck_trim",
                                   action='store_false')
     neck_trim_parser.add_argument("--neck-trim-pad", help="Padding in mm to add to the trimmed image", type=int, default=10)
 
@@ -202,33 +201,27 @@ def cross_sectional_analysis():
 
         try:
 
-            print("Processing T1w image: " + t1w_bids['image'])
-
-            match = re.match('(.*)_T1w\.nii\.gz$', t1w_bids['image'])
-
-            t1w_source_entities = match.group(1)
+            print("Processing T1w image: " + t1w_bids)
 
             # Relative prefix for the output dataset
-            output_anat_prefix = os.path.join('sub-' + args.participant, 'ses-' + args.session, 'anat',
-                                            t1w_source_entities)
 
-            output_preproc_t1w_image = output_anat_prefix + '_desc-preproc_T1w.nii.gz'
+            with tempfile.TemporaryDirectory(
+                suffix=f"antsnetct_{system_helpers.get_nifti_file_prefix(t1w_bids.get_path())}.tmpdir") as work_dir_tmpdir:
 
-            with tempfile.TemporaryDirectory(suffix=f"antsnetct_{t1w_source_entities}.tmpdir") as work_dir_tmpdir:
                 working_dir = work_dir_tmpdir.name
 
                 # Preprocessing
                 # Conform to LPI orientation
-                preproc_t1w = preprocessing.conform_image_orientation(t1w_bids, 'LPI', working_dir)
+                preproc_t1w = preprocessing.conform_image_orientation(t1w_bids.get_path(), 'LPI', working_dir)
 
                 if args.do_neck_trim:
                     # Trim the neck
                     preproc_t1w = preprocessing.trim_neck(preproc_t1w, working_dir, pad_mm=args.neck_trim_pad)
 
                 # Copy the preprocessed T1w to the output
-                preproc_t1w_bids = bids_helpers.image_to_bids(preproc_t1w, output_dataset, output_preproc_t1w_image,
-                                                                metadata={'Sources': [t1w_bids.get_uri()],
-                                                                            'SkullStripped': False})
+                preproc_t1w_bids = bids_helpers.image_to_bids(
+                    preproc_t1w, output_dataset, t1w_bids.get_derivative_rel_path_prefix() + '_desc-preproc_T1w.nii.gz',
+                    metadata={'Sources': [t1w_bids.get_uri()], 'SkullStripped': False})
 
                 # Find a brain mask using the first available in order of preference:
                 # 1. Brain mask dataset
@@ -265,13 +258,14 @@ def cross_sectional_analysis():
 
                 if args.keep_workdir.lower() == 'always':
                     print("Keeping working directory: " + working_dir)
-                    shutil.copytree(working_dir, os.path.join(output_dataset, output_anat_prefix + "_workdir"))
+                    shutil.copytree(working_dir, os.path.join(output_dataset, preproc_t1w_bids.get_derivative_rel_path_prefix()
+                                                              + "_workdir"))
 
         except Exception as e:
             print(f"Caught {type(e)} during processing of f{str(t1w_bids)}")
             print(e)
             traceback.print_stack()
-            debug_workdir = os.path.join(output_dataset, output_anat_prefix + "_workdir")
+            debug_workdir = os.path.join(output_dataset, preproc_t1w_bids.get_derivative_rel_path_prefix() + "_workdir")
             if args.keep_workdir.lower() != 'never':
                 print("Saving working directory to " + debug_workdir)
                 shutil.copytree(working_dir, debug_workdir)
@@ -560,14 +554,14 @@ def template_brain_registration(template, template_brain_mask, t1w_brain_image, 
     forward_transform_path = t1w_brain_image.get_derivative_path_prefix() + \
         f"_from-T1w_to-{template.get_name()}_mode-image_xfm.h5"
 
-    shutil.copy(template_reg['forward_transform'], forward_transform_path)
+    system_helpers.copy_file(template_reg['forward_transform'], forward_transform_path)
 
     template_reg_bids['forward_transform'] = forward_transform_path
 
     inverse_transform_path = t1w_brain_image.get_derivative_path_prefix() + \
         f"_from-{template.get_name()}_to-T1w_mode-image_xfm.h5"
 
-    shutil.copy(template_reg['inverse_transform'], inverse_transform_path)
+    system_helpers.copy_file(template_reg['inverse_transform'], inverse_transform_path)
 
     template_reg_bids['inverse_transform'] = inverse_transform_path
 

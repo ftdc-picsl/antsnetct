@@ -1,6 +1,6 @@
 import os
 
-from system_helpers import run_command, get_nifti_file_prefix
+from .system_helpers import run_command, get_nifti_file_prefix
 
 def trim_neck(input_image, work_dir, pad_mm=10):
     """Trim the neck from an image

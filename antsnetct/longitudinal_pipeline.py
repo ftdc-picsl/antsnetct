@@ -1,6 +1,6 @@
-import ants_helpers
-import bids_helpers
-import system_helpers
+from . import ants_helpers
+from . import bids_helpers
+from . import system_helpers
 
 import argparse
 import json
@@ -36,10 +36,10 @@ def longitudinal_analysis():
 
     required_parser = parser.add_argument_group('required_parser arguments')
     required_parser.add_argument("--input-dataset", help="Input BIDS dataset dir, containing the source images", type=str,
-                          required_parser=True)
+                          required=True)
     required_parser.add_argument("--cross-sectional-dataset", help="BIDS derivatives dataset dir, containing the "
-                                 "cross-sectional analysis", type=str, required_parser=True)
-    required_parser.add_argument("--output-dataset", help="Output BIDS dataset dir", type=str, required_parser=True)
+                                 "cross-sectional analysis", type=str, required=True)
+    required_parser.add_argument("--output-dataset", help="Output BIDS dataset dir", type=str, required=True)
     optional_parser = parser.add_argument_group('optional_parser arguments')
     optional_parser.add_argument("-h", "--help", action="help", help="show this help message and exit")
     optional_parser.add_argument("--device", help="GPU device to use, or 'cpu' to use CPU. Note CPU mode is many times slower",

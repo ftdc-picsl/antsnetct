@@ -2,9 +2,8 @@ import ants
 import antspynet
 import numpy as np
 import os
-import shutil
 
-from system_helpers import run_command, get_nifti_file_prefix, copy_file
+from .system_helpers import run_command, get_nifti_file_prefix, copy_file
 
 def apply_mask(image, mask, work_dir):
     """Multiply an image by a mask
