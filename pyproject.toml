@@ -12,7 +12,7 @@ license = { file="LICENSE" }
 keywords = ["ANTsPyNet", "ANTsPy", "neuroimaging", "thickness"]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: Apache 2 License",
+    "License :: OSI Approved :: Apache 2.0 License",
     "Operating System :: Linux",
 ]
 
