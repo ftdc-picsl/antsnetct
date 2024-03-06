@@ -87,14 +87,14 @@ def deep_atropos(anatomical_image, work_dir):
         segmentation: str
             Path to segmentation image
         posteriors: list of str
-            List of paths to segmentation posteriors in order 1-6 for CSF, GM, WM, deep GM, brainstem, cerebellum.
+            List of paths to segmentation posteriors in order: CSF, GM, WM, deep GM, brainstem, cerebellum.
     """
     anat = ants.image_read(anatomical_image)
     seg = antspynet.deep_atropos(anat)
 
     # write results to disk
     segmentation_fn = os.path.join(work_dir, f"{get_nifti_file_prefix(anatomical_image)}_deep_atropos_segmentation.nii.gz")
-    ants.write_image(seg['segmentation_image'], segmentation_fn)
+    ants.image_write(seg['segmentation_image'], segmentation_fn)
 
     posteriors_fn = []
 
@@ -105,7 +105,7 @@ def deep_atropos(anatomical_image, work_dir):
     for i, p in enumerate(atropos_classes):
         posterior_fn = os.path.join(work_dir, f"{get_nifti_file_prefix(anatomical_image)}_deep_atropos" +
                                     '_posterior%02d.nii.gz' % (i + 1))
-        ants.write_image(p, posterior_fn)
+        ants.image_write(p, posterior_fn)
         posteriors_fn.append(posterior_fn)
 
     return {'segmentation': segmentation_fn, 'posteriors': posteriors_fn}
@@ -157,7 +157,7 @@ def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=
         'segmentation': str
             Path to segmentation image
         'posteriors': list of str
-            List of paths to segmentation posteriors in order 1-6 for CSF, GM, WM, deep GM, brainstem, cerebellum
+            List of paths to segmentation posteriors in order: CSF, GM, WM, deep GM, brainstem, cerebellum
 
     """
     # Convert to list if only one image is provided
@@ -168,13 +168,11 @@ def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=
     prior_spec = f"{work_dir}/{get_nifti_file_prefix(anatomical_images[0])}_prior_%02d.nii.gz"
 
     for i, p in enumerate(priors):
-        copy_file(p, prior_spec % i)
+        copy_file(p, prior_spec % (i+1))
 
-    anatomical_input_args = ['-a']
-    anatomical_input_args.extend([arg for anat in anatomical_images for arg in ['-a', anat]])
+    anatomical_input_args = [arg for anat in anatomical_images for arg in ['-a', anat]]
 
-    n4_prior_classes_args = ['-y']
-    n4_prior_classes_args.extend([arg for tissue_label in n4_prior_classes for arg in ['-y', str(tissue_label)]])
+    n4_prior_classes_args = [arg for tissue_label in n4_prior_classes for arg in ['-y', str(tissue_label)]]
 
     stage_1_output_prefix = os.path.join(work_dir, f"{get_nifti_file_prefix(anatomical_images[0])}_ants_atropos_n4_")
 
@@ -191,10 +189,10 @@ def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=
 
     # Following the bash script, we run antsAtroposN4.sh again
     # using the corrected image as input
-    anatomical_input_args = ['-a']
-    anatomical_input_args.extend([arg for anat in anatomical_images for arg in ['-a', anat]])
-
     stage_2_output_prefix = os.path.join(work_dir, f"{get_nifti_file_prefix(anatomical_images[0])}_ants_atropos_n4_stage_2_")
+
+    anatomical_images = [f"{stage_1_output_prefix}Segmentation{i}N4.nii.gz" for i in range(len(anatomical_images))]
+    anatomical_input_args = [arg for anat in anatomical_images for arg in ['-a', anat]]
 
     command = ['antsAtroposN4.sh', '-d', '3']
     command.extend(anatomical_input_args)

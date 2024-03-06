@@ -65,11 +65,13 @@ def run_command(cmd):
         print(f"--- end {cmd[0]} ---")
 
     if result.returncode != 0:
-        print(f"Error running command: {' '.join(cmd)}")
-        traceback.print_stack()
+        print(f"\nError running command: {' '.join(cmd)}\n")
         if not _verbose: # print output if not already printed
-            print('command stdout:\n' + result.stdout)
-            print('command stderr:\n' + result.stderr)
+            print("--- command stdout ---")
+            print(result.stdout)
+            print("--- command stderr ---")
+            print(result.stderr)
+            print(f"--- end {cmd[0]} (exited with error) ---")
             raise PipelineError(f"Error running command: {' '.join(cmd)}")
 
     return { 'cmd_str': ' '.join(cmd), 'stderr': result.stderr, 'stdout': result.stdout }

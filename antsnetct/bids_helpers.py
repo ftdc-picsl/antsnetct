@@ -34,56 +34,52 @@ class BIDSImage:
         self._ds_path = os.path.abspath(dataset)
         self._rel_path = rel_path
         self._path = os.path.join(self._ds_path, self._rel_path)
-        self._bids_suffix = self._set_bids_suffix()
-        self._ds_name = self._load_dataset_name()
-        self._sidecar_path = get_image_sidecar(self._path)
-        self._metadata = {}
 
         if not os.path.exists(self._path):
             raise FileNotFoundError(f"{self._path} does not exist")
 
-        self._load_metadata()
+        self._sidecar_path = get_image_sidecar(self._path)
 
-    def _set_bids_suffix(self):
-        """Sets the BIDS suffix for the image file.
+        self._set_ds_name()
+        self._set_derivative_path_prefix()
+        self._derivative_rel_path_prefix = os.path.relpath(self._derivative_path_prefix, self._ds_path)
+        self._set_metadata_from_sidecar()
 
-        The BIDS suffix is defined as "An alphanumeric string that forms part of a filename, located after all entities and
-        following a final _, right before the file extension; for example, it is 'T1w' in
-        'sub-01_ses-MR1_acq-mprage_T1w.nii.gz'.
-        """
-        file_name = os.path.basename(self._path)
 
-        if not file_name.startswith('sub-[a-zA-Z0-9]+_ses-[a-zA-Z0-9]+_'):
-            raise ValueError(f"File {self._path} does not follow BIDS naming convention")
-
-        suffix_match = re.search(r'_([a-zA-Z0-9]+)\.nii(\.gz)?$', file_name)
-
-        if suffix_match:
-            self._bids_suffix = suffix_match.group(1)
-        else:
-            raise ValueError(f"File {self._path} does not follow BIDS naming convention")
-
-    def _load_dataset_name(self):
+    def _set_ds_name(self):
         """Loads the dataset name from dataset_description.json."""
         description_file = os.path.join(self._ds_path, 'dataset_description.json')
         if not os.path.exists(description_file):
             raise FileNotFoundError("dataset_description.json not found in dataset path")
 
         with open(description_file, 'r') as f:
-            description = json.load(f)
+            ds_description = json.load(f)
 
-        if 'Name' not in description:
+        if 'Name' not in ds_description:
             raise ValueError("Dataset name ('Name') not found in dataset_description.json")
 
-        return description['Name']
+        self._ds_name = ds_description['Name']
 
-    def _load_metadata(self):
+
+    def _set_metadata_from_sidecar(self):
         """Loads metadata from the sidecar JSON file, if present."""
         if os.path.exists(self._sidecar_path):
             with open(self._sidecar_path, 'r') as f:
                 self._metadata = json.load(f)
         else:
             self._metadata = None
+
+
+    def _set_derivative_path_prefix(self):
+        path_no_desc = re.sub(r'_desc-[A-Za-z0-9]+', '', self._path)
+        underscore_index = path_no_desc.rindex('_')
+
+        if underscore_index != -1:  # Check if an underscore was found
+            self._derivative_path_prefix = path_no_desc[:underscore_index]
+        else:
+            # shouldn't happen for any valid BIDS file
+            raise ValueError(f"File {self._path} does not have a BIDS suffix")
+
 
     def copy_image(self, destination_ds):
         """
@@ -129,6 +125,7 @@ class BIDSImage:
         """
         return copy.deepcopy(self._metadata)
 
+
     def set_metadata(self, metadata):
         """
         Replaces the metadata with a new dictionary. The changes are written immediately to the sidecar file.
@@ -140,22 +137,26 @@ class BIDSImage:
         with open(self._sidecar_file, 'w') as f:
             json.dump(self._metadata, f, indent=4, sort_keys=True)
 
-    # Accessor methods with simple docstrings for brevity
+
     def get_path(self):
         """Returns the absolute path to the image file."""
         return self._path
+
 
     def get_ds_path(self):
         """Returns the absolute path to the dataset."""
         return self._ds_path
 
+
     def get_ds_name(self):
         """Returns the name of the dataset."""
         return self._ds_name
 
+
     def get_rel_path(self):
         """Returns the relative path from the dataset to the image file."""
         return self._rel_path
+
 
     def get_uri(self, relative=False):
         """Returns the BIDS URI for the image file.
@@ -167,11 +168,13 @@ class BIDSImage:
         if relative:
             return f"bids::{self._rel_path}"
         else:
-            return f"bids:{self._ds_name}:{self._path}"
+            return f"bids:{self._ds_name}:{self._rel_path}"
+
 
     def get_sidecar_path(self):
         """Returns the path to the sidecar file."""
         return self._sidecar_path
+
 
     def get_derivative_path_prefix(self):
         """Get the the prefix for extensions, which includes the full path to the file without its BIDS suffix
@@ -179,26 +182,16 @@ class BIDSImage:
         For raw data, only the suffix is removed. For derivatives, the _desc-DESCRIPTION entity is also removed.
 
         """
-        path_no_desc = re.sub(r'_desc-[A-Za-z0-9]+', '', self._path)
-        underscore_index = path_no_desc('_')
-        if underscore_index != -1:  # Check if an underscore was found
-            return path_no_desc[:underscore_index]
-        else:
-            # shouldn't happen for any valid BIDS file
-            raise ValueError(f"File {self._path} does not have a BIDS suffix")
+        return self._derivative_path_prefix
+
 
     def get_derivative_rel_path_prefix(self):
         """Get the the prefix for derivatives relative to the dataset
 
         For raw data, only the suffix is removed. For derivatives, the _desc-DESCRIPTION entity is also removed.
         """
-        path_no_desc = re.sub(r'_desc-[A-Za-z0-9]+', '', self._rel_path)
-        underscore_index = path_no_desc('_')
-        if underscore_index != -1:  # Check if an underscore was found
-            return path_no_desc[:underscore_index]
-        else:
-            # shouldn't happen for any valid BIDS file
-            raise ValueError(f"File {self._rel_path} does not have a BIDS suffix")
+        return self._derivative_rel_path_prefix
+
 
     def __str__(self):
         return f"BIDSImage: {self.get_uri()}"
@@ -301,89 +294,27 @@ class TemplateImage:
 
 
 
-
-
-# Gets the dataset_name and relative image path from a BIDS URI
-# Returns a dictionary of the form:
-# {dataset_name: {dataset_name}, image_directory: {image_dir}, image_filename: {image_filename}}
-def parse_bids_uri(uri):
-
-    #  capture the dataset name (if present) and the rest of the path
-    match = re.match(r'bids:([^:]*):(.+)$', uri)
-    if match:
-        dataset_name = match.group(1) or None
-        full_path = match.group(2)
-
-        # Extract directory and filename
-        image_directory, image_filename = os.path.split(full_path)
-
-        return {
-            'dataset_name': dataset_name,
-            'image_directory': image_directory,
-            'image_filename': image_filename
-        }
-    else:
-        raise ValueError("URI does not follow expected format.")
-
-
-# Resolve a file from a URI
 def resolve_uri(dataset_path, file_uri):
+    """Resolve a BIDS URI to an absolute path.
+
+    Parameters:
+    ----------
+        dataset_path (str):
+            The root directory of the BIDS dataset.
+        file_uri (str):
+            The BIDS URI, in the format "bids:DATASET:RELATIVE_PATH" or "bids::RELATIVE_PATH".
+
+    Returns:
+    --------
+        str: The absolute path to the file.
+    """
     #  capture the dataset name (if present) and the rest of the path
     match = re.match(r'bids:([^:]*):(.+)$', file_uri)
     if match:
         rel_path = match.group(2)
         return os.path.join(dataset_path, rel_path)
     else:
-        raise ValueError("URI does not follow expected format.")
-
-
-def get_uri(dataset_dir, dataset_name, file_path):
-    """Get a BIDS URI for a file
-
-    Parameters:
-    -----------
-    dataset_dir: str
-        Path to the dataset directory
-    dataset_name: str
-        Name of the dataset as specified in the dataset_description.json
-    file_path: str
-        Path to the file, either absolute or relative to the dataset directory
-
-    Returns:
-    --------
-    str: BIDS URI for the file
-    """
-
-    if file_path.startswith(dataset_dir):
-        return f"bids:{dataset_name}:{os.path.relpath(file_path, dataset_dir)}"
-    else:
-        return f"bids:{dataset_name}:{file_path}"
-
-
-def get_uri(dataset_dir, file_path):
-    """Get a BIDS URI for a file
-
-    Parameters:
-    -----------
-    dataset_dir: str
-        Path to the dataset directory
-    file_path: str
-        Path to the file, either absolute or relative to the dataset directory
-
-    Returns:
-    --------
-    str: BIDS URI for the file
-    """
-
-    # read dataset name from dataset_description.json
-    with open(os.path.join(dataset_dir, 'dataset_description.json')) as f:
-        dataset_description = json.load(f)
-        dataset_name = dataset_description['Name']
-
-    if file_path.startswith(dataset_dir):
-        return f"bids:{dataset_name}:{os.path.relpath(file_path, dataset_dir)}"
-    else:
-        return f"bids:{dataset_name}:{file_path}"
+        raise ValueError(f"URI {file_uri} does not follow expected format.")
 
 
 def get_image_sidecar(image_file):
@@ -505,24 +436,22 @@ def update_output_dataset(output_dataset_dir, output_dataset_name):
             json.dump(output_ds_description, file_out, indent=4, sort_keys=True)
     else:
         # Get output dataset metadata
-        try:
-            with open(f"{output_dataset_dir}/dataset_description.json", 'r') as file_in:
-                output_dataset_json = json.load(file_in)
-            # Check dataset name
-            if not 'Name' in output_dataset_json:
-                raise ValueError(f"Output dataset description is missing Name, check "
-                                 f"{output_dataset_dir}/data_description.json")
-            # If this container doesn't already exist in the generated_by list, it will be added
-            generated_by = _get_generated_by(output_dataset_json['GeneratedBy'])
-            # If we updated the generated_by, write it back to the output dataset
+        with open(f"{output_dataset_dir}/dataset_description.json", 'r') as file_in:
+            output_dataset_json = json.load(file_in)
+        # Check dataset name
+        if not 'Name' in output_dataset_json:
+            raise ValueError(f"Output dataset description is missing Name, check "
+                                f"{output_dataset_dir}/data_description.json")
+        # If this container doesn't already exist in the generated_by list, it will be added
+        old_gen_by = None
+        if 'GeneratedBy' in output_dataset_json:
             old_gen_by = output_dataset_json['GeneratedBy']
-            if old_gen_by is None or len(generated_by) > len(old_gen_by):
-                output_dataset_json['GeneratedBy'] = generated_by
-                with open(f"{output_dataset_dir}/dataset_description.json", 'w') as file_out:
-                    json.dump(output_dataset_json, file_out, indent=4, sort_keys=True)
-        except (FileNotFoundError, KeyError):
-            raise ValueError(f"Output dataset description is missing GeneratedBy, check "
-                             f"{output_dataset_dir}/data_description.json")
+        generated_by = _get_generated_by(old_gen_by)
+        # If we updated the generated_by, write it back to the output dataset
+        if old_gen_by is None or len(generated_by) > len(old_gen_by):
+            output_dataset_json['GeneratedBy'] = generated_by
+            with open(f"{output_dataset_dir}/dataset_description.json", 'w') as file_out:
+                json.dump(output_dataset_json, file_out, indent=4, sort_keys=True)
 
 
 def _get_generated_by(existing_generated_by=None):
@@ -765,8 +694,11 @@ def find_images(input_dataset_dir, participant_label, session_label, modality, b
     # Path to the data directory to search, eg /data/ds/sub-01/ses-01/anat
     modality_dir = os.path.join(input_dataset_dir, 'sub-' + participant_label, 'ses-' + session_label, modality)
 
+    if not os.path.exists(modality_dir):
+        return None
+
     for image in os.listdir(modality_dir):
-        if image.endswith(bids_suffix + '.nii') or image.endswith(bids_suffix + '.nii.gz'):
+        if image.endswith('_' + bids_suffix + '.nii') or image.endswith('_' + bids_suffix + '.nii.gz'):
             images.append(BIDSImage(input_dataset_dir, os.path.relpath(os.path.join(modality_dir, image), input_dataset_dir)))
 
     return images

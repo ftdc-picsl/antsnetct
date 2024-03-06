@@ -25,18 +25,13 @@ def trim_neck(input_image, work_dir, pad_mm=10):
     # trim neck with c3d, reslice mask into trimmed space
     tmp_image_trim = os.path.join(work_dir, f"{output_file_prefix}_T1wNeckTrim.nii.gz")
 
-    # This is in the original space, and contains 1 for voxels in the trimmed output
-    # and 0 for voxels outside the trimmed region. Used for QC
-    tmp_trim_region_image = os.path.join(work_dir, f"{output_file_prefix}_T1wNeckTrimRegion.nii.gz")
-
-    result = run_command(['trim_neck.sh', '-d', '-c', '20', '-w', work_dir, '-m', tmp_trim_region_image, input_image,
-                            tmp_image_trim])
+    run_command(['trim_neck.sh', '-d', '-c', '20', '-w', work_dir, input_image, tmp_image_trim])
 
     # Pad image with c3d and reslice mask to same space
-    result = run_command(['c3d', tmp_image_trim, '-pad', f"{pad_mm}x{pad_mm}x{pad_mm}mm",
-                            f"{pad_mm}x{pad_mm}x{pad_mm}mm", '0', '-o', tmp_image_trim])
+    run_command(['c3d', tmp_image_trim, '-pad', f"{pad_mm}x{pad_mm}x{pad_mm}mm", f"{pad_mm}x{pad_mm}x{pad_mm}mm", '0',
+                 '-o', tmp_image_trim])
 
-    return { 'trimmed_image': tmp_image_trim, 'trim_region_input_space': tmp_trim_region_image }
+    return tmp_image_trim
 
 
 def conform_image_orientation(input_image, output_orientation, work_dir):
