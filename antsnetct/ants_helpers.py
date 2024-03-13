@@ -208,7 +208,7 @@ def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=
                             'bias_corrected_anatomical_images': [ f"{stage_2_output_prefix}Segmentation{i}N4.nii.gz"
                                                for i in range(len(anatomical_images)) ],
                             'segmentation': f"{stage_2_output_prefix}Segmentation.nii.gz",
-                            'posteriors': [ f"{stage_2_output_prefix}SegmentationPosteriors_%02d.nii.gz" % i \
+                            'posteriors': [ f"{stage_2_output_prefix}SegmentationPosteriors%02d.nii.gz" % i \
                                 for i in range(1,7) ]
                             }
 
@@ -277,7 +277,7 @@ def n4_bias_correction(anatomical_image, brain_mask, segmentation_posteriors, wo
 
 def cortical_thickness(segmentation, segmentation_posteriors, work_dir, kk_its=45, grad_update=0.025, grad_smooth=1.5,
                        gm_lab=8, wm_lab=2, sgm_lab=9):
-    """Compute cortical thickness from an anatomical image.
+    """Compute cortical thickness from an anatomical image segmentation.
 
     Following antsCorticalThickness.sh, subcortical GM will be added to the WM label and posterior probabilty, cortical
     thickness is computed from the SGM/WM boundary to the pial surface.
@@ -293,7 +293,7 @@ def cortical_thickness(segmentation, segmentation_posteriors, work_dir, kk_its=4
     kk_its: int
         Number of iterations for cortical thickness estimation
     grad_update: float
-        gradient descent update parameter
+        gradient descent update step size parameter
     grad_smooth: float
         gradient field smoothing parameter
     gm_lab: int
@@ -309,25 +309,49 @@ def cortical_thickness(segmentation, segmentation_posteriors, work_dir, kk_its=4
         Path to cortical thickness image
     """
     # Make a temporary copy of the segmentation, we will modify this to merge subcortical GM into WM
-    kk_seg_file = os.path.join(work_dir, f"{get_nifti_file_prefix(segmentation)}_kkSegmentation.nii.gz")
-    kk_wm_posterior_file = os.path.join(work_dir, f"{get_nifti_file_prefix(segmentation)}_kkWMPosterior.nii.gz")
-
     kk_seg = ants.image_read(segmentation)
 
     # Add subcortical GM to WM
     kk_seg[kk_seg == sgm_lab] = wm_lab
+
+    kk_seg_file = os.path.join(work_dir, f"{get_nifti_file_prefix(segmentation)}_kk_seg.nii.gz")
+
     ants.image_write(kk_seg, kk_seg_file)
+
     wm_posterior = ants.image_read(segmentation_posteriors[2])
     sgm_posterior = ants.image_read(segmentation_posteriors[3])
 
     kk_wm_posterior = wm_posterior + sgm_posterior
+
+    kk_wm_posterior_file = os.path.join(work_dir, f"{get_nifti_file_prefix(segmentation)}_kk_wm_posterior.nii.gz")
+
     ants.image_write(kk_wm_posterior, kk_wm_posterior_file)
 
-    kk = ants.kelly_kapowski(s=kk_seg_file, g=segmentation_posteriors[1], w=kk_wm_posterior_file, its=kk_its,
-                             r=grad_update, x=grad_smooth, verbose=True, gm_label=gm_lab, wm_label=wm_lab)
-
     thick_file = os.path.join(work_dir, f"{get_nifti_file_prefix(segmentation)}_cortical_thickness.nii.gz")
-    ants.image_write(kk, thick_file)
+    # We'll do things on the command line so we can access all the options and check the exit code
+    # kk = ants.kelly_kapowski(s=kk_seg, g=gm_posterior, w=kk_wm_posterior, its=kk_its, r=grad_update, x=grad_smooth,
+    #                         verbose=True, gm_label=gm_lab, wm_label=wm_lab)
+    # ants.image_write(kk, thick_file)
+
+    # Encode additional defaults from antsCorticalThickness.sh
+    # DIRECT_CONVERGENCE="[ 45,0.0,10 ]" - iterations modifiable here as in antsCorticalThickness.sh, default same
+    #
+    # DIRECT_THICKNESS_PRIOR="10" - fixed as in antsCorticalThickness.sh
+    #
+    # DIRECT_GRAD_STEP_SIZE="0.025" - modifiable but default as in antsCorticalThickness.sh.
+    #
+    # DIRECT_SMOOTHING_PARAMETER="1.5" - This is modified by turning on b-spline smoothing, which we don't support here.
+    #                                    Default to the same value as antsCorticalThickness.sh
+    #
+    # DIRECT_NUMBER_OF_DIFF_COMPOSITIONS="10" - Fixed as in antsCorticalThickness.sh
+    #
+    # USE_BSPLINE_SMOOTHING=0 - this is modifiable by the user, but we don't support b-spline smoothing here.
+    cmd = ['KellyKapowski', '-d', '3', '-s', f"[{kk_seg_file}, {gm_lab}, {wm_lab}]", '-g', segmentation_posteriors[1],
+           '-w', kk_wm_posterior_file, '-o', thick_file, '-r', str(grad_update), '-m', str(grad_smooth),
+           '-c', f"[{kk_its},0.0,10]", '-b', '0', '-t', '10', '-n', '10', '-v', '1']
+
+    run_command(cmd)
+
     return thick_file
 
 
@@ -373,9 +397,9 @@ def anatomical_template_registration(fixed_image, moving_image, work_dir, fixed_
 
     Returns:
     --------
-    composite_fwd_transform: str
+    fwd_transform: str
         Path to composite forward transform
-    composite_inv_transform: str
+    inv_transform: str
         Path to composite inverse transform
     moving_image_warped: str
         Path to warped moving image, if apply_transforms is True
@@ -466,13 +490,13 @@ def anatomical_template_registration(fixed_image, moving_image, work_dir, fixed_
 
         run_command(apply_inv_cmd)
 
-        return {'composite_fwd_transform': composite_fwd_transform, 'composite_inv_transform': composite_inv_transform,
+        return {'forward_transform': composite_fwd_transform, 'inverse_transform': composite_inv_transform,
                 'moving_image_warped': moving_image_warped, 'fixed_image_warped': fixed_image_warped}
 
-    return {'composite_fwd_transform': composite_fwd_transform, 'composite_inv_transform': composite_inv_transform}
+    return {'forward_transform': composite_fwd_transform, 'inverse_transform': composite_inv_transform}
 
 
-def apply_transform(fixed_image, moving_image, work_dir, transform='Identity', interpolation='Linear'):
+def apply_transforms(fixed_image, moving_image, transform, work_dir, interpolation='Linear'):
     """Apply a transform, resampling moving image into fixed image space.
 
     The default transform is identity, and simply reslices the moving image to the space of the fixed image.
@@ -483,10 +507,10 @@ def apply_transform(fixed_image, moving_image, work_dir, transform='Identity', i
         Path to fixed image
     moving_image: str
         Path to moving image
-    work_dir: str
-        Path to working directory
     transform: str
         Path to transform file, or 'Identity' for an identity transform
+    work_dir: str
+        Path to working directory
     interpolation: str
         Interpolation method, e.g. 'Linear', 'NearestNeighbor'
 
@@ -515,7 +539,7 @@ def apply_transform(fixed_image, moving_image, work_dir, transform='Identity', i
 
 
 def reslice_to_reference(reference_image, source_image, work_dir):
-    """Reslice an image to conform to a reference image. This is a simple wrapper around apply_transform, assuming
+    """Reslice an image to conform to a reference image. This is a simple wrapper around apply_transforms, assuming
     the identity transform and NearestNeighbor interpolation.
 
     Parameters:
@@ -532,7 +556,7 @@ def reslice_to_reference(reference_image, source_image, work_dir):
     resliced_image: str
         Path to resliced image
     """
-    resliced = apply_transform(reference_image, source_image, work_dir, transform='Identity', interpolation='NearestNeighbor')
+    resliced = apply_transforms(reference_image, source_image, 'Identity', work_dir, interpolation='NearestNeighbor')
     return resliced
 
 
@@ -556,10 +580,6 @@ def posteriors_to_segmentation(posteriors, work_dir, class_labels=[0, 3, 8, 2, 9
         Path to segmentation image
     """
 
-    # Create a segmentation image from the posteriors
-    seg = ants.image_read(posteriors[0])
-    seg.fill(0)
-
     posterior_images = [ants.image_read(p) for p in posteriors]
 
     posteriors_np = [posterior.numpy() for posterior in posterior_images]
@@ -575,23 +595,26 @@ def posteriors_to_segmentation(posteriors, work_dir, class_labels=[0, 3, 8, 2, 9
     background_np_expanded = np.expand_dims(background_np, axis=0)
     stacked_posteriors_with_background = np.concatenate((background_np_expanded, stacked_posteriors), axis=0)
 
-    # Find the index of the maximum probability for each voxel across the
-    # new axis
+    # Find the index of the maximum probability for each voxel
     seg_indices = np.argmax(stacked_posteriors_with_background, axis=0)
 
     # Map these indices to the class_labels
     seg_indices_function = np.vectorize(lambda x: class_labels[x])
     output_seg_indices = seg_indices_function(seg_indices)
+    output_seg_indices = output_seg_indices.astype(np.uint32)
 
     # Convert the numpy array of indices back to an ANTs image if necessary
     # Use one of the original images to get the space information (e.g., spacing, origin, direction)
-    reference_image = posteriors[0]
+    reference_image = posterior_images[0]
     seg = ants.from_numpy(output_seg_indices, spacing=reference_image.spacing, origin=reference_image.origin,
                           direction=reference_image.direction)
 
-    ants.image_write(seg, os.path.join(work_dir, 'synthesizedSegmentationFromPosteriors.nii.gz'))
+    seg_file = os.path.join(work_dir,
+                            f"{get_nifti_file_prefix(posteriors[0])}_" + 'synthesizedSegmentationFromPosteriors.nii.gz')
 
-    return seg
+    ants.image_write(seg, seg_file)
+
+    return seg_file
 
 
 def binarize_brain_mask(segmentation, work_dir):
@@ -653,7 +676,8 @@ def get_log_jacobian_determinant(reference_image, transform, work_dir, use_geom=
     reference_image: str
         Path to reference image.
     transform: str
-        Path to transform file in the space of the reference image.
+        Path to transform file in the space of the reference image. This should be a composite h5 forward transform
+        from the moving to the fixed space.
     work_dir: str
         Path to working directory.
     use_geom: bool
@@ -664,14 +688,21 @@ def get_log_jacobian_determinant(reference_image, transform, work_dir, use_geom=
     log_jacobian: str
         Path to log of the determinant of the Jacobian
     """
-    log_jacobian = os.path.join(work_dir, f"{reference_image.get_nifti_file_prefix()}_log_jacobian.nii.gz")
+    log_jacobian_file = os.path.join(work_dir, f"{get_nifti_file_prefix(reference_image)}_log_jacobian.nii.gz")
 
-    domain_image = ants.image_read(reference_image)
-    transform = ants.read_transform(transform)
+    # First decompose transform into its components
 
-    jac = ants.create_jacobian_determinant_image(domain_image, transform, do_log=True, geom=use_geom)
+    decomposed_basename_prefix = os.path.basename(transform).rsplit('.', 1)[0] + '_decomposed'
 
-    ants.image_write(jac, log_jacobian)
+    cmd = ['CompositeTransformUtil', '--disassemble', transform, os.path.join(work_dir, decomposed_basename_prefix)]
 
-    return log_jacobian
+    run_command(cmd)
+
+    warp_file = os.path.join(work_dir, decomposed_basename_prefix + '_01_DisplacementFieldTransform.nii.gz')
+
+    cmd = ['CreateJacobianDeterminantImage', '3', warp_file, log_jacobian_file, '1', '1' if use_geom else '0']
+
+    run_command(cmd)
+
+    return log_jacobian_file
 

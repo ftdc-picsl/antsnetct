@@ -212,7 +212,7 @@ class TemplateImage:
 
     def __init__(self, name, suffix, resolution='01', description=None, cohort=None):
 
-        template_metadata = templateflow.get_metadata(name)
+        template_metadata = templateflow.api.get_metadata(name)
 
         # Almost all templates use res-1 or res-01, but if there's no resolution in the metadata, we'll use None
         if not 'res' in template_metadata:
@@ -239,7 +239,7 @@ class TemplateImage:
         if not template_res_found:
             raise ValueError(f"Resolution {resolution} not found in template metadata")
 
-        template_matches = templateflow.get(name, resolution=resolution, desc=description, cohort=cohort, suffix=suffix)
+        template_matches = templateflow.api.get(name, resolution=resolution, desc=description, cohort=cohort, suffix=suffix)
 
         if type(template_matches) is list:
             raise ValueError(f"Template could not be uniquely identified from the input. Found: {template_matches}")
@@ -547,6 +547,7 @@ def find_brain_mask(mask_dataset_directory, input_image):
 
     # defined only if the mask dataset is the same as the input dataset
     input_local_uri = None
+    mask_in_input_dataset = False
 
     if input_image.get_ds_name() == mask_dataset_name:
         mask_in_input_dataset = True
