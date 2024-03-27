@@ -472,12 +472,15 @@ def _get_generated_by(existing_generated_by=None):
             A dictionary for the GeneratedBy field in the dataset_description.json
 
     """
+
+    docker_tag = os.environ.get('DOCKER_IMAGE_TAG', 'unknown')
+
     generated_by = []
 
     if existing_generated_by is not None:
         generated_by = copy.deepcopy(existing_generated_by)
         for gb in existing_generated_by:
-            if gb['Name'] == 'antsnetct' and gb['Container']['Tag'] == os.environ.get('DOCKER_IMAGE_TAG'):
+            if gb['Name'] == 'antsnetct' and gb['Container']['Tag'] == docker_tag:
                 # Don't overwrite existing generated_by if it's already set to this pipeline
                 return generated_by
 
@@ -489,7 +492,7 @@ def _get_generated_by(existing_generated_by=None):
     gen_dict = {'Name': 'antsnetct',
                 'Version': os.environ.get('DOCKER_IMAGE_VERSION', 'unknown'),
                 'CodeURL': os.environ.get('GIT_REMOTE', 'unknown'),
-                'Container': {'Type': container_type, 'Tag': os.environ.get('DOCKER_IMAGE_TAG', 'unknown')}
+                'Container': {'Type': container_type, 'Tag': docker_tag}
                 }
 
     generated_by.append(gen_dict)

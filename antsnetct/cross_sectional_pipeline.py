@@ -64,14 +64,6 @@ def cross_sectional_analysis():
 
     --- Segmentation ---
 
-    The script will check for a segmentation from the segmentation dataset, if defined. If a segmentation is available,
-    it can either be used directly or as priors for iterative segmentation and bias correction with N4 and Atropos.
-
-    If no segmentation is available, priors are generated with anyspynet and used for segmentation and bias correction.
-
-    Existing segmentations should have the entity "seg-antsnetct" in the filename, and should represent the six classes
-    "CSF", "WM", "SGM", "BS", "CBM" in the order 1-6. If a segmentation is generated, it will be saved with these labels.
-
     Posteriors from an existing segmentation may be used as priors for Atropos. Posteriors should have the entity
     'label-<structure>' where structure includes CSF, CGM, WM, SGM, BS, CBM.
 
@@ -412,25 +404,25 @@ def segment_and_bias_correct(t1w_bids, t1w_bids_preproc, brain_mask_image, work_
     ValueError
         If the brain mask dataset is not None and does not contain a brain mask for the specified T1w image.
     """
-    prior_seg_posteriors = None
+    prior_seg_probabilities = None
 
     # If a segmentation dataset is defined, it is an error to not find a segmentation
     if segmentation_dataset is not None:
-        prior_seg_posteriors_bids = bids_helpers.find_segmentation_probability_images(segmentation_dataset, t1w_bids.get_uri())
-        if prior_seg_posteriors_bids is None:
+        prior_seg_probabilities_bids = bids_helpers.find_segmentation_probability_images(segmentation_dataset, t1w_bids.get_uri())
+        if prior_seg_probabilities_bids is None:
             raise ValueError('Segmentation dataset does not contain a segmentation for ' + t1w_bids)
         # Double check we have all the posteriors
-        if len(prior_seg_posteriors_bids) != 6:
+        if len(prior_seg_probabilities_bids) != 6:
             raise ValueError('Segmentation dataset does not contain all six posteriors for ' + t1w_bids)
         print("Using segmentation posteriors from " + segmentation_dataset)
         # reslice the posteriors to the preprocessed space
-        prior_seg_posteriors = [ants_helpers.reslice_to_reference(t1w_bids_preproc.get_path(), posterior.get_path(), work_dir)
-                                for posterior in prior_seg_posteriors_bids]
+        prior_seg_probabilities = [ants_helpers.reslice_to_reference(t1w_bids_preproc.get_path(), prob.get_path(), work_dir)
+                                for prob in prior_seg_probabilities_bids]
     else:
         # If no segmentation is found, generate one with antspynet
         print("No segmentation found, generating one with antspynet")
         antsnet_seg = ants_helpers.deep_atropos(t1w_bids_preproc.get_path(), work_dir)
-        prior_seg_posteriors = antsnet_seg['posteriors']
+        prior_seg_probabilities = antsnet_seg['posteriors']
 
     # dict to be populated by ants_atropos_n4 or by using the priors directly
     seg_output = {}
@@ -438,12 +430,12 @@ def segment_and_bias_correct(t1w_bids, t1w_bids_preproc, brain_mask_image, work_
     if segmentation_method.lower() == 'atropos':
         # Run antsAtroposN4.sh, using the priors for segmentation and bias correction
         seg_output = ants_helpers.ants_atropos_n4(t1w_bids_preproc.get_path(), brain_mask_image.get_path(),
-                                                         prior_seg_posteriors, work_dir, iterations=atropos_n4_iterations)
+                                                         prior_seg_probabilities, work_dir, iterations=atropos_n4_iterations)
         seg_output['segmentation_image'] = ants_helpers.posteriors_to_segmentation(seg_output['posteriors'], work_dir)
     elif segmentation_method.lower() == 'none':
 
         posteriors_masked = [ants_helpers.apply_mask(posterior, brain_mask_image.get_path(), work_dir)
-                                for posterior in prior_seg_posteriors]
+                                for posterior in prior_seg_probabilities]
 
         # Copy the prior segmentation
         segmentation_image = ants_helpers.posteriors_to_segmentation(posteriors_masked, work_dir)
@@ -461,25 +453,32 @@ def segment_and_bias_correct(t1w_bids, t1w_bids_preproc, brain_mask_image, work_
     # Copy the segmentation outputs to the output dataset
     seg_output_bids = {}
 
-    seg_output_bids['segmentation_image'] = bids_helpers.image_to_bids(seg_output['segmentation_image'],
-                                                                       t1w_bids_preproc.get_ds_path(),
-                                                                       t1w_bids_preproc.get_derivative_rel_path_prefix() +
-                                                                       '_seg-antsnetct_dseg.nii.gz')
-
     seg_output_bids['posteriors'] = list()
 
-    seg_posterior_labels = ['CSF', 'GM', 'WM', 'SGM', 'BS', 'CBM']
+    seg_posterior_labels = ['CSF', 'CGM', 'WM', 'SGM', 'BS', 'CBM']
 
     for idx, seg_label in enumerate(seg_posterior_labels):
         seg_output_bids['posteriors'].append(
             bids_helpers.image_to_bids(seg_output['posteriors'][idx], t1w_bids_preproc.get_ds_path(),
                                        t1w_bids_preproc.get_derivative_rel_path_prefix() +
-                                       f"_seg-antsnetct_label-{seg_posterior_labels[idx]}_probseg.nii.gz"))
+                                       f"_seg-antsnetct_label-{seg_posterior_labels[idx]}_probseg.nii.gz",
+                                       metadata={'Sources': [t1w_bids_preproc.get_uri(), brain_mask_image.get_uri()]})
+        )
+
+    seg_sources = [t1w_bids_preproc.get_uri(), brain_mask_image.get_uri()]
+    seg_sources.extend([prob.get_uri() for prob in seg_output_bids['posteriors']])
+
+    seg_output_bids['segmentation_image'] = \
+        bids_helpers.image_to_bids(seg_output['segmentation_image'], t1w_bids_preproc.get_ds_path(),
+                                   t1w_bids_preproc.get_derivative_rel_path_prefix() + '_seg-antsnetct_dseg.nii.gz',
+                                   metadata={'Sources': seg_sources})
 
     bias_corrected_t1w = bids_helpers.image_to_bids(seg_output['bias_corrected_anatomical_images'][0],
                                                                        t1w_bids_preproc.get_ds_path(),
                                                                        t1w_bids_preproc.get_derivative_rel_path_prefix() +
-                                                                       "_desc-biascorr_T1w.nii.gz")
+                                                                       "_desc-biascorr_T1w.nii.gz",
+                                                                       metadata = {'Sources': [t1w_bids_preproc.get_uri()],
+                                                                                   'SkullStripped': False})
 
     seg_output_bids['bias_corrected_t1w'] = bias_corrected_t1w
 
@@ -512,8 +511,10 @@ def cortical_thickness(seg_n4, work_dir, thickness_iterations=45):
     thickness = ants_helpers.cortical_thickness(seg_n4['segmentation_image'].get_path(), posterior_files, work_dir,
                                                 kk_its=thickness_iterations)
 
-    thickness_metadata = {'Sources': [seg_n4['segmentation_image'].get_uri()].extend(
-                                        [posterior.get_uri() for posterior in seg_n4['posteriors']])}
+    thick_sources = [seg_n4['segmentation_image'].get_uri()]
+    thick_sources.extend([posterior.get_uri() for posterior in seg_n4['posteriors']])
+
+    thickness_metadata = {'Sources': thick_sources}
 
     thickness_bids = bids_helpers.image_to_bids(thickness, seg_n4['segmentation_image'].get_ds_path(),
                                                 seg_n4['segmentation_image'].get_derivative_rel_path_prefix() +
