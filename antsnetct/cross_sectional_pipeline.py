@@ -351,7 +351,7 @@ def get_brain_mask(t1w_bids, t1w_bids_preproc, work_dir, brain_mask_dataset=None
                                       metadata=brain_mask_metadata)
 
 
-def segment_and_bias_correct(t1w_bids, t1w_bids_preproc, brain_mask_image, work_dir, segmentation_dataset=None,
+def segment_and_bias_correct(t1w_bids, t1w_bids_preproc, brain_mask_bids, work_dir, segmentation_dataset=None,
                              segmentation_method='atropos', atropos_n4_iterations=5):
     """Segment and bias correct a T1w image
 
@@ -378,8 +378,8 @@ def segment_and_bias_correct(t1w_bids, t1w_bids_preproc, brain_mask_image, work_
         T1w image from the input dataset. This is used to search for segmentation posteriors in the segmentation dataset.
     t1w_bids_preproc : BIDSImage
         T1w image object, should be the preprocessed T1w image in the output dataset. Output is in the space of this image.
-    brain_mask_image : BIDSImage
-        Brain mask image object for the preprocessed T1w image.
+    brain_mask_bids : BIDSImage
+        Brain mask for the preprocessed T1w image.
     work_dir : str
         Path to the working directory.
     segmentation_dataset : str, optional
@@ -429,12 +429,12 @@ def segment_and_bias_correct(t1w_bids, t1w_bids_preproc, brain_mask_image, work_
 
     if segmentation_method.lower() == 'atropos':
         # Run antsAtroposN4.sh, using the priors for segmentation and bias correction
-        seg_output = ants_helpers.ants_atropos_n4(t1w_bids_preproc.get_path(), brain_mask_image.get_path(),
+        seg_output = ants_helpers.ants_atropos_n4(t1w_bids_preproc.get_path(), brain_mask_bids.get_path(),
                                                          prior_seg_probabilities, work_dir, iterations=atropos_n4_iterations)
         seg_output['segmentation_image'] = ants_helpers.posteriors_to_segmentation(seg_output['posteriors'], work_dir)
     elif segmentation_method.lower() == 'none':
 
-        posteriors_masked = [ants_helpers.apply_mask(posterior, brain_mask_image.get_path(), work_dir)
+        posteriors_masked = [ants_helpers.apply_mask(posterior, brain_mask_bids.get_path(), work_dir)
                                 for posterior in prior_seg_probabilities]
 
         # Copy the prior segmentation
@@ -445,7 +445,7 @@ def segment_and_bias_correct(t1w_bids, t1w_bids_preproc, brain_mask_image, work_
 
         # Add the bias corrected image
         seg_output['bias_corrected_anatomical_images'] = [
-            ants_helpers.n4_bias_correction(t1w_bids_preproc.get_path(), brain_mask_image.get_path(), posteriors_masked,
+            ants_helpers.n4_bias_correction(t1w_bids_preproc.get_path(), brain_mask_bids.get_path(), posteriors_masked,
                                             work_dir)]
     else:
         raise ValueError('Unknown segmentation method: ' + segmentation_method)
@@ -462,10 +462,10 @@ def segment_and_bias_correct(t1w_bids, t1w_bids_preproc, brain_mask_image, work_
             bids_helpers.image_to_bids(seg_output['posteriors'][idx], t1w_bids_preproc.get_ds_path(),
                                        t1w_bids_preproc.get_derivative_rel_path_prefix() +
                                        f"_seg-antsnetct_label-{seg_posterior_labels[idx]}_probseg.nii.gz",
-                                       metadata={'Sources': [t1w_bids_preproc.get_uri(), brain_mask_image.get_uri()]})
+                                       metadata={'Sources': [t1w_bids_preproc.get_uri(), brain_mask_bids.get_uri()]})
         )
 
-    seg_sources = [t1w_bids_preproc.get_uri(), brain_mask_image.get_uri()]
+    seg_sources = [t1w_bids_preproc.get_uri(), brain_mask_bids.get_uri()]
     seg_sources.extend([prob.get_uri() for prob in seg_output_bids['posteriors']])
 
     seg_output_bids['segmentation_image'] = \
@@ -483,8 +483,8 @@ def segment_and_bias_correct(t1w_bids, t1w_bids_preproc, brain_mask_image, work_
     seg_output_bids['bias_corrected_t1w'] = bias_corrected_t1w
 
     # Write a brain-masked T1w image to the output - this will also be used for template registration
-    masked_t1w_image = ants_helpers.apply_mask(bias_corrected_t1w.get_path(), brain_mask_image.get_path(), work_dir)
-    masked_t1w_metadata = {'SkullStripped': True, 'Sources': [bias_corrected_t1w.get_uri(), brain_mask_image.get_uri()]}
+    masked_t1w_image = ants_helpers.apply_mask(bias_corrected_t1w.get_path(), brain_mask_bids.get_path(), work_dir)
+    masked_t1w_metadata = {'SkullStripped': True, 'Sources': [bias_corrected_t1w.get_uri(), brain_mask_bids.get_uri()]}
     seg_output_bids['bias_corrected_t1w_brain'] = \
         bids_helpers.image_to_bids(masked_t1w_image, bias_corrected_t1w.get_ds_path(),
                                    bias_corrected_t1w.get_derivative_rel_path_prefix() +
