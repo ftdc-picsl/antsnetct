@@ -12,7 +12,8 @@ import os
 import shutil
 import sys
 import tempfile
-import traceback
+
+logger = logging.getLogger(__name__)
 
 # Helps with CLI help formatting
 class RawDefaultsHelpFormatter(
@@ -21,8 +22,6 @@ class RawDefaultsHelpFormatter(
     pass
 
 def cross_sectional_analysis():
-
-    logger = logging.getLogger(__name__)
 
     parser = argparse.ArgumentParser(formatter_class=RawDefaultsHelpFormatter, add_help = False,
                                      description='''Cortical thickness analysis with ANTsPyNet.
@@ -103,12 +102,13 @@ def cross_sectional_analysis():
     optional_parser.add_argument("-h", "--help", action="help", help="show this help message and exit")
     optional_parser.add_argument("--keep-workdir", help="Copy working directory to output, for debugging purposes. Either "
                                  "'never', 'on_error', or 'always'.", type=str, default='on_error')
-    optional_parser.add_argument("--verbose", help="Verbose output", action='store_true')
+    optional_parser.add_argument("--verbose", help="Verbose output from subcommands", action='store_true')
 
-    neck_trim_parser = parser.add_argument_group('Neck trimming arguments')
+    neck_trim_parser = parser.add_argument_group('Pre-processing arguments')
     neck_trim_parser.add_argument("--no-neck-trim", help="Disable neck trimming from the T1w image", dest="do_neck_trim",
                                   action='store_false')
-    neck_trim_parser.add_argument("--neck-trim-pad", help="Padding in mm to add to the trimmed image", type=int, default=10)
+    neck_trim_parser.add_argument("--pad-mm", help="Padding in mm to add to the image before processing, this is mostly "
+                                  "useful for registration with the skull on", type=int, default=10)
 
     template_parser = parser.add_argument_group('Template arguments')
     template_parser.add_argument("--template-name", help="Template to use for registration, or 'none' to disable this step.",
@@ -188,14 +188,14 @@ def cross_sectional_analysis():
     with open(os.path.join(output_dataset, 'dataset_description.json'), 'r') as f:
         output_dataset_description = json.load(f)
 
-    print("Output dataset path: " + output_dataset)
-    print("Output dataset name: " + output_dataset_description['Name'])
+    logger.info("Output dataset path: " + output_dataset)
+    logger.info("Output dataset name: " + output_dataset_description['Name'])
 
     # Returns a list of T1w images and URIs
     input_t1w_bids = bids_helpers.find_images(input_dataset, args.participant, args.session, 'anat', 'T1w')
 
     if input_t1w_bids is None or len(input_t1w_bids) == 0:
-        print(f"No T1w images found for participant {args.participant}, session {args.session}")
+        logger.error(f"No T1w images found for participant {args.participant}, session {args.session}")
         return
 
     for t1w_bids in input_t1w_bids:
@@ -204,26 +204,18 @@ def cross_sectional_analysis():
                 suffix=f"antsnetct_{system_helpers.get_nifti_file_prefix(t1w_bids.get_path())}.tmpdir") as working_dir:
             try:
 
-                print("Processing T1w image: " + t1w_bids.get_uri())
+                logger.info("Processing T1w image: " + t1w_bids.get_uri())
 
                 # check completeness
                 if os.path.exists(os.path.join(output_dataset, t1w_bids.get_derivative_rel_path_prefix() +
                                                '_seg-antsnetct_desc-thickness.nii.gz')):
-                    print(f"Skipping {str(t1w_bids)}, cortical thickness already exists")
+                    logger.info(f"Skipping {str(t1w_bids)}, cortical thickness already exists")
                     continue
 
                 # Preprocessing
                 # Conform to LPI orientation
-                preproc_t1w = preprocessing.conform_image_orientation(t1w_bids.get_path(), 'LPI', working_dir)
-
-                if args.do_neck_trim:
-                    # Trim the neck
-                    preproc_t1w = preprocessing.trim_neck(preproc_t1w, working_dir, pad_mm=args.neck_trim_pad)
-
-                # Copy the preprocessed T1w to the output
-                preproc_t1w_bids = bids_helpers.image_to_bids(
-                    preproc_t1w, output_dataset, t1w_bids.get_derivative_rel_path_prefix() + '_desc-preproc_T1w.nii.gz',
-                    metadata={'Sources': [t1w_bids.get_uri()], 'SkullStripped': False})
+                preproc_t1w_bids = preprocess_t1w(t1w_bids, working_dir, orient='LPI', trim_neck=args.do_neck_trim,
+                                                  pad=args.pad_mm)
 
                 # Find a brain mask using the first available in order of preference:
                 # 1. Brain mask dataset
@@ -260,18 +252,32 @@ def cross_sectional_analysis():
                     template_space_derivatives(template, template_reg, seg_n4, thickness, working_dir)
 
                 if args.keep_workdir.lower() == 'always':
-                    print("Keeping working directory: " + working_dir)
+                    logger.info("Keeping working directory: " + working_dir)
                     shutil.copytree(working_dir, os.path.join(output_dataset, preproc_t1w_bids.get_derivative_rel_path_prefix()
                                                               + "_workdir"))
 
             except Exception as e:
-                print(f"Caught {type(e)} during processing of {str(t1w_bids)}")
+                logger.error(f"Caught {type(e)} during processing of {str(t1w_bids)}")
                 debug_workdir = os.path.join(output_dataset, t1w_bids.get_derivative_rel_path_prefix() + "_workdir")
                 if args.keep_workdir.lower() != 'never':
-                    print("Saving working directory to " + debug_workdir)
+                    logger.info("Saving working directory to " + debug_workdir)
                     shutil.copytree(working_dir, debug_workdir)
-                raise e
 
+
+def preprocess_t1w(t1w_bids, output_dataset, work_dir, orient='LPI', trim_neck=True, pad=10):
+    preproc_t1w = preprocessing.conform_image_orientation(t1w_bids.get_path(), orient, work_dir)
+
+    if trim_neck:
+        preproc_t1w = preprocessing.trim_neck(preproc_t1w, work_dir)
+
+    preproc_t1w = preprocessing.pad_image(preproc_t1w, work_dir, pad_mm=pad)
+
+    # Copy the preprocessed T1w to the output
+    preproc_t1w_bids = bids_helpers.image_to_bids(preproc_t1w, output_dataset, t1w_bids.get_derivative_rel_path_prefix() +
+                                                  '_desc-preproc_T1w.nii.gz',
+                                                  metadata={'Sources': [t1w_bids.get_uri()], 'SkullStripped': False})
+
+    return preproc_t1w_bids
 
 def get_brain_mask(t1w_bids, t1w_bids_preproc, work_dir, brain_mask_dataset=None, brain_mask_method='t1'):
     """Get a brain mask for a T1w image.
@@ -318,7 +324,7 @@ def get_brain_mask(t1w_bids, t1w_bids_preproc, work_dir, brain_mask_dataset=None
         if brain_mask is None:
             raise ValueError('Brain mask dataset does not contain a brain mask for ' + t1w_bids)
         # Found a brain mask
-        print("Using brain mask: " + brain_mask)
+        logger.info("Using brain mask: " + brain_mask)
         found_brain_mask = True
         brain_mask_path = brain_mask.get_path()
         brain_mask_metadata = brain_mask.get_metadata()
@@ -328,13 +334,13 @@ def get_brain_mask(t1w_bids, t1w_bids_preproc, work_dir, brain_mask_dataset=None
         brain_mask = bids_helpers.find_brain_mask(t1w_bids.get_ds_path(), t1w_bids)
         if brain_mask is not None:
             # Found a brain mask in input dataset
-            print("Using brain mask: " + brain_mask)
+            logger.info("Using brain mask: " + brain_mask)
             found_brain_mask = True
             brain_mask_path = brain_mask.get_path()
             brain_mask_metadata = brain_mask.get_metadata()
 
     if not found_brain_mask:
-        print("No brain mask found, generating one with antspynet")
+        logger.info("No brain mask found, generating one with antspynet")
         brain_mask_path = ants_helpers.deep_brain_extraction(t1w_bids_preproc.get_path(), work_dir, brain_mask_method)
         brain_mask_metadata = {'Type': 'Brain', 'Sources': [t1w_bids_preproc.get_uri()]}
         brain_mask_reslice = brain_mask_path # mask is already in the preprocessed space
@@ -414,13 +420,13 @@ def segment_and_bias_correct(t1w_bids, t1w_bids_preproc, brain_mask_bids, work_d
         # Double check we have all the posteriors
         if len(prior_seg_probabilities_bids) != 6:
             raise ValueError('Segmentation dataset does not contain all six posteriors for ' + t1w_bids)
-        print("Using segmentation posteriors from " + segmentation_dataset)
+        logger.info("Using segmentation posteriors from " + segmentation_dataset)
         # reslice the posteriors to the preprocessed space
         prior_seg_probabilities = [ants_helpers.reslice_to_reference(t1w_bids_preproc.get_path(), prob.get_path(), work_dir)
                                 for prob in prior_seg_probabilities_bids]
     else:
         # If no segmentation is found, generate one with antspynet
-        print("No segmentation found, generating one with antspynet")
+        logger.info("No segmentation found, generating one with antspynet")
         antsnet_seg = ants_helpers.deep_atropos(t1w_bids_preproc.get_path(), work_dir)
         prior_seg_probabilities = antsnet_seg['posteriors']
 
@@ -428,12 +434,13 @@ def segment_and_bias_correct(t1w_bids, t1w_bids_preproc, brain_mask_bids, work_d
     seg_output = {}
 
     if segmentation_method.lower() == 'atropos':
+        logger.info("Running Atropos with N4 bias correction")
         # Run antsAtroposN4.sh, using the priors for segmentation and bias correction
         seg_output = ants_helpers.ants_atropos_n4(t1w_bids_preproc.get_path(), brain_mask_bids.get_path(),
                                                          prior_seg_probabilities, work_dir, iterations=atropos_n4_iterations)
         seg_output['segmentation_image'] = ants_helpers.posteriors_to_segmentation(seg_output['posteriors'], work_dir)
     elif segmentation_method.lower() == 'none':
-
+        logger.info("Segmentation method is none, generating final segmentation directly from priors")
         posteriors_masked = [ants_helpers.apply_mask(posterior, brain_mask_bids.get_path(), work_dir)
                                 for posterior in prior_seg_probabilities]
 

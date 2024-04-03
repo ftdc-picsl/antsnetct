@@ -2,7 +2,7 @@ import os
 
 from .system_helpers import run_command, get_nifti_file_prefix
 
-def trim_neck(input_image, work_dir, pad_mm=10):
+def trim_neck(input_image, work_dir):
     """Trim the neck from an image
 
     Parameters:
@@ -11,27 +11,44 @@ def trim_neck(input_image, work_dir, pad_mm=10):
         Input image filename
     work_dir : str
         Working directory
-    pad_mm : int
-        Padding in mm to add to the trimmed image
     Returns:
     -------
-    dict: a dictionary with keys
-        'trimmed_image' - trimmed image
-        'trim_region_input_space' - a mask of the trimmed region in the original space
+    trimmed_image: str
+        The trimmed image filename
     """
 
     output_file_prefix = get_nifti_file_prefix(input_image)
 
-    # trim neck with c3d, reslice mask into trimmed space
+    # trim neck with c3d
     tmp_image_trim = os.path.join(work_dir, f"{output_file_prefix}_T1wNeckTrim.nii.gz")
 
     run_command(['trim_neck.sh', '-d', '-c', '20', '-w', work_dir, input_image, tmp_image_trim])
 
-    # Pad image with c3d and reslice mask to same space
-    run_command(['c3d', tmp_image_trim, '-pad', f"{pad_mm}x{pad_mm}x{pad_mm}mm", f"{pad_mm}x{pad_mm}x{pad_mm}mm", '0',
-                 '-o', tmp_image_trim])
-
     return tmp_image_trim
+
+def pad_image(input_image, work_dir, pad_mm=10):
+    """ Pad an image with zeros
+
+    Parameters:
+    ----------
+    input_image (str):
+        Input image filename
+    work_dir (str):
+        Working directory
+    pad_mm (float):
+        Pad size in mm, applied to all sides of the image
+
+    Returns:
+    -------
+    padded_image (str):
+        Padded image filename
+    """
+
+    # Pad image with c3d
+    padded_image = os.path.join(work_dir, get_nifti_file_prefix(input_image) + '_padded.nii.gz')
+    run_command(['c3d', input_image, '-pad', f"{pad_mm}x{pad_mm}x{pad_mm}mm", f"{pad_mm}x{pad_mm}x{pad_mm}mm", '0',
+                 '-o', padded_image])
+    return padded_image
 
 
 def conform_image_orientation(input_image, output_orientation, work_dir):
