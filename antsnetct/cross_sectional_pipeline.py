@@ -12,6 +12,7 @@ import os
 import shutil
 import sys
 import tempfile
+import traceback
 
 logger = logging.getLogger(__name__)
 
@@ -214,8 +215,8 @@ def cross_sectional_analysis():
 
                 # Preprocessing
                 # Conform to LPI orientation
-                preproc_t1w_bids = preprocess_t1w(t1w_bids, working_dir, orient='LPI', trim_neck=args.do_neck_trim,
-                                                  pad=args.pad_mm)
+                preproc_t1w_bids = preprocess_t1w(t1w_bids, output_dataset, working_dir, orient='LPI',
+                                                  trim_neck=args.do_neck_trim, pad=args.pad_mm)
 
                 # Find a brain mask using the first available in order of preference:
                 # 1. Brain mask dataset
@@ -258,6 +259,8 @@ def cross_sectional_analysis():
 
             except Exception as e:
                 logger.error(f"Caught {type(e)} during processing of {str(t1w_bids)}")
+                # Print stack trace
+                traceback.print_exc()
                 debug_workdir = os.path.join(output_dataset, t1w_bids.get_derivative_rel_path_prefix() + "_workdir")
                 if args.keep_workdir.lower() != 'never':
                     logger.info("Saving working directory to " + debug_workdir)
@@ -265,6 +268,29 @@ def cross_sectional_analysis():
 
 
 def preprocess_t1w(t1w_bids, output_dataset, work_dir, orient='LPI', trim_neck=True, pad=10):
+    """Preprocess a T1w image, including orientation, neck trimming, and padding.
+
+    Parameters:
+    -----------
+    t1w_bids : BIDSImage
+        BIDSImage object for the T1w image.
+    output_dataset : str
+        Path to the output dataset.
+    work_dir : str
+        Path to the working directory.
+    orient : str, optional
+        Orientation to conform the preprocessed image. Default is 'LPI'.
+    trim_neck : bool, optional
+        Whether to trim the neck from the image. Default is True.
+    pad : float, optional
+        Padding in mm to add to the image (after neck trimming, if enabled). Default is 10.
+
+    Returns:
+    --------
+    BIDSImage
+        The preprocessed T1w image in the output dataset.
+
+    """
     preproc_t1w = preprocessing.conform_image_orientation(t1w_bids.get_path(), orient, work_dir)
 
     if trim_neck:
@@ -322,9 +348,9 @@ def get_brain_mask(t1w_bids, t1w_bids_preproc, work_dir, brain_mask_dataset=None
     if brain_mask_dataset is not None:
         brain_mask = bids_helpers.find_brain_mask(brain_mask_dataset, t1w_bids)
         if brain_mask is None:
-            raise ValueError('Brain mask dataset does not contain a brain mask for ' + t1w_bids)
+            raise ValueError('Brain mask dataset does not contain a brain mask for ' + str(t1w_bids))
         # Found a brain mask
-        logger.info("Using brain mask: " + brain_mask)
+        logger.info("Using brain mask: " + str(brain_mask))
         found_brain_mask = True
         brain_mask_path = brain_mask.get_path()
         brain_mask_metadata = brain_mask.get_metadata()
