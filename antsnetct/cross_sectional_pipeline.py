@@ -440,12 +440,14 @@ def segment_and_bias_correct(t1w_bids, t1w_bids_preproc, brain_mask_bids, work_d
 
     # If a segmentation dataset is defined, it is an error to not find a segmentation
     if segmentation_dataset is not None:
-        prior_seg_probabilities_bids = bids_helpers.find_segmentation_probability_images(segmentation_dataset, t1w_bids.get_uri())
+        prior_seg_probabilities_bids = \
+            bids_helpers.find_segmentation_probability_images(segmentation_dataset, t1w_bids)
         if prior_seg_probabilities_bids is None:
-            raise ValueError('Segmentation dataset does not contain a segmentation for ' + t1w_bids)
+            raise ValueError('Segmentation dataset does not contain a segmentation for ' + t1w_bids.get_uri())
         # Double check we have all the posteriors
         if len(prior_seg_probabilities_bids) != 6:
-            raise ValueError('Segmentation dataset does not contain all six posteriors for ' + t1w_bids)
+            raise ValueError('Segmentation dataset does not contain all six posteriors for ' +
+                             t1w_bids.get_uri())
         logger.info("Using segmentation posteriors from " + segmentation_dataset)
         # reslice the posteriors to the preprocessed space
         prior_seg_probabilities = [ants_helpers.reslice_to_reference(t1w_bids_preproc.get_path(), prob.get_path(), work_dir)

@@ -606,6 +606,8 @@ def find_segmentation_probability_images(seg_dataset_directory, input_image):
     # defined only if the segmentations dataset is the same as the input dataset
     input_local_uri = None
 
+    seg_in_input_dataset = False
+
     if input_image.get_ds_name() == seg_dataset_name:
         seg_in_input_dataset = True
         input_local_uri = input_image.get_uri(relative=True)
@@ -643,25 +645,25 @@ def find_segmentation_probability_images(seg_dataset_directory, input_image):
                         sidecar_image = get_sidecar_image(sidecar_path)
                         posterior_image = os.path.join(modality_dir, sidecar_image)
 
-            # Get the posterior index from the filename
-            posterior_label = re.search(r'label-([A-Z]+)', sidecar).match(1)
+                        # Get the posterior index from the filename
+                        posterior_label = re.search(r'label-([A-Z]+)', sidecar).group(1)
 
-            if (posterior_label == 'CSF'):
-                posterior_index = 0
-            elif (posterior_label == 'CGM'):
-                posterior_index = 1
-            elif (posterior_label == 'WM'):
-                posterior_index = 2
-            elif (posterior_label == 'SGM'):
-                posterior_index = 3
-            elif (posterior_label == 'BS'):
-                posterior_index = 4
-            elif (posterior_label == 'CBM'):
-                posterior_index = 5
+                        if (posterior_label == 'CSF'):
+                            posterior_index = 0
+                        elif (posterior_label == 'CGM'):
+                            posterior_index = 1
+                        elif (posterior_label == 'WM'):
+                            posterior_index = 2
+                        elif (posterior_label == 'SGM'):
+                            posterior_index = 3
+                        elif (posterior_label == 'BS'):
+                            posterior_index = 4
+                        elif (posterior_label == 'CBM'):
+                            posterior_index = 5
 
-            if posterior_index is not None:
-                output_posteriors[posterior_index] = BIDSImage(seg_dataset_directory,
-                                                               os.path.relpath(posterior_image, seg_dataset_directory))
+                        if posterior_index is not None:
+                            output_posteriors[posterior_index] = BIDSImage(seg_dataset_directory,
+                                                                        os.path.relpath(posterior_image, seg_dataset_directory))
 
     # If we didn't find all the necessary classes, return None
     for i in range(6):
