@@ -177,9 +177,10 @@ class BIDSImage:
 
 
     def get_derivative_path_prefix(self):
-        """Get the the prefix for extensions, which includes the full path to the file without its BIDS suffix
+        """Get the the prefix for derivatives, which includes the full path to the file without its BIDS suffix and extension.
 
-        For raw data, only the suffix is removed. For derivatives, the _desc-DESCRIPTION entity is also removed.
+        For raw data, only the suffix (eg, '_T1w.nii.gz') is removed. For derivatives, the _desc-DESCRIPTION entity is also
+        removed.
 
         """
         return self._derivative_path_prefix
@@ -331,7 +332,6 @@ def get_image_sidecar(image_file):
     -------
     str: The sidecar file for the image.
     """
-
     if image_file.endswith('.nii.gz'):
         return image_file[:-7] + '.json'
     elif image_file.endswith('.nii'):
@@ -525,15 +525,15 @@ def set_sources(sidecar_path, sources):
 
 def find_brain_mask(mask_dataset_directory, input_image):
     """
-    Search a mask dataset for a mask for a given image. Returns the first brain mask sourced from the input image.
-    Looks for brain mask matching '*desc-brain*_mask.nii.gz'
+    Search a mask dataset for a mask for a given image. Returns the first brain mask derived from the input image.
+    Looks for brain mask matching '*desc-brain*_mask.nii.gz' with optional space-orig and res-01 entities.
 
     Parameters:
     ----------
     mask_dataset_directory: str
         Path to the mask dataset directory
     input_image: BIDSImage
-        The input image that is the source for the mask
+        The input image that the mask is derived from.
 
     Returns:
     --------
@@ -545,34 +545,14 @@ def find_brain_mask(mask_dataset_directory, input_image):
         dataset_description = json.load(f)
         mask_dataset_name = dataset_description['Name']
 
-    # Gets the dataset name and relative image path
-    input_image_uri = input_image.get_uri()
+    search_prefix = input_image.get_derivative_rel_path_prefix()
+    search_dir_relpath = os.path.dirname(search_prefix)
+    search_pattern = re.compile(rf"{search_prefix}(?:_space-orig)?(?:_res-01)?_desc-brain_mask.nii.gz")
 
-    # defined only if the mask dataset is the same as the input dataset
-    input_local_uri = None
-    mask_in_input_dataset = False
-
-    if input_image.get_ds_name() == mask_dataset_name:
-        mask_in_input_dataset = True
-        input_local_uri = input_image.get_uri(relative=True)
-
-    modality_dir = os.path.join(mask_dataset_directory, os.path.dirname(input_image.get_rel_path()))
-
-    # Search all sidecars in the modality directory for a mask with source image matching the input image
-    # sidecars are files ending in .json
-    for sidecar in os.listdir(modality_dir):
-        if sidecar.find('_desc-brain_') > -1 and sidecar.endswith('_mask.json'):
-            sidecar_path = os.path.join(modality_dir, sidecar)
-            with open(sidecar_path) as f:
-                sidecar_json = json.load(f)
-
-                if 'Sources' in sidecar_json:
-                    input_image_in_sources = input_image_uri in sidecar_json['Sources']
-                    input_image_in_local_sources = mask_in_input_dataset and input_local_uri in sidecar_json['Sources']
-
-                    if input_image_in_sources or input_image_in_local_sources:
-                        sidecar_image = get_sidecar_image(sidecar_path)
-                        return BIDSImage(mask_dataset_directory, os.path.relpath(sidecar_image, mask_dataset_directory))
+    for image_file in os.listdir(os.path.join(mask_dataset_directory, search_dir_relpath)):
+        image_rel_path = os.path.join(search_dir_relpath, image_file)
+        if search_pattern.match(image_rel_path):
+            return BIDSImage(mask_dataset_directory, image_rel_path)
 
     # No mask found
     return None
@@ -582,8 +562,16 @@ def find_brain_mask(mask_dataset_directory, input_image):
 def find_segmentation_probability_images(seg_dataset_directory, input_image):
     """Search a segmentation dataset for a segmentation and posteriors produced from a particular input image.
 
-    This function searches the segmentation dataset for segmetnation posteriors matching the BIDS
+    This function searches the segmentation dataset for segmentation posteriors matching the BIDS
     "Common image-derived labels": CSF, CGM, WM, SCGM, BS, CBM.
+
+    The file names are expected to match the pattern
+      '{source_entities}(?:_space-orig)?_(?:seg-[A-Za-z0-9]+)?(?:_res-01)?_label-{label}_probseg.nii.gz'
+
+    where {source_entities} are the file name parts of the derivative prefix of the input image. Note we do not
+    check the metadata Sources field, only the file name, because the segmentation may be indirectly derived from the
+    input T1w image. For example, if the segmentation input is a bias-corrected derivative of the input image, the original
+    input image may not be listed in the Sources field.
 
     Parameters:
     -----------
@@ -601,20 +589,6 @@ def find_segmentation_probability_images(seg_dataset_directory, input_image):
         dataset_description = json.load(f)
         seg_dataset_name = dataset_description['Name']
 
-    input_image_uri = input_image.get_uri()
-
-    # defined only if the segmentations dataset is the same as the input dataset
-    input_local_uri = None
-
-    seg_in_input_dataset = False
-
-    if input_image.get_ds_name() == seg_dataset_name:
-        seg_in_input_dataset = True
-        input_local_uri = input_image.get_uri(relative=True)
-
-    # Path to the data directory to search, eg /data/segds/sub-01/ses-01/anat
-    modality_dir = os.path.join(seg_dataset_directory, os.path.dirname(input_image.get_rel_path()))
-
     # the list to be returned, with posteriors in order
     output_posteriors = [None] * 6
 
@@ -622,48 +596,33 @@ def find_segmentation_probability_images(seg_dataset_directory, input_image):
     # sidecars are files ending in .json
     class_labels = {'CSF':0, 'CGM':1, 'WM':2, 'SGM':3, 'BS':4, 'CBM': 5}
 
-    for sidecar in os.listdir(modality_dir):
-        sidecar_path = os.path.join(modality_dir, sidecar)
-        if sidecar.endswith('_probseg.json'):
-            # posteriors
-            posterior_image = None
+    search_prefix = input_image.get_derivative_rel_path_prefix()
+    search_dir_relpath = os.path.dirname(search_prefix)
+    search_pattern = \
+        re.compile(rf"{search_prefix}(?:_space-orig)?(?:_seg-[A-Za-z0-9]+)?(?:_res-01)?_label-([A-Z]+)_probseg.nii.gz")
+
+    for image_file in os.listdir(os.path.join(seg_dataset_directory, search_dir_relpath)):
+        image_rel_path = os.path.join(search_dir_relpath, image_file)
+        label_match = search_pattern.match(image_rel_path)
+        if label_match:
+            posterior_label = label_match.group(1)
             posterior_index = None
+            if posterior_label in class_labels:
+                if (posterior_label == 'CSF'):
+                    posterior_index = 0
+                elif (posterior_label == 'CGM'):
+                    posterior_index = 1
+                elif (posterior_label == 'WM'):
+                    posterior_index = 2
+                elif (posterior_label == 'SGM'):
+                    posterior_index = 3
+                elif (posterior_label == 'BS'):
+                    posterior_index = 4
+                elif (posterior_label == 'CBM'):
+                    posterior_index = 5
 
-            sidecar_label_match = re.search(r'label-([A-Z]+)', sidecar)
-
-            if not (sidecar_label_match and sidecar_label_match.group(1) in class_labels):
-                continue
-
-            with open(sidecar_path) as f:
-                sidecar_json = json.load(f)
-                sources_exist = 'Sources' in sidecar_json
-                if sources_exist:
-                    input_image_in_sources = input_image_uri in sidecar_json['Sources']
-                    input_image_in_local_sources = seg_in_input_dataset and input_local_uri in sidecar_json['Sources']
-
-                    if input_image_in_sources or input_image_in_local_sources:
-                        sidecar_image = get_sidecar_image(sidecar_path)
-                        posterior_image = os.path.join(modality_dir, sidecar_image)
-
-                        # Get the posterior index from the filename
-                        posterior_label = re.search(r'label-([A-Z]+)', sidecar).group(1)
-
-                        if (posterior_label == 'CSF'):
-                            posterior_index = 0
-                        elif (posterior_label == 'CGM'):
-                            posterior_index = 1
-                        elif (posterior_label == 'WM'):
-                            posterior_index = 2
-                        elif (posterior_label == 'SGM'):
-                            posterior_index = 3
-                        elif (posterior_label == 'BS'):
-                            posterior_index = 4
-                        elif (posterior_label == 'CBM'):
-                            posterior_index = 5
-
-                        if posterior_index is not None:
-                            output_posteriors[posterior_index] = BIDSImage(seg_dataset_directory,
-                                                                        os.path.relpath(posterior_image, seg_dataset_directory))
+                if posterior_index is not None:
+                    output_posteriors[posterior_index] = BIDSImage(seg_dataset_directory, image_rel_path)
 
     # If we didn't find all the necessary classes, return None
     for i in range(6):

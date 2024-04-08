@@ -448,7 +448,8 @@ def segment_and_bias_correct(t1w_bids, t1w_bids_preproc, brain_mask_bids, work_d
         if len(prior_seg_probabilities_bids) != 6:
             raise ValueError('Segmentation dataset does not contain all six posteriors for ' +
                              t1w_bids.get_uri())
-        logger.info("Using segmentation posteriors from " + segmentation_dataset)
+        logger.info("Using segmentation priors:\n" +
+                    '\n'.join([ f"  {prior_seg_probabilities_bids[i].get_uri()}" for i in range(6) ]))
         # reslice the posteriors to the preprocessed space
         prior_seg_probabilities = [ants_helpers.reslice_to_reference(t1w_bids_preproc.get_path(), prob.get_path(), work_dir)
                                 for prob in prior_seg_probabilities_bids]
@@ -543,6 +544,9 @@ def cortical_thickness(seg_n4, work_dir, thickness_iterations=45):
     """
     posterior_files = [posterior.get_path() for posterior in seg_n4['posteriors']]
 
+    logger.info("Calculating cortical thickness on segmentation image: " + seg_n4['segmentation_image'].get_uri())
+    logger.info("Calculating cortical thickness with " + str(thickness_iterations) + " iterations")
+
     thickness = ants_helpers.cortical_thickness(seg_n4['segmentation_image'].get_path(), posterior_files, work_dir,
                                                 kk_its=thickness_iterations)
 
@@ -587,12 +591,14 @@ def template_brain_registration(template, template_brain_mask, t1w_brain_image, 
     fixed_image = ants_helpers.apply_mask(template.get_path(), template_brain_mask.get_path(), work_dir)
 
     if quick_reg:
+        logger.info("Quick registration to template " + template.get_name())
         template_reg = ants_helpers.anatomical_template_registration(fixed_image, t1w_brain_image.get_path(), work_dir,
                                                                      metric='Mattes', metric_params=[1, 32],
                                                                      transform='SyN[0.25,3,0]', iterations='30x70x30x5',
                                                                      shrink_factors='6x4x2x1', smoothing_sigmas='3x2x1x0vox',
                                                                      apply_transforms=False)
     else:
+        logger.info("Registration to template " + template.get_name())
         template_reg = ants_helpers.anatomical_template_registration(fixed_image, t1w_brain_image.get_path(), work_dir,
                                                                      metric='CC', metric_params=[1, 4],
                                                                      transform='SyN[0.2,3,0]', iterations='30x70x70x20',
@@ -642,6 +648,7 @@ def template_space_derivatives(template, template_reg, seg_n4, thickness, work_d
             'gmp' - grey matter probability image
             't1w_brain' - bias-corrected brain image
     """
+    logger.info("Creating template space derivatives")
 
     source_image_bids = seg_n4['bias_corrected_t1w_brain']
 
