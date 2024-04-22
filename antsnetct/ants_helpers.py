@@ -356,7 +356,7 @@ def cortical_thickness(segmentation, segmentation_posteriors, work_dir, kk_its=4
 
 
 def anatomical_template_registration(fixed_image, moving_image, work_dir, fixed_mask=None, moving_mask=None,
-                                     metric='CC', metric_params=[1, 4], transform='SyN[0.2,3,0]', iterations='30x70x70x20',
+                                     metric='CC', metric_params=[1, 4], transform='SyN[0.2,3,0]', iterations='30x70x70x10',
                                      shrink_factors='6x4x2x1', smoothing_sigmas='3x2x1x0vox', apply_transforms=True):
     """Register an anatomical image to a template
 
