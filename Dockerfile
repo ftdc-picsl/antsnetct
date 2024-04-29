@@ -27,6 +27,7 @@ COPY --from=pyushkevich/tk:2023b /tk/c3d/build/c3d /opt/bin/c3d
 
 # Update antspy
 RUN pip install -U \
+        templateflow==24.0.0 \
         https://github.com/ANTsX/ANTsPy/releases/download/v0.5.2/antspyx-0.5.2-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl \
     && rm -rf /root/.cache/pip
 
