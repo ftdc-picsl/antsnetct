@@ -22,9 +22,11 @@ ARG GIT_COMMIT="unknown"
 
 USER root
 
+RUN apt update && apt install -y bc
+
 # Get c3d
 COPY --from=pyushkevich/tk:2023b /tk/c3d/build/c3d /opt/bin/c3d
-COPY --from=antsx/ants:v2.5.1 /opt/ants /opt/ants
+COPY --from=antsx/ants:master /opt/ants /opt/ants
 
 # Update antspy
 RUN pip install -U \

@@ -215,6 +215,34 @@ def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=
     return segmentation_n4_dict
 
 
+def denoise_image(anatomical_image, work_dir):
+    """Denoise an anatomical image.
+
+    Truncates outliers and denoises
+
+    Parameters:
+    -----------
+    anatomical_image: str
+        Path to the anatomical image to denoise.
+    work_dir: str
+        Path to working directory.
+
+    Returns:
+    --------
+    denoised: str
+        Path to the denoised image.
+    """
+    truncated = os.path.join(work_dir, f"{get_nifti_file_prefix(anatomical_image)}_denoised.nii.gz")
+    command = ['ImageMath', '3', truncated, 'TruncateImageIntensity', anatomical_image, '0', '0.995', '256']
+    run_command(command)
+
+    denoised = os.path.join(work_dir, f"{get_nifti_file_prefix(anatomical_image)}_denoised.nii.gz")
+    command = ['DenoiseImage', '-d', '3', '-i', truncated, '-o', denoised]
+    run_command(command)
+
+    return denoised
+
+
 def n4_bias_correction(anatomical_image, brain_mask, segmentation_posteriors, work_dir, n4_convergence='[ 50x50x50x50,1e-7 ]',
                        n4_shrink_factor=3, n4_spline_spacing=180):
     """Correct bias field in an anatomical image.
