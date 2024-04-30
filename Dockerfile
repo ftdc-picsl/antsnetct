@@ -24,11 +24,12 @@ USER root
 
 # Get c3d
 COPY --from=pyushkevich/tk:2023b /tk/c3d/build/c3d /opt/bin/c3d
+COPY --from=antsx/ants:v2.5.1 /opt/ants /opt/ants
 
 # Update antspy
 RUN pip install -U \
-        templateflow==24.0.0 \
         https://github.com/ANTsX/ANTsPy/releases/download/v0.5.2/antspyx-0.5.2-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl \
+        templateflow==24.2.0 \
     && rm -rf /root/.cache/pip
 
 COPY scripts/trim_neck.sh /opt/bin/trim_neck.sh
@@ -48,7 +49,8 @@ ENV GIT_COMMIT=$GIT_COMMIT
 ENV DOCKER_IMAGE_TAG=$DOCKER_IMAGE_TAG
 ENV DOCKER_IMAGE_VERSION=$DOCKER_IMAGE_VERSION
 
-ENV PATH="/opt/bin:$PATH"
+ENV LD_LIBRARY_PATH="/opt/ants/lib:$LD_LIBRARY_PATH"
+ENV PATH="/opt/bin:/opt/ants/bin:$PATH"
 
 USER antspyuser
 
