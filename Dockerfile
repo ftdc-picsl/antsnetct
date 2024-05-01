@@ -5,7 +5,7 @@ FROM cookpa/antspynet:latest as builder
 USER root
 
 # Copy only files needed to get data and networks
-COPY selected_antspynet_data.txt selected_antspynet_networks.txt /opt
+COPY selected_antspynet_data.txt selected_antspynet_networks.txt /opt/
 
 # Get antspynet data that we need
 RUN /opt/bin/get_antsxnet_data.py /home/antspyuser/.keras 1 \

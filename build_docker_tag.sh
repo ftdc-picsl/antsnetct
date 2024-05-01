@@ -41,7 +41,7 @@ fi
 
 dockerVersion=${gitTag:1}
 
-dockerTag="cookpa/ftdc-t1w-preproc:${dockerVersion}"
+dockerTag="cookpa/antsnetct:${dockerVersion}"
 
 # Build the docker image
 docker build -t "$dockerTag" . \
