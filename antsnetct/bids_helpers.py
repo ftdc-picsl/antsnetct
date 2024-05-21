@@ -546,8 +546,9 @@ def find_brain_mask(mask_dataset_directory, input_image):
         mask_dataset_name = dataset_description['Name']
 
     search_prefix = input_image.get_derivative_rel_path_prefix()
-    search_dir_relpath = os.path.dirname(search_prefix)
     search_pattern = re.compile(rf"{search_prefix}(?:_space-orig)?(?:_res-01)?_desc-brain_mask.nii.gz")
+
+    search_dir_relpath = os.path.dirname(search_prefix)
 
     for image_file in os.listdir(os.path.join(mask_dataset_directory, search_dir_relpath)):
         image_rel_path = os.path.join(search_dir_relpath, image_file)
@@ -632,8 +633,8 @@ def find_segmentation_probability_images(seg_dataset_directory, input_image):
     return output_posteriors
 
 
-def find_images(input_dataset_dir, participant_label, session_label, modality, bids_suffix):
-    """Find images in a BIDS dataset directory.
+def find_session_images(input_dataset_dir, participant_label, session_label, modality, bids_suffix):
+    """Find images from a session in a BIDS dataset directory.
 
     Parameters:
     -----------
@@ -643,7 +644,7 @@ def find_images(input_dataset_dir, participant_label, session_label, modality, b
     participant_label: str
         Participant label, eg '01'.
     session_label: str
-        Session label, eg 'MR1'.
+        Session label, eg 'MR1'. Set to None if the dataset does not have sessions.
     modality: str
         Modality, eg 'anat', 'func'.
     bids_suffix: str
@@ -657,7 +658,10 @@ def find_images(input_dataset_dir, participant_label, session_label, modality, b
     images = list()
 
     # Path to the data directory to search, eg /data/ds/sub-01/ses-01/anat
-    modality_dir = os.path.join(input_dataset_dir, 'sub-' + participant_label, 'ses-' + session_label, modality)
+    if (session_label is None):
+        modality_dir = os.path.join(input_dataset_dir, 'sub-' + participant_label, modality)
+    else:
+        modality_dir = os.path.join(input_dataset_dir, 'sub-' + participant_label, 'ses-' + session_label, modality)
 
     if not os.path.exists(modality_dir):
         return None
@@ -667,4 +671,35 @@ def find_images(input_dataset_dir, participant_label, session_label, modality, b
             images.append(BIDSImage(input_dataset_dir, os.path.relpath(os.path.join(modality_dir, image), input_dataset_dir)))
 
     return images
+
+
+def find_participant_images(input_dataset_dir, participant_label, modality, bids_suffix):
+    """Find images for a participant in a BIDS dataset directory, across all sessions.
+
+    Parameters:
+    -----------
+
+    input_dataset_dir: str
+        Path to the input dataset directory.
+    participant_label: str
+        Participant label, eg '01'.
+    modality: str
+        Modality, eg 'anat', 'func'.
+    bids_suffix: str
+        BIDS image suffix, eg "T1w".
+
+    Returns:
+    --------
+    list of BIDSImage: A list of BIDSImage objects representing the images found.
+    """
+
+    sessions = [d for d in os.listdir(os.path.join(input_dataset_dir, 'sub-' + participant_label)) if d.startswith('ses-')]
+
+    if not sessions:
+        return find_session_images(input_dataset_dir, participant_label, None, modality, bids_suffix)
+
+    images = list()
+
+    for sess in sessions:
+        images.extend(find_session_images(input_dataset_dir, participant_label, sess[4:], modality, bids_suffix))
 

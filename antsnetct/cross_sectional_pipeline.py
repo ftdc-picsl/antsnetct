@@ -192,8 +192,7 @@ def cross_sectional_analysis():
     logger.info("Output dataset path: " + output_dataset)
     logger.info("Output dataset name: " + output_dataset_description['Name'])
 
-    # Returns a list of T1w images and URIs
-    input_t1w_bids = bids_helpers.find_images(input_dataset, args.participant, args.session, 'anat', 'T1w')
+    input_t1w_bids = bids_helpers.find_session_images(input_dataset, args.participant, args.session, 'anat', 'T1w')
 
     if input_t1w_bids is None or len(input_t1w_bids) == 0:
         logger.error(f"No T1w images found for participant {args.participant}, session {args.session}")

@@ -243,8 +243,8 @@ def denoise_image(anatomical_image, work_dir):
     return denoised
 
 
-def n4_bias_correction(anatomical_image, brain_mask, segmentation_posteriors, work_dir, n4_convergence='[ 50x50x50x50,1e-7 ]',
-                       n4_shrink_factor=3, n4_spline_spacing=180):
+def n4_bias_correction(anatomical_image, brain_mask, segmentation_posteriors, work_dir, iterations=2, normalize=True,
+                       n4_convergence='[ 50x50x50x50,1e-7 ]', n4_shrink_factor=3, n4_spline_spacing=180):
     """Correct bias field in an anatomical image.
 
     This function corrects bias in a similar way to antsAtroposN4.sh, but does not update the
@@ -261,6 +261,12 @@ def n4_bias_correction(anatomical_image, brain_mask, segmentation_posteriors, wo
         2-6 are used to create a pure tissue mask for N4 bias correction.
     work_dir: str
         Path to working directory
+    iterations: int
+        Number of iterations, this is how many times to run N4. Default is 2, to match how antsCorticalThickness.sh
+        processes images.
+    normalize: bool
+        Normalize the whole image to the range 0-1000 after bias correction. Default is True, to match
+        antsCorticalThickness.sh.
     n4_convergence: str
         Convergence criteria for N4
     n4_shrink_factor: int
@@ -284,21 +290,19 @@ def n4_bias_correction(anatomical_image, brain_mask, segmentation_posteriors, wo
     bias_corrected_anatomical = os.path.join(work_dir, f"{get_nifti_file_prefix(anatomical_image)}_n4_bias_corrected.nii.gz")
     copy_file(anatomical_image, bias_corrected_anatomical)
 
+    run_command(['ImageMath', '3', bias_corrected_anatomical, 'TruncateImageIntensity', bias_corrected_anatomical, '0.0',
+                 '0.995', '256'])
+
     # run iteratively as is done in antsCorticalThickness.sh
     for iteration in range(2):
-        # Truncate outliers
-        run_command(['ImageMath', '3', bias_corrected_anatomical, 'TruncateImageIntensity', bias_corrected_anatomical, '0.0',
-                     '0.995', '256'])
         # bias correct
         run_command(['N4BiasFieldCorrection', '-d', '3', '-i', bias_corrected_anatomical, '-o', bias_corrected_anatomical,
                      '-c', n4_convergence, '-s', str(n4_shrink_factor), '-b', f"[ {n4_spline_spacing} ]", '-x', brain_mask,
                      '-w', pure_tissue_mask, '-v', '1'])
         # Normalize and rescale
-        run_command(['ImageMath', '3', bias_corrected_anatomical, 'Normalize', bias_corrected_anatomical])
-        run_command(['ImageMath', '3', bias_corrected_anatomical, 'm', bias_corrected_anatomical, '1000'])
-
-    # Alternative idea: apply bias field manually, then normalize by the mask. This would avoid normalizing the image
-    # into the range 0-1000 including the uncorrected background. But it departs from antsAtroposN4.sh convention.
+        if normalize:
+            run_command(['ImageMath', '3', bias_corrected_anatomical, 'Normalize', bias_corrected_anatomical])
+            run_command(['ImageMath', '3', bias_corrected_anatomical, 'm', bias_corrected_anatomical, '1000'])
 
     return bias_corrected_anatomical
 
@@ -527,7 +531,7 @@ def anatomical_template_registration(fixed_image, moving_image, work_dir, fixed_
 def apply_transforms(fixed_image, moving_image, transform, work_dir, interpolation='Linear'):
     """Apply a transform, resampling moving image into fixed image space.
 
-    The default transform is identity, and simply reslices the moving image to the space of the fixed image.
+    Currently this method only supports a single transform or composite transform, but that may change in the future.
 
     Parameters:
     -----------
@@ -734,3 +738,186 @@ def get_log_jacobian_determinant(reference_image, transform, work_dir, use_geom=
 
     return log_jacobian_file
 
+def normalize_intensity(image, segmentation, work_dir, label=8, scaled_label_mean=1000):
+    """Normalize intensity of an image so that the mean intensity of a tissue class is a specified value.
+
+    Parameters:
+    -----------
+    image: str
+        Path to image to normalize.
+    segmentation: str
+        Path to segmentation image.
+    work_dir: str
+        Path to working directory.
+    label: int
+        Label of tissue class to normalize.
+    scaled_label_mean: float
+        Mean intensity of the tissue class after normalization.
+
+    """
+    img = ants.image_read(image)
+    seg = ants.image_read(segmentation)
+
+    mask = seg == label
+
+    mean_intensity_in_mask = np.mean(img[mask])
+
+    img_normalized = img * (scaled_label_mean / mean_intensity_in_mask)
+
+    img_normalized_file = os.path.join(work_dir, f"{get_nifti_file_prefix(image)}_normalized_to_label_{label}.nii.gz")
+
+    ants.image_write(img_normalized, img_normalized_file)
+
+    return img_normalized_file
+
+
+def build_sst(images, work_dir, initial_template=None, template_iterations=4, reg_iterations='50x25x20',
+                   reg_shrink_factors='3x2x1', reg_smoothing_sigmas='3x1x0vox', reg_transform='Rigid[0.1]'):
+    """Construct a template from the input images. This is the same as build_template but with default parameters
+    for SST construction.
+
+    Parameters:
+    ----------
+    images (list):
+        List of BIDSImage objects
+    work_dir (str):
+        Working directory
+    initial_template (str):
+        Initial template to use for registration. If None, the first image in the list is used.
+    template_iterations (int):
+        Number of iterations for template construction.
+    reg_iterations (str):
+        Number of iterations for registration
+    reg_shrink_factors (str):
+        Shrink factors for registration
+    reg_smoothing_sigmas (str):
+        Smoothing sigmas for registration
+    reg_transform (str):
+        Transform for registration
+
+    Returns:
+    -------
+    dict
+        Dictionary with keys
+
+        'template_image' - template image filename
+        'template_input_warped' - List of warped input images
+        'template_transforms' - List of transforms from input images to template
+
+    """
+    return build_template(images, work_dir, initial_template=initial_template, template_iterations=template_iterations,
+                          reg_iterations=reg_iterations, reg_shrink_factors=reg_shrink_factors,
+                          reg_smoothing_sigmas=reg_smoothing_sigmas, reg_transform=reg_transform)
+
+
+def build_template(images, work_dir, initial_template=None, template_iterations=4, reg_transform='Rigid[ 0.1 ]',
+                   reg_metric = 'CC[ 4 ]', reg_iterations='50x25x20', reg_shrink_factors='3x2x1',
+                   reg_smoothing_sigmas='3x1x0vox', template_norm='mean', template_sharpen='laplacian'):
+    """Construct a template from the input images.
+
+    The images should be preprocessed so that they share:
+        * a common basic orientation, eg LPI
+        * origin coordinates in a similar anatomical location, eg the center of the brain
+        * a similar FOV, so that the same anatomy is present in all images
+        * a similar intensity range, such that they can be averaged without losing contrast
+
+    Parameters:
+    ----------
+    images (list):
+        List of BIDSImage objects
+    work_dir (str):
+        Working directory
+    initial_template (str):
+        Initial template to use for registration. If None, the first image in the list is used.
+    template_iterations (int):
+        Number of iterations for template construction.
+    reg_transform (str):
+        Transform for registration.
+    reg_metric (str):
+        Metric for registration. If the transform is 'SyN', this controls the metric for the final registration. Earlier
+        linear stages use MI.
+    reg_iterations (str):
+        Number of iterations for registration.
+    reg_shrink_factors (str):
+        Shrink factors for registration
+    reg_smoothing_sigmas (str):
+        Smoothing sigmas for registration
+    reg_transform (str):
+        Transform for registration. Should be Rigid[step], Affine[step], SyN[params] or BSplineSyN[params]. If using a
+        deformable transform, affine and rigid stages are prepended automatically.
+    template_norm (str):
+        Template intensity normalization. Options are 'mean', 'normalized_mean', 'median'.
+    template_sharpen (str):
+        Template sharpening. Options are 'none', 'laplacian', 'unsharp_mask'.
+
+    Returns:
+    -------
+    dict
+        Dictionary with keys
+
+        'template_image' - template image filename
+        'template_transforms' - List of transforms from input images to template
+        'template_inverse_transforms' - List of transforms from template to input images
+    """
+    output_prefix = os.path.join(work_dir, f"template_{get_nifti_file_prefix(images[0])}_")
+
+    template_norm = template_norm.lower()
+
+    template_norm_options = {'mean': '0', 'normalized_mean': '1', 'median': '2'}
+
+    template_sharpen = template_sharpen.lower()
+
+    template_sharpen_options = {'none': '0', 'laplacian': '1', 'unsharp_mask': '2'}
+
+    template_command = ['antsMultivariateTemplateConstruction2.sh', '-d', '3', '-a', template_norm_options{template_norm}, '-A',
+                        template_sharpen_options{template_sharpen}, '-o', output_prefix, '-n', '0', -i',
+                        str(template_iterations), '-f', reg_shrink_factors, '-s', reg_smoothing_sigmas, '-q', reg_iterations,
+                        '-m', reg_metric, '-t', reg_transform, '-z', initial_template if initial_template else images[0]]
+
+    template_command.extend(images)
+
+    run_command(template_command)
+
+    template_image = f"{output_prefix}Template0.nii.gz"
+
+    # register input to the template
+    template_transforms = list()
+    template_inverse_transforms = list()
+
+    for image in images:
+        input_transform_prefix = os.path.join(work_dir, f"{get_nifti_file_prefix(image)}_to_sst_")
+
+        rigid_stage = ['--transform', 'Rigid[ 0.1 ]', '--metric', f"MI[ {template_image}, {image}, 1, 32, Regular ]",
+                       '--convergence', '[ 100x50x50x0, 1e-6, 10 ]', '--shrink-factors', '6x4x2x1', '--smoothing-sigmas',
+                       '4x2x1x0vox']
+
+        affine_stage = ['--transform', 'Affine[ 0.1 ]', '--metric', f"MI[ {template_image}, {image}, 1, 32, Regular ]",
+                       '--convergence', '[ 100x50x50x0, 1e-6, 10 ]', '--shrink-factors', '6x4x2x1', '--smoothing-sigmas',
+                       '4x2x1x0vox']
+
+        reg_command = ['antsRegistration', '--dimensionality', '3', '--float', '0', '--collapse-output-transforms', '1',
+                          '--output', input_transform_prefix, '--interpolation', 'Linear',
+                          '--winsorize-image-intensities', '[0.0,0.995]', '--use-histogram-matching', '0',
+                          '--initial-moving-transform', f"[ {template_image}, {image}, 1 ]", '--write-composite-transform', '1']
+
+        if reg_transform.startswith('Affine'):
+            reg_command.extend(rigid_stage)
+        elif reg_transform.startswith('Rigid'):
+            pass
+        else:
+            # Assume a deformable transform here
+            reg_command.extend(rigid_stage)
+            reg_command.extend(affine_stage)
+
+        reg_command.extend(['--transform', reg_transform, '--metric', reg_metric, '--convergence', reg_iterations,
+                            '--shrink-factors', reg_shrink_factors, '--smoothing-sigmas', reg_smoothing_sigmas])
+
+        run_command(reg_command)
+
+        template_transforms.append(f"{input_transform_prefix}Composite.h5")
+        template_inverse_transforms.append(f"{input_transform_prefix}InverseComposite.h5")
+
+    template_outputs = {'template_image': template_image, 'template_transforms': template_transforms,
+            'template_inverse_transforms': template_inverse_transforms}
+
+    return template_outputs
