@@ -228,9 +228,11 @@ def cross_sectional_analysis():
                 # Segmentation is either pre-defined, or generated with antspynet. Either an external segmentation or an
                 # antspynet segmentation can be used as priors for iterative segmentation and bias correction with N4 and
                 # Atropos. If Atropos is not used, the T1w is bias-corrected separately with N4.
-                seg_n4 = segment_and_bias_correct(t1w_bids, preproc_t1w_bids, brain_mask_bids, working_dir,
-                                                  args.segmentation_dataset, args.segmentation_method,
-                                                  args.atropos_n4_iterations)
+                seg_priors = get_segmentation_priors(t1w_bids, preproc_t1w_bids, working_dir, args.segmentation_dataset)
+
+                seg_n4 = segment_and_bias_correct(preproc_t1w_bids, brain_mask_bids, working_dir,
+                                                  args.segmentation_method, args.atropos_n4_iterations,
+                                                  args.atropos_prior_weight)
 
                 # If thickness is requested, calculate it
                 if args.thickness_iterations > 0:
@@ -382,11 +384,10 @@ def get_brain_mask(t1w_bids, t1w_bids_preproc, work_dir, brain_mask_dataset=None
                                       metadata=brain_mask_metadata)
 
 
-def segment_and_bias_correct(t1w_bids, t1w_bids_preproc, brain_mask_bids, work_dir, segmentation_dataset=None,
-                             segmentation_method='atropos', atropos_n4_iterations=5):
-    """Segment and bias correct a T1w image
+def get_segmentation_priors(t1w_bids, t1w_bids_preproc, work_dir, segmentation_dataset=None):
+    """Get segmentation priors for a T1w image
 
-    If segmentatation_dataset is not None, it is searched for segmenation probabilities based on the T1w image. It is an error
+    If segmentatation_dataset is not None, it is searched for segmentation probabilities based on the T1w image. It is an error
     if the dataset does not contain these files for the T1w image. The segmentation posteriors must be defined for the six
     classes used in antsct: CSF, CGM, WM, SGM, BS, CBM. If a pre-existing segmentation is found, it can either be used directly
     or used as priors for iterative segmentation and bias correction with N4 and Atropos.
@@ -394,33 +395,82 @@ def segment_and_bias_correct(t1w_bids, t1w_bids_preproc, brain_mask_bids, work_d
     If no pre-existing segmentation is found, priors are generated with anyspynet, and either copied directly or used for
     segmentation and bias correction with N4 and Atropos.
 
+    Parameters:
+    -----------
+    t1w_bids : BIDSImage
+        T1w image from the input dataset. This is used to search for segmentation posteriors in the segmentation dataset.
+    t1w_bids_preproc : BIDSImage
+        T1w image object, should be the preprocessed T1w image in the output dataset.
+    work_dir : str
+        Path to the working directory.
+    segmentation_dataset : str, optional
+        Path to the segmentation dataset for priors. If provided, it is an error to not find a segmentation. If None,
+        segmentation priors are generated with antspynet.
+
+    Returns:
+    --------
+    list
+        List of segmentation posterior images, generated in or resliced to the space of the t1w_bids_preproc
+        image.
+
+    Raises:
+    -------
+    PipelineError
+        If the segmentation dataset is not None and does not contain segmentation posteriors for the specified T1w image.
+    """
+    prior_seg_probabilities = None
+
+    # If a segmentation dataset is defined, it is an error to not find a segmentation
+    if segmentation_dataset is not None:
+        prior_seg_probabilities_bids = \
+            bids_helpers.find_segmentation_probability_images(segmentation_dataset, t1w_bids)
+        if prior_seg_probabilities_bids is None:
+            raise PipelineError('Segmentation dataset does not contain a segmentation for ' + t1w_bids.get_uri())
+        # Double check we have all the posteriors
+        if len(prior_seg_probabilities_bids) != 6:
+            raise PipelineError('Segmentation dataset does not contain all six posteriors for ' +
+                             t1w_bids.get_uri())
+        logger.info("Using segmentation priors:\n" +
+                    '\n'.join([ f"  {prior_seg_probabilities_bids[i].get_uri()}" for i in range(6) ]))
+        # reslice the posteriors to the preprocessed space
+        prior_seg_probabilities = [ants_helpers.reslice_to_reference(t1w_bids_preproc.get_path(), prob.get_path(), work_dir)
+                                for prob in prior_seg_probabilities_bids]
+    else:
+        # If no segmentation is found, generate one with antspynet
+        logger.info("No segmentation found, generating one with antspynet")
+        antsnet_seg = ants_helpers.deep_atropos(t1w_bids_preproc.get_path(), work_dir)
+        prior_seg_probabilities = antsnet_seg['posteriors']
+
+    return prior_seg_probabilities
+
+
+def segment_and_bias_correct(t1w_bids_preproc, brain_mask_bids, prior_seg_probabilities, work_dir,
+                             segmentation_method='atropos', atropos_n4_iterations=3, atropos_prior_weight=0.25):
+    """Segment and bias correct a T1w image
+
     If the segmentation_method is 'none', the prior segmentation (whether from another dataset, or generated with deep_atropos)
     is copied, and the T1w image is bias corrected with N4.
 
     If the segmentation_method is 'atropos', the priors are used to iteratively refine the bias correction and segmentation
     using `antsAtroposN4.sh`.
 
-    All priors are masked by the provided brain_mask_image before running Atropos. If not running Atropos, the segmentations
-    may be defined in the domain of some other mask, but will be masked by the brain mask before being copied to the output.
-
     Parameters:
     -----------
-    t1w_bids : BIDSImage
-        T1w image from the input dataset. This is used to search for segmentation posteriors in the segmentation dataset.
     t1w_bids_preproc : BIDSImage
         T1w image object, should be the preprocessed T1w image in the output dataset. Output is in the space of this image.
     brain_mask_bids : BIDSImage
         Brain mask for the preprocessed T1w image.
-    work_dir : str
-        Path to the working directory.
-    segmentation_dataset : str, optional
-        Path to the segmentation dataset for priors.
+    prior_seg_probabilities :  list
+        List of segmentation posteriors as BIDSImage objects. These are used as priors for segmentation and bias correction.
     segmentation method : str, optional
         Method to use for segmentation. Default is 'atropos', meaning the priors are used for iterative segmentation and bias
         correction with antsAtroposN4.sh. If 'none', the priors (either from the segmentation dataset or ANTsPyNet) are used
         as the posteriors, and the T1w image is bias corrected with N4.
     atropos_n4_iterations : int, optional
-        Number of iterations for antsAtroposN4.sh. Default is 5.
+        Number of iterations for antsAtroposN4.sh. Default is 3.
+    atropos_prior_weight : float, optional
+        Prior weight for Atropos. Default is 0.25. Minimum useful value is 0.2, below this the priors are not very well
+        constrained and you will see priors that overlap in intensity (like SGM and CBM) appear in the wrong places.
 
     Returns:
     --------
@@ -435,28 +485,6 @@ def segment_and_bias_correct(t1w_bids, t1w_bids_preproc, brain_mask_bids, work_d
     ValueError
         If the brain mask dataset is not None and does not contain a brain mask for the specified T1w image.
     """
-    prior_seg_probabilities = None
-
-    # If a segmentation dataset is defined, it is an error to not find a segmentation
-    if segmentation_dataset is not None:
-        prior_seg_probabilities_bids = \
-            bids_helpers.find_segmentation_probability_images(segmentation_dataset, t1w_bids)
-        if prior_seg_probabilities_bids is None:
-            raise ValueError('Segmentation dataset does not contain a segmentation for ' + t1w_bids.get_uri())
-        # Double check we have all the posteriors
-        if len(prior_seg_probabilities_bids) != 6:
-            raise ValueError('Segmentation dataset does not contain all six posteriors for ' +
-                             t1w_bids.get_uri())
-        logger.info("Using segmentation priors:\n" +
-                    '\n'.join([ f"  {prior_seg_probabilities_bids[i].get_uri()}" for i in range(6) ]))
-        # reslice the posteriors to the preprocessed space
-        prior_seg_probabilities = [ants_helpers.reslice_to_reference(t1w_bids_preproc.get_path(), prob.get_path(), work_dir)
-                                for prob in prior_seg_probabilities_bids]
-    else:
-        # If no segmentation is found, generate one with antspynet
-        logger.info("No segmentation found, generating one with antspynet")
-        antsnet_seg = ants_helpers.deep_atropos(t1w_bids_preproc.get_path(), work_dir)
-        prior_seg_probabilities = antsnet_seg['posteriors']
 
     # dict to be populated by ants_atropos_n4 or by using the priors directly
     seg_output = {}
@@ -465,7 +493,8 @@ def segment_and_bias_correct(t1w_bids, t1w_bids_preproc, brain_mask_bids, work_d
         logger.info("Running Atropos with N4 bias correction")
         # Run antsAtroposN4.sh, using the priors for segmentation and bias correction
         seg_output = ants_helpers.ants_atropos_n4(t1w_bids_preproc.get_path(), brain_mask_bids.get_path(),
-                                                         prior_seg_probabilities, work_dir, iterations=atropos_n4_iterations)
+                                                         prior_seg_probabilities, work_dir, iterations=atropos_n4_iterations,
+                                                         atropos_prior_weight=atropos_prior_weight)
         seg_output['segmentation_image'] = ants_helpers.posteriors_to_segmentation(seg_output['posteriors'], work_dir)
     elif segmentation_method.lower() == 'none':
         logger.info("Segmentation method is none, generating final segmentation directly from priors")
@@ -536,7 +565,7 @@ def cortical_thickness(seg_n4, work_dir, thickness_iterations=45):
     Parameters:
     -----------
     seg_n4_bids : dict
-        Dictionary of segmentation images (as BIDSImage objects) as returned from ants_helpers.ant_atropos_n4.
+        Dictionary of segmentation images (as BIDSImage objects) as returned from ants_helpers.ants_atropos_n4.
         The thickness image will be written to the same dataset as the segmentation image.
     work_dir : str
         Path to the working directory.

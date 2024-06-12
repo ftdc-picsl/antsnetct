@@ -1,5 +1,7 @@
 import ants
 import antspynet
+
+import csv
 import numpy as np
 import os
 
@@ -112,7 +114,7 @@ def deep_atropos(anatomical_image, work_dir):
 
 
 def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=3, atropos_iterations=15,
-                    atropos_prior_weight=0.25, atropos_mrf_weight=0.1, denoise=True, use_mixture_model_proportions = True,
+                    atropos_prior_weight=0.25, atropos_mrf_weight=0.1, denoise=True, use_mixture_model_proportions=True,
                     n4_prior_classes=[2,3,4,5,6], n4_spline_spacing=180, n4_convergence='[ 50x50x50x50,1e-7 ]',
                     n4_shrink_factor=3):
     """Segment anatomical images using Atropos and N4
@@ -413,8 +415,8 @@ def anatomical_template_registration(fixed_image, moving_image, work_dir, fixed_
     metric: str
         Image metric to use for registration with parameters. Default is 'CC' for cross-correlation.
     metric_params: list of str
-        Parameters for the image metric. Default is '[1, 4]' for cross-correlation with a radius of 4 voxels. The metric
-        weight should be set to 1 for all metrics.
+        Parameters for the image metric, appended to the metric argument such that we use
+        "{metric_name}[{fixed},{moving},1",{metric_params}]. Default is '[4]' for cross-correlation with a radius of 4 voxels.
     transform: str
         Transformation model, e.g. 'SyN[0.2,3,0]' for symmetric normalization with gradient step length 0.2, 3 voxel smoothing
         of the update field and no smoothing of the deformation field.
@@ -441,7 +443,7 @@ def anatomical_template_registration(fixed_image, moving_image, work_dir, fixed_
 
     metric_param_str = ','.join([str(p) for p in metric_params])
 
-    metric_arg = f"{metric}[{fixed_image},{moving_image},{metric_param_str}]"
+    metric_arg = f"{metric}[{fixed_image},{moving_image},1,{metric_param_str}]"
 
     mask_arg = f"[{fixed_mask},{moving_mask}]"
 
@@ -771,23 +773,30 @@ def normalize_intensity(image, segmentation, work_dir, label=8, scaled_label_mea
     return img_normalized_file
 
 
-def build_sst(images, work_dir, initial_template=None, template_iterations=4, reg_iterations='50x25x20',
-                   reg_shrink_factors='3x2x1', reg_smoothing_sigmas='3x1x0vox', reg_transform='Rigid[0.1]'):
-    """Construct a template from the input images. This is the same as build_template but with default parameters
+def build_sst(images, work_dir, initial_templates=None, template_iterations=5, reg_iterations='40x40x50x10',
+              reg_metric_weights=None, reg_shrink_factors='4x3x2x1', reg_smoothing_sigmas='3x2x1x0vox',
+              reg_transform='Rigid[0.1]'):
+    """Construct a template from the input images. This is a simplified interface to build_template, with default parameters
     for SST construction.
 
     Parameters:
     ----------
     images (list):
-        List of BIDSImage objects
+        List of BIDSImage objects, or a list containing one list of images for each modality. For example, a single-modality
+        template may have images=['a.nii.gz', 'b.nii.gz', 'c.nii.gz'], while a multi-modality template might have
+        images=[['a_t1w.nii.gz', 'b_t1w.nii.gz', 'c_t1w.nii.gz'], ['a_t2w.nii.gz', 'b_t2w.nii.gz', 'c_t2w.nii.gz']]. The
+        number of modalities must match the length of the reg_metric_weights, and the images from the same subject must
+        be at the same index in each modality list.
     work_dir (str):
         Working directory
-    initial_template (str):
-        Initial template to use for registration. If None, the first image in the list is used.
+    initial_template (str or list):
+        Initial template(s) to use for registration. If None, the first image for each modality is used.
     template_iterations (int):
         Number of iterations for template construction.
     reg_iterations (str):
         Number of iterations for registration
+    reg_metric_weights (list):
+        Weights for the registration metric. Default is None, for equal weights.
     reg_shrink_factors (str):
         Shrink factors for registration
     reg_smoothing_sigmas (str):
@@ -805,14 +814,15 @@ def build_sst(images, work_dir, initial_template=None, template_iterations=4, re
         'template_transforms' - List of transforms from input images to template
 
     """
-    return build_template(images, work_dir, initial_template=initial_template, template_iterations=template_iterations,
-                          reg_iterations=reg_iterations, reg_shrink_factors=reg_shrink_factors,
-                          reg_smoothing_sigmas=reg_smoothing_sigmas, reg_transform=reg_transform)
+    return build_template(images, work_dir, initial_templates=initial_templates, template_iterations=template_iterations,
+                          reg_iterations=reg_iterations, reg_metric_weights=reg_metric_weights,
+                          reg_shrink_factors=reg_shrink_factors, reg_smoothing_sigmas=reg_smoothing_sigmas,
+                          reg_transform=reg_transform, reg_metric='CC[3]', template_norm='mean',
+                          template_sharpen="unsharp_mask")
 
 
-def build_template(images, work_dir, initial_template=None, template_iterations=4, reg_transform='Rigid[ 0.1 ]',
-                   reg_metric = 'CC[ 4 ]', reg_iterations='50x25x20', reg_shrink_factors='3x2x1',
-                   reg_smoothing_sigmas='3x1x0vox', template_norm='mean', template_sharpen='laplacian'):
+def build_template(images, work_dir, initial_templates=None, template_iterations=4, reg_transform='SyN[ 0.2, 3, 0 ]',
+                   reg_metric = 'CC[4]', reg_metric_weights=None, reg_iterations='40x40x50x20', reg_shrink_factors='6x4x2x1', reg_smoothing_sigmas='3x2x1x0vox', template_norm='mean', template_sharpen='laplacian'):
     """Construct a template from the input images.
 
     The images should be preprocessed so that they share:
@@ -824,18 +834,23 @@ def build_template(images, work_dir, initial_template=None, template_iterations=
     Parameters:
     ----------
     images (list):
-        List of BIDSImage objects
+        List of BIDSImage objects, or a list containing one list of images for each modality. For example, a single-modality
+        template may have images=['a.nii.gz', 'b.nii.gz', 'c.nii.gz'], while a multi-modality template might have
+        images=[['a_t1w.nii.gz', 'b_t1w.nii.gz', 'c_t1w.nii.gz'], ['a_t2w.nii.gz', 'b_t2w.nii.gz', 'c_t2w.nii.gz']]. The
+        number of modalities must match the length of the reg_metric_weights, and the images from the same subject must
+        be at the same index in each modality list.
     work_dir (str):
         Working directory
-    initial_template (str):
-        Initial template to use for registration. If None, the first image in the list is used.
+    initial_templates (str or list):
+        Initial template(s) to use for registration. If None, the first image for each modality is used.
     template_iterations (int):
         Number of iterations for template construction.
     reg_transform (str):
         Transform for registration.
     reg_metric (str):
-        Metric for registration. If the transform is 'SyN', this controls the metric for the final registration. Earlier
-        linear stages use MI.
+        Metric for registration. This controls the metric for the final registration. Earlier linear stages use MI.
+    reg_metric_weights (list):
+        Weights for the registration metric. Default is None, for equal weights.
     reg_iterations (str):
         Number of iterations for registration.
     reg_shrink_factors (str):
@@ -855,7 +870,7 @@ def build_template(images, work_dir, initial_template=None, template_iterations=
     dict
         Dictionary with keys
 
-        'template_image' - template image filename
+        'template' - template image filename
         'template_transforms' - List of transforms from input images to template
         'template_inverse_transforms' - List of transforms from template to input images
     """
@@ -869,55 +884,236 @@ def build_template(images, work_dir, initial_template=None, template_iterations=
 
     template_sharpen_options = {'none': '0', 'laplacian': '1', 'unsharp_mask': '2'}
 
-    template_command = ['antsMultivariateTemplateConstruction2.sh', '-d', '3', '-a', template_norm_options{template_norm}, '-A',
-                        template_sharpen_options{template_sharpen}, '-o', output_prefix, '-n', '0', -i',
-                        str(template_iterations), '-f', reg_shrink_factors, '-s', reg_smoothing_sigmas, '-q', reg_iterations,
-                        '-m', reg_metric, '-t', reg_transform, '-z', initial_template if initial_template else images[0]]
+    num_modalities = 1
+    num_images = len(images)
 
-    template_command.extend(images)
+    if type(images[0]) is list:
+        num_modalities = len(images)
+        num_images = len(images[0])
+        for mod_images in images:
+            if len(mod_images) != num_images:
+                raise ValueError("All modalities must have the same number of images.")
+    else:
+        # One modality, passed flat list of images
+        images = [images]
+
+    if initial_templates is not None:
+        if type(initial_templates[0]) is not list:
+            initial_templates = [initial_templates]
+
+        if len(initial_templates) != num_modalities:
+            raise ValueError("The number of modalities must match the length of the initial_templates list.")
+
+    if reg_metric_weights is None:
+        reg_metric_weights = [1] * num_modalities
+    else:
+        if len(reg_metric_weights) != num_modalities:
+            raise ValueError("The number of modalities must match the length of the reg_metric_weights list.")
+
+    reg_metric_weights_str = 'x'.join([str(w) for w in reg_metric_weights])
+
+    # Write list of images to a csv file
+    image_csv = os.path.join(work_dir, 'template_image_list.csv')
+
+    if num_modalities > 1:
+        # Write a CSV file with one row per subject, one column per modality
+        with open(image_csv, 'w') as f:
+            writer = csv.writer(f)
+            for row in zip(*images):
+                writer.writerow(row)
+    else:
+        # Write a CSV file with one row per subject
+        with open(image_csv, 'w') as f:
+            writer = csv.writer(f)
+            writer.writerows(images)
+
+    initial_template_params = list()
+
+    for idx in range(num_modalities):
+        if initial_templates is not None:
+            initial_template_params.extend(['-z', initial_templates[idx]])
+        else:
+            initial_template_params.extend(['-z', images[idx][0]])
+
+    template_command = ['antsMultivariateTemplateConstruction2.sh', '-d', '3', '-a', template_norm_options[template_norm], '-A',
+                        template_sharpen_options[template_sharpen], '-o', output_prefix, '-n', '0', '-k', num_modalities,
+                        '-w', reg_metric_weights_str, '-i', str(template_iterations), '-f', reg_shrink_factors, '-r', 0,
+                        '-s', reg_smoothing_sigmas, '-q', reg_iterations, '-m', reg_metric, '-t', reg_transform]
+
+    template_command.extend(initial_template_params)
+
+    template_command.append(image_csv)
 
     run_command(template_command)
 
-    template_image = f"{output_prefix}Template0.nii.gz"
+    template_images = [ f"{output_prefix}Template{idx}.nii.gz" for idx in range(num_modalities) ]
 
-    # register input to the template
-    template_transforms = list()
-    template_inverse_transforms = list()
+    return template_images
 
-    for image in images:
-        input_transform_prefix = os.path.join(work_dir, f"{get_nifti_file_prefix(image)}_to_sst_")
+def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fixed_mask=None, moving_mask=None,
+                                       metric='CC', metric_params=[4], metric_weights=None, transform='SyN[0.2,3,0]',
+                                       iterations='30x70x70x10', shrink_factors='6x4x2x1', smoothing_sigmas='3x2x1x0vox',
+                                       apply_transforms=True):
+    """Multivariate pairwise registration of images.
 
-        rigid_stage = ['--transform', 'Rigid[ 0.1 ]', '--metric', f"MI[ {template_image}, {image}, 1, 32, Regular ]",
-                       '--convergence', '[ 100x50x50x0, 1e-6, 10 ]', '--shrink-factors', '6x4x2x1', '--smoothing-sigmas',
-                       '4x2x1x0vox']
+    Parameters:
+    -----------
+    fixed_images (list):
+        List of fixed images, in the same physical space.
+    moving_images (list):
+        List of moving images, in the same physical space.
+    work_dir (str):
+        Path to working directory.
+    fixed_mask (str):
+        Path to fixed mask image.
+    moving_mask (str):
+        Path to moving mask image.
+    metric (str):
+        Image metric to use for registration with parameters. Default is 'CC' for cross-correlation.
+    metric_params (list of str):
+        Parameters for the image metric, appended to the metric argument such that we use
+        "{metric_name}[{fixed},{moving},1",{metric_params}]. Default is '[4]' for cross-correlation with a radius of 4 voxels.
+    metric_weights (list):
+        Weights for the registration metric. Default is None, for equal weights. If not None, must be a list of the same
+        length as the number of modalities.
+    transform (str):
+        Transformation model, e.g. 'SyN[0.2,3,0]' for symmetric normalization with gradient step length 0.2, 3 voxel smoothing
+        of the update field and no smoothing of the deformation field.
+    iterations (str):
+        Number of iterations at each level of the registration. Number of levels must match shrink and smoothing parameters.
+    shrink_factors (str):
+        Shrink factors at each level of the registration. Number of levels must match iterations and smoothing parameters.
+    smoothing_sigmas (str):
+        Smoothing sigmas at each level of the registration. Number of levels must match shrink and iterations parameters.
+    apply_transforms (bool):
+        If true, apply the resulting transform to the moving images.
 
-        affine_stage = ['--transform', 'Affine[ 0.1 ]', '--metric', f"MI[ {template_image}, {image}, 1, 32, Regular ]",
-                       '--convergence', '[ 100x50x50x0, 1e-6, 10 ]', '--shrink-factors', '6x4x2x1', '--smoothing-sigmas',
-                       '4x2x1x0vox']
+    Returns:
+    --------
+    dict
+        Dictionary with keys 'forward_transform', 'inverse_transform', and if apply_transforms, 'moving_images_warped'.
 
-        reg_command = ['antsRegistration', '--dimensionality', '3', '--float', '0', '--collapse-output-transforms', '1',
-                          '--output', input_transform_prefix, '--interpolation', 'Linear',
-                          '--winsorize-image-intensities', '[0.0,0.995]', '--use-histogram-matching', '0',
-                          '--initial-moving-transform', f"[ {template_image}, {image}, 1 ]", '--write-composite-transform', '1']
 
-        if reg_transform.startswith('Affine'):
-            reg_command.extend(rigid_stage)
-        elif reg_transform.startswith('Rigid'):
-            pass
-        else:
-            # Assume a deformable transform here
-            reg_command.extend(rigid_stage)
-            reg_command.extend(affine_stage)
+    """
+    num_modalities = len(fixed_images)
 
-        reg_command.extend(['--transform', reg_transform, '--metric', reg_metric, '--convergence', reg_iterations,
-                            '--shrink-factors', reg_shrink_factors, '--smoothing-sigmas', reg_smoothing_sigmas])
+    if len(moving_images) != num_modalities:
+        raise ValueError("The number of modalities must match the length of the moving_images list.")
 
-        run_command(reg_command)
+    if reg_metric_weights is None:
+        reg_metric_weights = [1] * num_modalities
+    else:
+        if len(reg_metric_weights) != num_modalities:
+            raise ValueError("The number of modalities must match the length of the reg_metric_weights list.")
 
-        template_transforms.append(f"{input_transform_prefix}Composite.h5")
-        template_inverse_transforms.append(f"{input_transform_prefix}InverseComposite.h5")
+    input_transform_prefix = os.path.join(work_dir, f"{get_nifti_file_prefix({moving_images[0]})}_to_fixed_")
 
-    template_outputs = {'template_image': template_image, 'template_transforms': template_transforms,
-            'template_inverse_transforms': template_inverse_transforms}
+    linear_metric_params = list()
 
-    return template_outputs
+    for modality_idx in range(num_modalities):
+        linear_metric_params.extend(
+            ['--metric', f"MI[{template_images[modality_idx]}, {images[modality_idx][image_idx]}, " +
+                f"{reg_metric_weights[modality_idx]}, 32]"])
+
+    rigid_stage = ['--transform', 'Rigid[ 0.1 ]']
+    rigid_stage.extend(linear_metric_params)
+    rigid_stage.extend(['--convergence', '[ 100x50x50x0, 1e-6, 10 ]', '--shrink-factors', '6x4x2x1', '--smoothing-sigmas',
+                    '4x2x1x0vox'])
+
+    affine_stage = ['--transform', 'Affine[ 0.1 ]']
+    affine_stage.extend(linear_metric_params)
+    affine_stage.extend(['--convergence', '[ 100x50x50x0, 1e-6, 10 ]', '--shrink-factors', '6x4x2x1', '--smoothing-sigmas',
+                    '4x2x1x0vox'])
+
+    reg_command = ['antsRegistration', '--dimensionality', '3', '--float', '0', '--collapse-output-transforms', '1',
+                    '--output', input_transform_prefix, '--interpolation', 'Linear', '--winsorize-image-intensities',
+                    '[0.0,0.995]', '--use-histogram-matching', '0', '--initial-moving-transform', f"[ {template_images[0]},
+                    {moving_images[0]}, 1 ]", '--write-composite-transform', '1']
+
+    if reg_transform.startswith('Affine'):
+        reg_command.extend(rigid_stage)
+    elif reg_transform.startswith('Rigid'):
+        pass
+    else:
+        # Assume a deformable transform here
+        reg_command.extend(rigid_stage)
+        reg_command.extend(affine_stage)
+
+    metric_params_str = ','.join([str(p) for p in metric_params])
+
+    last_stage_metric_args = list()
+
+    for modality_idx in range(num_modalities):
+        last_stage_metric_args.extend(
+            ['--metric', f"{metric}[ {fixed_images[modality_idx]}, {moving_images[modality_idx]}, " +
+                f"{reg_metric_weights[modality_idx]}, {metric_params_str}" ])
+
+    reg_command.extend(['--transform', reg_transform])
+    reg_command.extend(last_stage_metric_args)
+    reg_command.extend(['--convergence', reg_iterations, '--shrink-factors', reg_shrink_factors, '--smoothing-sigmas',
+                        reg_smoothing_sigmas])
+
+    run_command(reg_command)
+
+    forward_transform = f"{input_transform_prefix}Composite.h5"
+    inverse_transform = f"{input_transform_prefix}InverseComposite.h5"
+
+    if apply_transforms:
+        warped_images = list()
+        for image_idx in range(num_modalities):
+            moving_image_warped = \
+                f"{work_dir}/{get_nifti_file_prefix(moving_images[image_idx])}_to_fixed_{image_idx}_warped.nii.gz"
+            apply_fwd_cmd = ['antsApplyTransforms', '--dimensionality', '3', '--input', moving_images[image_idx],
+                             '--reference-image', fixed_images[image_idx], '--output', moving_image_warped, '--interpolation',
+                             'Linear', '--transform', forward_transform, '--verbose', '1']
+            run_command(apply_fwd_cmd)
+            warped_images.append(moving_image_warped)
+
+        return {'forward_transform': forward_transform, 'inverse_transform': inverse_transform,
+                'moving_images_warped': warped_images}
+    else:
+        return {'forward_transform': forward_transform, 'inverse_transform': inverse_transform}
+
+
+def multivariate_sst_registration(images, work_dir, initial_templates=None, template_iterations=4,
+                                  reg_transform='SyN[ 0.2, 3, 0.5 ]'):
+    """Multivariate registration of images to a single subject template. This is a simplified interface to
+    multivariate_pairwise_registration, with default parameters for SST construction.
+
+    Parameters
+    ----------
+    """
+
+    return multivariate_pairwise_registration(images, work_dir, reg_iterations=reg_iterations, reg_metric='CC[4]',
+                                              reg_metric_weights=None)
+
+
+def combine_masks(masks, work_dir, thresh = 0.0001):
+    """Combine a list of binary masks in the same space into a single mask. Masks are added together and thresholded.
+    A very small threshold is approximately a union of the masks, while thresh=(number of masks) is approximately the
+    intersection.
+
+    Parameters:
+    ----------
+    masks (list):
+        List of masks to combine. Must be in the same space.
+    work_dir (str):
+        Path to working directory
+    thresh (float):
+        Threshold for inclusion in the combined mask.
+
+    Returns:
+    -------
+    str: Path to the combined mask
+    """
+    # Load the first mask
+    combined_mask = ants.image_read(masks[0])
+
+    # Add the rest
+    for mask in masks[1:]:
+        combined_mask = combined_mask + ants.image_read(mask)
+
+    combined_mask = combined_mask > thresh
+
+    ants.image_write(combined_mask, os.path.join(work_dir, get_nifti_file_prefix(masks[0]) + '_combined_mask.nii.gz'),
+                     pixeltype='uint8')
