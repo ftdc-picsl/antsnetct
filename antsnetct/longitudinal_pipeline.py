@@ -169,13 +169,17 @@ def longitudinal_analysis():
             # SST construction
             sst_preproc_input = get_preproc_sst_input(cx_biascorr_t1w_bids, working_dir)
 
-            sst_output_rigid = build_sst(sst_preproc_input, working_dir, reg_transform='Rigid[0.1]', reg_metric=sst_reg_metric,
-                                         reg_metric_params=sst_reg_metric_params, reg_iterations=sst_reg_iterations,
-                                         be_weight=args.sst_brain_extracted_weight)
+            template_weights = [1.0 - be_metric_weight, be_metric_weight]
 
-            sst_output = build_sst(sst_preproc_input, working_dir, initial_templates=sst_output_rigid,
-                                   reg_transform=args.sst_transform, reg_iterations=sst_reg_iterations,
-                                   be_weight=args.sst_brain_extracted_weight, reg_metric=sst_reg_metric)
+            sst_output_rigid = ants_helpers.build_sst(sst_preproc_input, working_dir, initial_templates=None,
+                                                      reg_transform='Rigid[ 0.1 ]', reg_iterations=sst_reg_iterations,
+                                                      reg_metric=sst_reg_metric, reg_metric_params=sst_reg_metric_params,
+                                                      reg_metric_weights=template_weights, template_iterations=3)
+
+            sst_output = ants_helpers.build_sst(sst_preproc_input, working_dir, initial_templates=sst_output_rigid,
+                                                reg_transform='SyN[ 0.2, 3, 0.5 ]', reg_iterations=sst_reg_iterations,
+                                                reg_metric=sst_reg_metric, reg_metric_params=sst_reg_metric_params,
+                                                reg_metric_weights=template_weights, template_iterations=3)
 
             session_sst_transforms = list()
 
