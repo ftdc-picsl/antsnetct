@@ -462,7 +462,6 @@ def anatomical_template_registration(fixed_image, moving_image, work_dir, fixed_
         '--collapse-output-transforms', '1',
         '--output', output_root,
         '--write-composite-transform', '1',
-        '--interpolation', 'Linear',
         '--use-histogram-matching', '0',
         '--winsorize-image-intensities', '[0.005,0.995]',
         '--masks', mask_arg,
@@ -502,7 +501,7 @@ def anatomical_template_registration(fixed_image, moving_image, work_dir, fixed_
             '--input', moving_image,
             '--reference-image', fixed_image,
             '--output', moving_image_warped,
-            '--interpolation', 'Linear',
+            '--interpolation', 'BSpline',
             '--transform', composite_fwd_transform,
             '--verbose', '1'
         ]
@@ -822,7 +821,8 @@ def build_sst(images, work_dir, initial_templates=None, template_iterations=5, r
 
 
 def build_template(images, work_dir, initial_templates=None, template_iterations=4, reg_transform='SyN[ 0.2, 3, 0 ]',
-                   reg_metric = 'CC[4]', reg_metric_weights=None, reg_iterations='40x40x50x20', reg_shrink_factors='6x4x2x1', reg_smoothing_sigmas='3x2x1x0vox', template_norm='mean', template_sharpen='laplacian'):
+                   reg_metric = 'CC[4]', reg_metric_weights=None, reg_iterations='40x40x50x20', reg_shrink_factors='6x4x2x1',
+                   reg_smoothing_sigmas='3x2x1x0vox', template_norm='mean', template_sharpen='laplacian'):
     """Construct a template from the input images.
 
     The images should be preprocessed so that they share:
@@ -950,9 +950,10 @@ def build_template(images, work_dir, initial_templates=None, template_iterations
 
     return template_images
 
+
 def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fixed_mask=None, moving_mask=None,
                                        metric='CC', metric_params=[4], metric_weights=None, transform='SyN[0.2,3,0]',
-                                       iterations='30x70x70x10', shrink_factors='6x4x2x1', smoothing_sigmas='3x2x1x0vox',
+                                       iterations='20x30x70x70x10', shrink_factors='8x6x4x2x1', smoothing_sigmas='4x3x2x1x0vox',
                                        apply_transforms=True):
     """Multivariate pairwise registration of images.
 
@@ -1012,27 +1013,27 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
 
     for modality_idx in range(num_modalities):
         linear_metric_params.extend(
-            ['--metric', f"MI[{template_images[modality_idx]}, {images[modality_idx][image_idx]}, " +
+            ['--metric', f"MI[{fixed_images[modality_idx]}, {moving_images[modality_idx][image_idx]}, " +
                 f"{reg_metric_weights[modality_idx]}, 32]"])
 
     rigid_stage = ['--transform', 'Rigid[ 0.1 ]']
     rigid_stage.extend(linear_metric_params)
-    rigid_stage.extend(['--convergence', '[ 100x50x50x0, 1e-6, 10 ]', '--shrink-factors', '6x4x2x1', '--smoothing-sigmas',
+    rigid_stage.extend(['--convergence', '[ 100x250x50x0, 1e-6, 10 ]', '--shrink-factors', '8x4x2x1', '--smoothing-sigmas',
                     '4x2x1x0vox'])
 
     affine_stage = ['--transform', 'Affine[ 0.1 ]']
     affine_stage.extend(linear_metric_params)
-    affine_stage.extend(['--convergence', '[ 100x50x50x0, 1e-6, 10 ]', '--shrink-factors', '6x4x2x1', '--smoothing-sigmas',
+    affine_stage.extend(['--convergence', '[ 100x250x50x0, 1e-6, 10 ]', '--shrink-factors', '8x4x2x1', '--smoothing-sigmas',
                     '4x2x1x0vox'])
 
     reg_command = ['antsRegistration', '--dimensionality', '3', '--float', '0', '--collapse-output-transforms', '1',
                     '--output', input_transform_prefix, '--interpolation', 'Linear', '--winsorize-image-intensities',
-                    '[0.0,0.995]', '--use-histogram-matching', '0', '--initial-moving-transform', f"[ {template_images[0]},
+                    '[0.0,0.995]', '--use-histogram-matching', '0', '--initial-moving-transform', f"[ {fixed_images[0]},
                     {moving_images[0]}, 1 ]", '--write-composite-transform', '1']
 
-    if reg_transform.startswith('Affine'):
+    if transform.startswith('Affine'):
         reg_command.extend(rigid_stage)
-    elif reg_transform.startswith('Rigid'):
+    elif transform.startswith('Rigid'):
         pass
     else:
         # Assume a deformable transform here
@@ -1048,10 +1049,10 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
             ['--metric', f"{metric}[ {fixed_images[modality_idx]}, {moving_images[modality_idx]}, " +
                 f"{reg_metric_weights[modality_idx]}, {metric_params_str}" ])
 
-    reg_command.extend(['--transform', reg_transform])
+    reg_command.extend(['--transform', transform])
     reg_command.extend(last_stage_metric_args)
-    reg_command.extend(['--convergence', reg_iterations, '--shrink-factors', reg_shrink_factors, '--smoothing-sigmas',
-                        reg_smoothing_sigmas])
+    reg_command.extend(['--convergence', f"[ {iterations}, 1e-6, 10 ]", '--shrink-factors', shrink_factors,
+                        '--smoothing-sigmas', smoothing_sigmas])
 
     run_command(reg_command)
 
@@ -1061,11 +1062,11 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
     if apply_transforms:
         warped_images = list()
         for image_idx in range(num_modalities):
-            moving_image_warped = \
-                f"{work_dir}/{get_nifti_file_prefix(moving_images[image_idx])}_to_fixed_{image_idx}_warped.nii.gz"
+            moving_image_warped = os.path.join(
+                work_dir, f"{get_nifti_file_prefix(moving_images[image_idx])}_to_fixed_{image_idx}_warped.nii.gz")
             apply_fwd_cmd = ['antsApplyTransforms', '--dimensionality', '3', '--input', moving_images[image_idx],
                              '--reference-image', fixed_images[image_idx], '--output', moving_image_warped, '--interpolation',
-                             'Linear', '--transform', forward_transform, '--verbose', '1']
+                             'BSpline', '--transform', forward_transform, '--verbose', '1']
             run_command(apply_fwd_cmd)
             warped_images.append(moving_image_warped)
 
@@ -1075,8 +1076,10 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
         return {'forward_transform': forward_transform, 'inverse_transform': inverse_transform}
 
 
-def multivariate_sst_registration(images, work_dir, initial_templates=None, template_iterations=4,
-                                  reg_transform='SyN[ 0.2, 3, 0.5 ]'):
+def multivariate_sst_registration(fixed_images, moving_images, work_dir, fixed_mask=None, moving_mask=None,
+                                  metric='CC', metric_params=[3], metric_weights=None, transform='SyN[0.2,3,0.5]',
+                                  iterations='30x60x70x10', shrink_factors='4x3x2x1', smoothing_sigmas='3x2x1x0vox',
+                                  apply_transforms=True):
     """Multivariate registration of images to a single subject template. This is a simplified interface to
     multivariate_pairwise_registration, with default parameters for SST construction.
 
@@ -1084,8 +1087,7 @@ def multivariate_sst_registration(images, work_dir, initial_templates=None, temp
     ----------
     """
 
-    return multivariate_pairwise_registration(images, work_dir, reg_iterations=reg_iterations, reg_metric='CC[4]',
-                                              reg_metric_weights=None)
+    return multivariate_pairwise_registration(images, work_dir)
 
 
 def combine_masks(masks, work_dir, thresh = 0.0001):

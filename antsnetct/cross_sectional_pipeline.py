@@ -230,7 +230,7 @@ def cross_sectional_analysis():
                 # Atropos. If Atropos is not used, the T1w is bias-corrected separately with N4.
                 seg_priors = get_segmentation_priors(t1w_bids, preproc_t1w_bids, working_dir, args.segmentation_dataset)
 
-                seg_n4 = segment_and_bias_correct(preproc_t1w_bids, brain_mask_bids, working_dir,
+                seg_n4 = segment_and_bias_correct(preproc_t1w_bids, brain_mask_bids, seg_priors, working_dir,
                                                   args.segmentation_method, args.atropos_n4_iterations,
                                                   args.atropos_prior_weight)
 
@@ -571,6 +571,12 @@ def cortical_thickness(seg_n4, work_dir, thickness_iterations=45):
         Path to the working directory.
     thickness_iterations : int, optional
         Number of iterations for cortical thickness estimation. Default is 45.
+
+    Returns:
+    --------
+    BIDSImage
+        The cortical thickness image in the output dataset.
+
     """
     posterior_files = [posterior.get_path() for posterior in seg_n4['posteriors']]
 

@@ -9,6 +9,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -52,10 +53,11 @@ def longitudinal_analysis():
 
     sst_parser = parser.add_argument_group('Single Subject Template arguments')
     sst_parser.add_argument("--sst-transform", help="SST transform, rigid or SyN", default='rigid')
-    sst_parser.add_argument("--sst-iterations", help="Number of iterations for SST registration", type=int, default=4)
+    sst_parser.add_argument("--sst-iterations", help="Number of iterations for SST template building", type=int, default=4)
     sst_parser.add_argument("--sst-brain-extracted-weight", help="Relative weighting of brain-extracted images in SST "
                             "construction. 0.0 means only use whole-head images, 1.0 means only use brain-extracted images.",
                             type=float, default=0.5)
+    template_parser.add_argument("--sst-reg-quick", help="Do quick registration to the SST", action='store_true')
     sst_parser.add_argument("--sst-segmentation-method", help="Segmentation method to use on the SST. Either "
                             "'atropos' or 'antspynet'. If atropos, antspynet posteriors are used as priors.",
                             type=str, default='atropos')
@@ -103,7 +105,14 @@ def longitudinal_analysis():
 
     cx_ds = args.cross_sectional_dataset
 
-    input_t1w_bids = ()
+    # preprocessed images to be processed longitudinally
+    cx_preproc_t1w_bids = list()
+
+    # denoised, bias-corrected images to be used for SST construction and registration
+    cx_biascorr_t1w_bids = list()
+
+    # brain masks for the preprocessed images
+    cx_brain_mask_bids = list()
 
     if args.participant_images is not None:
         with open(args.participant_images, 'r') as f:
@@ -111,9 +120,18 @@ def longitudinal_analysis():
             for relpath in t1w_relpaths:
                 if not os.path.exists(os.path.join(cx_ds, relpath)):
                     raise ValueError(f"Image {relpath} not found in cross-sectional dataset")
-                input_t1w_bids.append(bids_helpers.BIDSImage(os.path.join(cx_ds, relpath)))
+                cx_preproc_t1w_bids.append(bids_helpers.BIDSImage(cx_ds, relpath))
+                cx_biascorr_t1w_bids.append(bids_helpers.BIDSImage(cx_ds, relpath.replace('desc-preproc_T1w',
+                                                                                          'desc-biascorr_T1w')))
+                cx_brain_mask_bids.append(bids_helpers.BIDSImage(cx_ds, relpath.replace('desc-preproc_T1w', 'desc-brain_mask')))
     else:
-        input_t1w_bids = bids_helpers.find_participant_images(cx_ds, args.participant, 'anat', 'desc_biascorr-T1w')
+        cx_preproc_t1w_bids = bids_helpers.find_participant_images(cx_ds, args.participant, 'anat', 'desc-preproc_T1w')
+        for idx in range(len(cx_preproc_t1w_bids)):
+             cx_biascorr_t1w_bids.append(bids_helpers.BIDSImage(cx_ds, relpath.replace('desc-preproc_T1w',
+                                                                                       'desc-biascorr_T1w')))
+             cx_brain_mask_bids.append(bids_helpers.BIDSImage(cx_ds, relpath.replace('desc-preproc_T1w', 'desc-brain_mask')))
+
+    num_sessions = len(cx_preproc_t1w_bids)
 
     # Check that the output dataset exists, and if not, create
     # Update dataset_description.json if needed
@@ -133,61 +151,82 @@ def longitudinal_analysis():
             # output_dataset/sub-123456/ses-MR1/anat - contains session-specific files
             # output_dataset/sub-123456/ses-MR2/anat - contains session-specific files
 
-            # SST input images - filenames, not BIDSImage objects
-            # head images
-            sst_input_t1w_denoised_normalized_images = list()
-            # brain_images
-            sst_input_t1w_denoised_normalized_brains = list()
-            sst_input_t1w_masks = list()
+            # Write preprocessed T1w images to output dataset - this creates output session directories
+            long_preproc_t1w_bids = list()
 
-            template_weights = [1.0 - args.sst_brain_extracted_weight, args.sst_brain_extracted_weight]
+            for idx in range(num_sessions):
+                long_preproc_t1w_bids.append(bids_helpers.copy_image(cx_preproc_t1w_bids[idx], args.output_dataset))
 
-            for t1w in input_t1w_bids:
-                # get the T1w image and mask, and reset their origins to the mask centroid
+            sst_reg_metric = 'CC'
+            sst_reg_metric_params=[3]
+            sst_reg_iterations = '20x20x40x10'
 
-                input_t1w_denoised_image = t1w.get_path()
+            if args.sst_reg_quick:
+                sst_reg_metric = 'MI'
+                sst_reg_metric_params = [32]
+                sst_reg_iterations = '20x30x40x0'
 
-                seg = t1w.get_derivative_prefix() + '_seg-antsnetct_dseg.nii.gz'
+            # SST construction
+            sst_preproc_input = get_preproc_sst_input(cx_biascorr_t1w_bids, working_dir)
 
-                normalized = ants_helpers.normalize_intensity(input_t1w_denoised_image, seg, working_dir)
+            sst_output_rigid = build_sst(sst_preproc_input, working_dir, reg_transform='Rigid[0.1]', reg_metric=sst_reg_metric,
+                                         reg_metric_params=sst_reg_metric_params, reg_iterations=sst_reg_iterations,
+                                         be_weight=args.sst_brain_extracted_weight)
 
-                input_t1w_mask = os.path.join(cx_ds, t1w.get_derivative_prefix() + 'desc-brain_mask.nii.gz')
+            sst_output = build_sst(sst_preproc_input, working_dir, initial_templates=sst_output_rigid,
+                                   reg_transform=args.sst_transform, reg_iterations=sst_reg_iterations,
+                                   be_weight=args.sst_brain_extracted_weight, reg_metric=sst_reg_metric)
 
-                origin_fix = preprocessing.reset_origin_by_centroid(normalized, input_t1w_mask, working_dir)
+            session_sst_transforms = list()
 
-                sst_input_t1w_denoised_normalized_images.append(origin_fix)
+            # Register all subjects to SST
+            for idx in range(num_sessions):
+                moving_head = cx_biascorr_t1w_bids[idx].get_path()
+                moving_brain = ants_helpers.apply_mask(moving_head, cx_brain_mask_bids[idx].get_path(), working_dir)
+                moving = [moving_head, moving_brain]
+                session_sst_transforms.append(
+                    ants_helpers.multivariate_pairwise_registration(sst_output['template_images'], moving, working_dir,
+                                                      transform='SyN[0.2, 3, 0.5]', iterations=sst_reg_iterations,
+                                                      metric=sst_reg_metric, metric_params=sst_reg_metric_params,
+                                                      be_metric_weight=args.sst_brain_extracted_weight, apply_transforms=False)
+                )
 
-                mask_origin_fix = preprocessing.reset_origin_by_centroid(input_t1w_mask, input_t1w_mask, working_dir)
+            # Write SST to output dataset under sub-<label>/anat
+            sst_bids = bids_helpers.image_to_bids(sst_output['template_images'][0], args.output_dataset,
+                                                  os.path.join('sub-' + args.participant, 'anat', 'sub-' + args.participant +
+                                                               '_desc-sst_T1w.nii.gz'))
 
-                sst_input_t1w_masks.append(mask_origin_fix)
+            # Masks in SST space
+            sst_t1w_masks = list()
 
-                brain_origin_fix = ants_helpers.apply_mask(origin_fix, mask_origin_fix, working_dir)
-
-                sst_input_t1w_denoised_normalized_brains.append(brain_origin_fix)
-
-            # First round is rigid
-            sst_output_rigid = ants_helpers.build_sst(
-                [sst_input_t1w_denoised_normalized_images, sst_input_t1w_denoised_normalized_brains], working_dir,
-                reg_transform='Rigid[0.1]', reg_iterations='20x20x40x0', template_iterations=3)
-
-            # Second round is SyN
-            sst_output = ants_helpers.build_sst(
-                [sst_input_t1w_denoised_normalized_images, sst_input_t1w_denoised_normalized_brains], working_dir,
-                reg_transform='SyN[0.2, 3, 0]', initial_templates=sst_output_rigid['template_images'],
-                reg_iterations='20x30x40x10', reg_metric_weights=template_weights, template_iterations=5)
-
-            # Warp all the masks to the SST space
-            sst_input_t1w_masks = list()
-
-            for idx, mask in enumerate(sst_input_t1w_masks):
-                sst_input_t1w_masks.append(ants_helpers.apply_transforms(sst_output['template'], mask,
-                                                                         sst_output['template_transforms'][idx],
-                                                                         working_dir, interpolation = 'Linear'))
+            for idx in range(num_sessions):
+                sst_t1w_masks.append(
+                    ants_helpers.apply_transforms(sst_output['template_images'][0], cx_brain_mask_bids[idx].get_path(),
+                                                  session_sst_transforms[idx]['forward_transform'], working_dir,
+                                                  interpolation='GenericLabel')
+                )
 
             # Combine the masks
-            unified_mask_sst = ants_helpers.combine_masks(sst_input_t1w_masks, working_dir, thresh = 0.1)
+            unified_mask_sst = ants_helpers.combine_masks(sst_t1w_masks, working_dir, thresh = 0.1)
+
+            # Save this in the output dataset
+            unified_mask_sst_bids = bids_helpers.image_to_bids(unified_mask_sst, args.output_dataset,
+                                                               os.path.join('sub-' + args.participant, 'anat',
+                                                                            'sub-' + args.participant +
+                                                                            '_desc-sstbrain_mask.nii.gz'))
 
             # Warp the unified mask back to the session spaces
+            long_brain_mask_bids = list()
+
+            for idx in range(num_sessions):
+                session_mask = ants_helpers.apply_transforms(cx_biascorr_t1w_bids[idx].get_path(), unified_mask_sst,
+                                              session_sst_transforms[idx]['inverse_transform'], working_dir,
+                                              interpolation='GenericLabel')
+                long_brain_mask_bids.append(
+                    bids_helpers.image_to_bids(session_mask, args.output_dataset,
+                                               long_preproc_t1w_bids.get_derivative_rel_path_prefix() +
+                                               '_desc-brain_mask.nii.gz')
+                    )
 
             sst_input_t1w_denoised_unified_mask_brains = ()
             unified_masks_session_space = ()
@@ -202,12 +241,6 @@ def longitudinal_analysis():
                     ants_helpers.apply_mask(sst_input_t1w_denoised_normalized_images[idx],
                                             unified_masks_session_space[idx], working_dir)
                 )
-
-            # Write SST to output directory
-            sst_bids = bids_helpers.image_to_bids(sst, args.output_dataset,
-                                                  os.path.join('sub-' + args.participant, 'anat', 'sub-' + args.participant +
-                                                               '_desc-SST_T1w.nii.gz'))
-
 
             # Segment the SST
 
@@ -229,3 +262,96 @@ def longitudinal_analysis():
             if args.keep_workdir.lower() != 'never':
                 logger.info("Saving working directory to " + debug_workdir)
                 shutil.copytree(working_dir, debug_workdir)
+
+
+def get_preproc_sst_input(cx_biascorr_t1w_bids, work_dir):
+    """Preprocess the input images for SST construction.
+
+    The preprocessing steps are:
+        1. Normalize intensity such that the mean WM intensity is the same across images
+        2. Reset the origin of the images to the centroid of the brain mask. This prevents unwanted shifts
+           in the SST position.
+
+    Parameters:
+    ----------
+    cx_biascorr_t1w_bids (list of BIDSImage):
+        List of BIDSImage objects for the input images. These should be the bias-corrected T1w images.
+    work_dir (str):
+        Working directory
+
+    Returns:
+    -------
+    list:
+        List containing a list of head images and brain images, for SST construction.
+    """
+    sst_input_t1w_denoised_normalized_heads = list()
+    sst_input_t1w_denoised_normalized_brains = list()
+
+    for t1w in cx_biascorr_t1w_bids:
+        # get the T1w image and mask, and reset their origins to the mask centroid
+        input_t1w_denoised_image = t1w.get_path()
+
+        seg = t1w.get_derivative_path_prefix() + '_seg-antsnetct_dseg.nii.gz'
+
+        normalized = ants_helpers.normalize_intensity(input_t1w_denoised_image, seg, work_dir)
+
+        input_t1w_mask = t1w.get_derivative_path_prefix() + 'desc-brain_mask.nii.gz'
+
+        origin_fix = preprocessing.reset_origin_by_centroid(normalized, input_t1w_mask, work_dir)
+
+        sst_input_t1w_denoised_normalized_heads.append(origin_fix)
+
+        mask_origin_fix = preprocessing.reset_origin_by_centroid(input_t1w_mask, input_t1w_mask, work_dir)
+
+        brain_origin_fix = ants_helpers.apply_mask(origin_fix, mask_origin_fix, work_dir)
+
+        sst_input_t1w_denoised_normalized_brains.append(brain_origin_fix)
+
+    sst_input_combined = [sst_input_t1w_denoised_normalized_heads, sst_input_t1w_denoised_normalized_brains]
+
+    return sst_input_combined
+
+
+
+
+def build_sst(sst_input, work_dir, initial_templates=None, template_iterations=4, reg_transform='Rigid[0.1]', reg_metric='CC',
+              reg_metric_params=[3], be_metric_weight=0.5, reg_iterations='40x40x40x0', reg_shrink_factors='4x3x2x1', reg_smoothing_sigmas='3x2x1x0vox'):
+    """Build the SST for a set of cross-sectional BIDS images.
+
+    Parameters:
+    ----------
+    cx_biascorr_t1w_bids (list of BIDSImage):
+        List of BIDSImage objects for the input images. These should be cross-sectionally processed T1w images.
+    work_dir (str):
+        Working directory
+    initial_templates (list of str):
+        Initial templates to use for the SST. If None, the first image in cx_t1w_bids is the initial template.
+    template_iterations (int):
+        Number of iterations for template building.
+    reg_iterations (str):
+        Iterations for pairwise registration in the template building process.
+    be_metric_weight (float):
+        Relative weight of brain-extracted images in the SST construction. 0.0 means only use whole-head images, 1.0 means
+        only use brain-extracted images. Default is 0.5.
+    reg_shrink_factors (str):
+        Shrink factors for registration.
+    reg_smoothing_sigmas (str):
+        Smoothing sigmas for registration.
+    reg_transform (str):
+        Registration transform to use.
+
+    Returns:
+    -------
+    sst_output (dict):
+        Dictionary containing the SST images. The first template is the whole-head T1w, the second is brain-extracted.
+    """
+    template_weights = [1.0 - be_metric_weight, be_metric_weight]
+
+    sst_output = ants_helpers.build_sst(sst_input, work_dir, initial_templates=initial_templates,
+                                        reg_transform=reg_transform, reg_iterations=reg_iterations, reg_metric=reg_metric,
+                                        reg_metric_params=reg_metric_params, reg_metric_weights=template_weights,
+                                        reg_shrink_factors=reg_shrink_factors, reg_smoothing_sigmas=reg_smoothing_sigmas,
+                                        template_iterations=template_iterations)
+
+    return sst_output
+
