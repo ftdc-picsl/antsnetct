@@ -1,6 +1,6 @@
 from . import ants_helpers
 from . import bids_helpers
-from . import preprocessing
+from . import cross_sectional_pipeline
 from . import system_helpers
 
 from .system_helpers import PipelineError
@@ -61,12 +61,14 @@ def longitudinal_analysis():
     sst_parser.add_argument("--sst-segmentation-method", help="Segmentation method to use on the SST. Either "
                             "'atropos' or 'antspynet'. If atropos, antspynet posteriors are used as priors.",
                             type=str, default='atropos')
-    sst_parser.add_argument("--sst-atropos-prior-weight", help="Number of iterations of atropos-n4", type=int, default=3)
+    sst_parser.add_argument("--sst-atropos-prior-weight", help="Prior weight in the SST segmenation. A higher value "
+                            "gives more weight to the antsnet priors", type=int, default=0.5)
 
     segmentation_parser = parser.add_argument_group('Segmentation arguments for session processing')
     segmentation_parser.add_argument("--atropos-n4-iterations", help="Number of iterations of atropos-n4",
                                      type=int, default=3)
-    segmentation_parser.add_argument("--atropos-prior-weight", help="Prior weight for Atropos", type=float, default=0.5)
+    segmentation_parser.add_argument("--atropos-prior-weight", help="Prior weight for Atropos in the session space",
+                                     type=float, default=0.5)
 
     thickness_parser = parser.add_argument_group('Thickness arguments for session processing')
     thickness_parser.add_argument("--thickness-iterations", help="Number of iterations for cortical thickness estimation. "
@@ -103,7 +105,53 @@ def longitudinal_analysis():
     if args.participant is None:
         raise ValueError('Participant must be defined')
 
-    cx_ds = args.cross_sectional_dataset
+    group_template = None
+    group_template_brain_mask = None
+
+    # setup templateflow, check template can be found
+    if args.template_name.lower() != 'none':
+        if not 'TEMPLATEFLOW_HOME' in os.environ or not os.path.exists(os.environ.get('TEMPLATEFLOW_HOME')):
+            raise PipelineError(f"templateflow directory not found at " +
+                                f"TEMPLATEFLOW_HOME={os.environ.get('TEMPLATEFLOW_HOME')}")
+
+        group_template = bids_helpers.TemplateImage(args.template_name, suffix='T1w', description=None,
+                                              resolution=args.template_res, cohort=args.template_cohort)
+
+        group_template_brain_mask = bids_helpers.TemplateImage(args.template_name, suffix='mask', description='brain',
+                                                         resolution=args.template_res, cohort=args.template_cohort)
+
+    system_helpers.set_verbose(args.verbose)
+
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(1)
+
+    cx_dataset = args.cross_sectional_dataset
+
+    output_dataset = args.output_dataset
+
+    if (cx_dataset == output_dataset):
+        raise ValueError('Input and output datasets cannot be the same')
+
+    cx_dataset_description = None
+
+    if os.path.exists(os.path.join(cx_dataset, 'dataset_description.json')):
+        with open(os.path.join(cx_dataset, 'dataset_description.json'), 'r') as f:
+            cx_dataset_description = json.load(f)
+    else:
+        raise ValueError('Cross-sectional dataset does not contain a dataset_description.json file')
+
+    logger.info("Cross-sectional dataset path: " + cx_dataset)
+    logger.info("Cross-sectional dataset name: " + cx_dataset_description['Name'])
+
+    # Create the output dataset and add this container to the GeneratedBy, if needed
+    bids_helpers.update_output_dataset(output_dataset, cx_dataset_description['Name'] + '_antsnetct')
+
+    with open(os.path.join(output_dataset, 'dataset_description.json'), 'r') as f:
+        output_dataset_description = json.load(f)
+
+    logger.info("Output dataset path: " + output_dataset)
+    logger.info("Output dataset name: " + output_dataset_description['Name'])
 
     # preprocessed images to be processed longitudinally
     cx_preproc_t1w_bids = list()
@@ -169,7 +217,7 @@ def longitudinal_analysis():
             # SST construction
             sst_preproc_input = get_preproc_sst_input(cx_biascorr_t1w_bids, working_dir)
 
-            template_weights = [1.0 - be_metric_weight, be_metric_weight]
+            template_weights = [1.0 - args.sst_brain_extracted_weight, args.sst_brain_extracted_weight]
 
             sst_output_rigid = ants_helpers.build_sst(sst_preproc_input, working_dir, initial_templates=None,
                                                       reg_transform='Rigid[ 0.1 ]', reg_iterations=sst_reg_iterations,
@@ -192,7 +240,7 @@ def longitudinal_analysis():
                     ants_helpers.multivariate_pairwise_registration(sst_output['template_images'], moving, working_dir,
                                                       transform='SyN[0.2, 3, 0.5]', iterations=sst_reg_iterations,
                                                       metric=sst_reg_metric, metric_params=sst_reg_metric_params,
-                                                      be_metric_weight=args.sst_brain_extracted_weight, apply_transforms=False)
+                                                      be_metric_weight=template_weights, apply_transforms=False)
                 )
 
             # Write SST to output dataset under sub-<label>/anat
@@ -219,6 +267,11 @@ def longitudinal_analysis():
                                                                             'sub-' + args.participant +
                                                                             '_desc-sstbrain_mask.nii.gz'))
 
+            sst_brain_bids = bids_helpers.image_to_bids(
+                ants_helpers.apply_mask(sst_output['template_images'][0], unified_mask_sst, working_dir),
+                args.output_dataset, os.path.join('sub-' + args.participant, 'anat', 'sub-' + args.participant +
+                                                                    '_desc-sstbrain_T1w.nii.gz'))
+
             # Warp the unified mask back to the session spaces
             long_brain_mask_bids = list()
 
@@ -232,37 +285,44 @@ def longitudinal_analysis():
                                                '_desc-brain_mask.nii.gz')
                     )
 
-            sst_input_t1w_denoised_unified_mask_brains = ()
-            unified_masks_session_space = ()
-
-            for idx, mask in enumerate(sst_input_t1w_masks):
-                unified_masks_session_space.append(
-                    ants_helpers.apply_transforms(sst_input_t1w_denoised_normalized_images[idx], sst_output['template'],
-                                                    unified_mask_sst, sst_output['template_inverse_transforms'][idx],
-                                                    working_dir, interpolation = 'GenericLabel')
-                    )
-                sst_input_t1w_denoised_unified_mask_brains.append(
-                    ants_helpers.apply_mask(sst_input_t1w_denoised_normalized_images[idx],
-                                            unified_masks_session_space[idx], working_dir)
-                )
-
             # Segment the SST
+            sst_seg = cross_sectional_pipeline.segment_and_bias_correct(sst_bids, unified_mask_sst_bids, working_dir,
+                             segmentation_method=args.sst_segmentation_method, atropos_n4_iterations=1,
+                             atropos_prior_weight=0.25, denoise=True, n4_spline_spacing=180,
+                             n4_convergence='[ 0,1e-7 ]', n4_shrink_factor=3)
 
             # align the SST to the group template
+            sst_to_group_template_reg = cross_sectional_pipeline.template_brain_registration(
+                group_template, group_template_brain_mask, sst_brain_bids, args.template_reg_quick, working_dir)
 
             # for each session
+            for idx in range(num_sessions):
+                t1w_bids = cx_preproc_t1w_bids[idx]
+                brain_mask_bids = cx_brain_mask_bids[idx]
                 # Warp priors to the session space
+                t1w_priors = list()
+
+                for idx in range(6):
+                    t1w_priors.append(
+                        ants_helpers.apply_transforms(t1w_bids.get_path(), sst_seg['segmentation_posteriors'][idx],
+                                                      session_sst_transforms[idx]['inverse_transform'], working_dir)
+                    )
                 # Segment the session
+                seg_n4 = cross_sectional_pipeline.segment_and_bias_correct(t1w_bids, brain_mask_bids, working_dir, denoise=True,
+                                                  segmentation_priors=t1w_priors, segmentation_method='atropos',
+                                                  atropos_n4_iterations=args.atropos_n4_iterations,
+                                                  atropos_prior_weight=args.atropos_prior_weight)
                 # Compute thickness
+                thickness = cross_sectional_pipeline.compute_cortical_thickness(seg_n4, working_dir,
+                                                                                iterations=args.thickness_iterations)
                 # Warp thickness to SST space
                 # Compute jacobian in SST space if applicable
                 # Warp thickness to group space
-
         except Exception as e:
-            logger.error(f"Caught {type(e)} during processing of {str(t1w_bids)}")
+            logger.error(f"Caught {type(e)} during processing of {args.participant}")
             # Print stack trace
             traceback.print_exc()
-            debug_workdir = os.path.join(output_dataset, t1w_bids.get_derivative_rel_path_prefix() + "_workdir")
+            debug_workdir = os.path.join(args.output_dataset, f"sub-{args.participant}", f"sub-{args.participant}_workdir")
             if args.keep_workdir.lower() != 'never':
                 logger.info("Saving working directory to " + debug_workdir)
                 shutil.copytree(working_dir, debug_workdir)

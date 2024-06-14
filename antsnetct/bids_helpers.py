@@ -240,7 +240,8 @@ class TemplateImage:
         if not template_res_found:
             raise ValueError(f"Resolution {resolution} not found in template metadata")
 
-        template_matches = templateflow.api.get(name, resolution=resolution, desc=description, cohort=cohort, suffix=suffix)
+        template_matches = templateflow.api.get(name, resolution=resolution, desc=description, cohort=cohort, suffix=suffix,
+                                                raise_empty=True)
 
         if type(template_matches) is list:
             raise ValueError(f"Template could not be uniquely identified from the input. Found: {template_matches}")

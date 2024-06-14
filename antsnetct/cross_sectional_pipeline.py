@@ -146,11 +146,20 @@ def cross_sectional_analysis():
 
     args = parser.parse_args()
 
-    # setup templateflow
+    template = None
+    template_brain_mask = None
+
+    # setup templateflow, check template can be found
     if args.template_name.lower() != 'none':
         if not 'TEMPLATEFLOW_HOME' in os.environ or not os.path.exists(os.environ.get('TEMPLATEFLOW_HOME')):
             raise PipelineError(f"templateflow directory not found at " +
                                 f"TEMPLATEFLOW_HOME={os.environ.get('TEMPLATEFLOW_HOME')}")
+
+        template = bids_helpers.TemplateImage(args.template_name, suffix='T1w', description=None,
+                                              resolution=args.template_res, cohort=args.template_cohort)
+
+        template_brain_mask = bids_helpers.TemplateImage(args.template_name, suffix='mask', description='brain',
+                                                         resolution=args.template_res, cohort=args.template_cohort)
 
     system_helpers.set_verbose(args.verbose)
 
@@ -230,9 +239,10 @@ def cross_sectional_analysis():
                 # Atropos. If Atropos is not used, the T1w is bias-corrected separately with N4.
                 seg_priors = get_segmentation_priors(t1w_bids, preproc_t1w_bids, working_dir, args.segmentation_dataset)
 
-                seg_n4 = segment_and_bias_correct(preproc_t1w_bids, brain_mask_bids, seg_priors, working_dir,
-                                                  args.segmentation_method, args.atropos_n4_iterations,
-                                                  args.atropos_prior_weight)
+                seg_n4 = segment_and_bias_correct(preproc_t1w_bids, brain_mask_bids, working_dir,
+                                                  segmentation_priors=seg_priors, segmentation_method=args.segmentation_method,
+                                                  atropos_n4_iterations=args.atropos_n4_iterations,
+                                                  atropos_prior_weight=args.atropos_prior_weight)
 
                 # If thickness is requested, calculate it
                 if args.thickness_iterations > 0:
@@ -240,12 +250,6 @@ def cross_sectional_analysis():
 
                 # If an atlas is defined, register the T1w image to the atlas
                 if args.template_name.lower() != 'none':
-
-                    template = bids_helpers.TemplateImage(args.template_name, suffix='T1w', description=None,
-                                                          resolution=args.template_res, cohort=args.template_cohort)
-
-                    template_brain_mask = bids_helpers.TemplateImage(args.template_name, suffix='mask', description='brain',
-                                                                     resolution=args.template_res, cohort=args.template_cohort)
 
                     template_reg = template_brain_registration(template, template_brain_mask,
                                                                seg_n4['bias_corrected_t1w_brain'], args.template_reg_quick,
@@ -444,8 +448,9 @@ def get_segmentation_priors(t1w_bids, t1w_bids_preproc, work_dir, segmentation_d
     return prior_seg_probabilities
 
 
-def segment_and_bias_correct(t1w_bids_preproc, brain_mask_bids, prior_seg_probabilities, work_dir,
-                             segmentation_method='atropos', atropos_n4_iterations=3, atropos_prior_weight=0.25):
+def segment_and_bias_correct(t1w_bids_preproc, brain_mask_bids, work_dir, prior_seg_probabilities=None,
+                             segmentation_method='atropos', atropos_n4_iterations=3, atropos_prior_weight=0.25,
+                             denoise=True, n4_spline_spacing=180, n4_convergence='[ 50x50x50x50,1e-7 ]', n4_shrink_factor=3):
     """Segment and bias correct a T1w image
 
     If the segmentation_method is 'none', the prior segmentation (whether from another dataset, or generated with deep_atropos)
@@ -494,7 +499,7 @@ def segment_and_bias_correct(t1w_bids_preproc, brain_mask_bids, prior_seg_probab
         # Run antsAtroposN4.sh, using the priors for segmentation and bias correction
         seg_output = ants_helpers.ants_atropos_n4(t1w_bids_preproc.get_path(), brain_mask_bids.get_path(),
                                                          prior_seg_probabilities, work_dir, iterations=atropos_n4_iterations,
-                                                         atropos_prior_weight=atropos_prior_weight)
+                                                         atropos_prior_weight=atropos_prior_weight, denoise=denoise, n4_spline_spacing=n4_spline_spacing, n4_convergence=n4_convergence, n4_shrink_factor=n4_shrink_factor)
         seg_output['segmentation_image'] = ants_helpers.posteriors_to_segmentation(seg_output['posteriors'], work_dir)
     elif segmentation_method.lower() == 'none':
         logger.info("Segmentation method is none, generating final segmentation directly from priors")
@@ -508,11 +513,14 @@ def segment_and_bias_correct(t1w_bids_preproc, brain_mask_bids, prior_seg_probab
         seg_output['posteriors'] = posteriors_masked
 
         # Denoise and then bias correct the T1w image
-        denoised_t1w_image = ants_helpers.denoise_image(t1w_bids_preproc.get_path(), work_dir)
+        if denoise:
+            denoised_t1w_image = ants_helpers.denoise_image(t1w_bids_preproc.get_path(), work_dir)
+        else:
+            denoised_t1w_image = t1w_bids_preproc.get_path()
 
         seg_output['bias_corrected_anatomical_images'] = [
             ants_helpers.n4_bias_correction(denoised_t1w_image, brain_mask_bids.get_path(), posteriors_masked,
-                                            work_dir)]
+                                            work_dir, n4_spline_spacing=n4_spline_spacing, n4_convergence=n4_convergence,)]
     else:
         raise ValueError('Unknown segmentation method: ' + segmentation_method)
 
