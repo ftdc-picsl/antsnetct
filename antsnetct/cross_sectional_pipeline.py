@@ -6,6 +6,7 @@ from . import system_helpers
 from .system_helpers import PipelineError
 
 import argparse
+import glob
 import json
 import logging
 import os
@@ -27,15 +28,9 @@ def cross_sectional_analysis():
     parser = argparse.ArgumentParser(formatter_class=RawDefaultsHelpFormatter, add_help = False,
                                      description='''Cortical thickness analysis with ANTsPyNet.
 
-    Input can either be by participant or by session. By participant:
+    Input is by participant and session.
 
-        '--participant 01'
-        '--participant-list subjects.txt' where the text file contains a list of participants, one per line.
-
-   All available sessions will be processed for each participant. To process selected sessions:
-
-        '--session 01,MR1'
-        '--sesion-list sessions.txt' where the text file contains a list of 'subject,session', one per line.
+        '--participant 01 --session MR1'
 
     Output is to a BIDS derivative dataset.
 
@@ -215,14 +210,14 @@ def cross_sectional_analysis():
 
                 logger.info("Processing T1w image: " + t1w_bids.get_uri())
 
-                # check completeness
-                if os.path.exists(os.path.join(output_dataset, t1w_bids.get_derivative_rel_path_prefix() +
-                                               '_seg-antsnetct_desc-thickness.nii.gz')):
-                    logger.info(f"Skipping {str(t1w_bids)}, cortical thickness already exists")
+                if bool(glob.glob(os.path.join(output_dataset, t1w_bids.get_derivative_rel_path_prefix()))):
+                    logger.info(f"Skipping {str(t1w_bids)}, output already exists. Clean up files matching " +
+                                f"{t1w_bids.get_derivative_rel_path_prefix()} to re-process")
                     continue
 
                 # Preprocessing
                 # Conform to LPI orientation
+                logger.info("Preprocessing T1w image")
                 preproc_t1w_bids = preprocess_t1w(t1w_bids, output_dataset, working_dir, orient='LPI',
                                                   trim_neck=args.do_neck_trim, pad=args.pad_mm)
 
@@ -230,13 +225,15 @@ def cross_sectional_analysis():
                 # 1. Brain mask dataset
                 # 2. Brain mask in input dataset
                 # 3. Generate a brain mask with antspynet
+                logger.info("Brain mask T1w")
                 brain_mask_bids = get_brain_mask(t1w_bids, preproc_t1w_bids, working_dir, args.brain_mask_dataset,
-                                                args.brain_mask_modality)
+                                                 args.brain_mask_modality)
 
                 # With mask defined, we can now do segmentation and bias correction
                 # Segmentation is either pre-defined, or generated with antspynet. Either an external segmentation or an
                 # antspynet segmentation can be used as priors for iterative segmentation and bias correction with N4 and
                 # Atropos. If Atropos is not used, the T1w is bias-corrected separately with N4.
+                logger.info("Segmentation and bias correction")
                 seg_priors = get_segmentation_priors(t1w_bids, preproc_t1w_bids, working_dir, args.segmentation_dataset)
 
                 seg_n4 = segment_and_bias_correct(preproc_t1w_bids, brain_mask_bids, working_dir,
@@ -246,21 +243,25 @@ def cross_sectional_analysis():
 
                 # If thickness is requested, calculate it
                 if args.thickness_iterations > 0:
+                    logger.info("Computing cortical thickness")
                     thickness = cortical_thickness(seg_n4, working_dir, args.thickness_iterations)
 
                 # If an atlas is defined, register the T1w image to the atlas
                 if args.template_name.lower() != 'none':
-
+                    logger.info("Registering to template")
                     template_reg = template_brain_registration(template, template_brain_mask,
                                                                seg_n4['bias_corrected_t1w_brain'], args.template_reg_quick,
                                                                working_dir)
                     # Make template space derivatives: thickness, jacobian, GM probability, t1w brain
+                    logger.info("Creating template space derivatives")
                     template_space_derivatives(template, template_reg, seg_n4, thickness, working_dir)
 
                 if args.keep_workdir.lower() == 'always':
                     logger.info("Keeping working directory: " + working_dir)
                     shutil.copytree(working_dir, os.path.join(output_dataset, preproc_t1w_bids.get_derivative_rel_path_prefix()
                                                               + "_workdir"))
+
+                logger.info(f"Finished processing {t1w_bids.get_uri()}")
 
             except Exception as e:
                 logger.error(f"Caught {type(e)} during processing of {str(t1w_bids)}")
@@ -299,6 +300,7 @@ def preprocess_t1w(t1w_bids, output_dataset, work_dir, orient='LPI', trim_neck=T
     preproc_t1w = preprocessing.conform_image_orientation(t1w_bids.get_path(), orient, work_dir)
 
     if trim_neck:
+        logger.info("Trimming neck")
         preproc_t1w = preprocessing.trim_neck(preproc_t1w, work_dir)
 
     preproc_t1w = preprocessing.pad_image(preproc_t1w, work_dir, pad_mm=pad)
@@ -441,7 +443,7 @@ def get_segmentation_priors(t1w_bids, t1w_bids_preproc, work_dir, segmentation_d
                                 for prob in prior_seg_probabilities_bids]
     else:
         # If no segmentation is found, generate one with antspynet
-        logger.info("No segmentation found, generating one with antspynet")
+        logger.info("No segmentation priors found, generating with antspynet")
         antsnet_seg = ants_helpers.deep_atropos(t1w_bids_preproc.get_path(), work_dir)
         prior_seg_probabilities = antsnet_seg['posteriors']
 
@@ -572,12 +574,12 @@ def cortical_thickness(seg_n4, work_dir, thickness_iterations=45):
 
     Parameters:
     -----------
-    seg_n4_bids : dict
+    seg_n4_bids (dict):
         Dictionary of segmentation images (as BIDSImage objects) as returned from ants_helpers.ants_atropos_n4.
         The thickness image will be written to the same dataset as the segmentation image.
-    work_dir : str
+    work_dir (str):
         Path to the working directory.
-    thickness_iterations : int, optional
+    thickness_iterations (int, optional):
         Number of iterations for cortical thickness estimation. Default is 45.
 
     Returns:
@@ -611,15 +613,15 @@ def template_brain_registration(template, template_brain_mask, t1w_brain_image, 
 
     Parameters:
     -----------
-    template : TemplateImage
+    template (TemplateImage) :
         Template image. This will be brain-masked and used as the fixed image.
-    template_brain_mask : TemplateImage
+    template_brain_mask (TemplateImage) :
         Brain mask for the template. This will be used to mask the template image.
-    t1w_brain_image : BIDSImage
+    t1w_brain_image (BIDSImage) :
         Moving T1w brain image to register to the template.
-    quick_reg : bool
+    quick_reg (bool) :
         Do quick registration to the template.
-    work_dir : str
+    work_dir (str) :
         Path to the working directory.
 
     Output is to the same dataset as the t1w_brain_image.
@@ -674,13 +676,13 @@ def template_space_derivatives(template, template_reg, seg_n4, thickness, work_d
 
     Parameters:
     -----------
-    template : TemplateImage
-        Template image to use as reference image
-    template_reg : dict
+    template (TemplateImage):
+        Reference space for derivatives
+    template_reg (dict):
         Dictionary of template registration outputs as returned from template_brain_registration
-    seg_n4 : dict
+    seg_n4 (dict):
         Dictionary of segmentation images as returned from segment_and_bias_correct
-    thickness : BIDSImage
+    thickness (BIDSImage):
         Cortical thickness image as returned from cortical_thickness
 
     Returns:
@@ -692,8 +694,6 @@ def template_space_derivatives(template, template_reg, seg_n4, thickness, work_d
             'gmp' - grey matter probability image
             't1w_brain' - bias-corrected brain image
     """
-    logger.info("Creating template space derivatives")
-
     source_image_bids = seg_n4['bias_corrected_t1w_brain']
 
     transform = template_reg['forward_transform']

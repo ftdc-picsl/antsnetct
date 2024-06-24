@@ -5,7 +5,7 @@ import csv
 import numpy as np
 import os
 
-from .system_helpers import run_command, get_nifti_file_prefix, copy_file
+from .system_helpers import run_command, get_nifti_file_prefix, copy_file, get_temp_file
 
 def apply_mask(image, mask, work_dir):
     """Multiply an image by a mask
@@ -34,7 +34,7 @@ def apply_mask(image, mask, work_dir):
 
     masked_img = img * msk_thresh
 
-    masked_image_file = os.path.join(work_dir, f"{get_nifti_file_prefix(image)}_masked.nii.gz")
+    masked_image_file = get_temp_file(work_dir, prefix=get_nifti_file_prefix(image), suffix="_masked.nii.gz")
 
     ants.image_write(masked_img, masked_image_file)
 
@@ -66,7 +66,7 @@ def deep_brain_extraction(anatomical_image, work_dir, modality='t1'):
 
     brain_mask = ants.iMath_get_largest_component(ants.threshold_image(be_output, 0.5, 1.5))
 
-    mask_image_file = os.path.join(work_dir, f"{get_nifti_file_prefix(anatomical_image)}_brain_mask.nii.gz")
+    mask_image_file = get_temp_file(work_dir, prefix=get_nifti_file_prefix(anatomical_image), suffix="_masked.nii.gz")
 
     ants.image_write(brain_mask, mask_image_file)
 
@@ -94,8 +94,10 @@ def deep_atropos(anatomical_image, work_dir):
     anat = ants.image_read(anatomical_image)
     seg = antspynet.deep_atropos(anat)
 
+    tmp_file_prefix = get_temp_file(work_dir, prefix=get_nifti_file_prefix(anatomical_image))
+
     # write results to disk
-    segmentation_fn = os.path.join(work_dir, f"{get_nifti_file_prefix(anatomical_image)}_deep_atropos_segmentation.nii.gz")
+    segmentation_fn = os.path.join(work_dir, f"{tmp_file_prefix}_deep_atropos_segmentation.nii.gz")
     ants.image_write(seg['segmentation_image'], segmentation_fn)
 
     posteriors_fn = []
@@ -516,7 +518,7 @@ def anatomical_template_registration(fixed_image, moving_image, work_dir, fixed_
             '--input', fixed_image,
             '--reference-image', moving_image,
             '--output', fixed_image_warped,
-            '--interpolation', 'Linear',
+            '--interpolation', 'BSpline',
             '--transform', composite_inv_transform,
             '--verbose', '1'
         ]
@@ -529,10 +531,8 @@ def anatomical_template_registration(fixed_image, moving_image, work_dir, fixed_
     return {'forward_transform': composite_fwd_transform, 'inverse_transform': composite_inv_transform}
 
 
-def apply_transforms(fixed_image, moving_image, transform, work_dir, interpolation='Linear'):
+def apply_transforms(fixed_image, moving_image, transforms, work_dir, interpolation='Linear'):
     """Apply a transform, resampling moving image into fixed image space.
-
-    Currently this method only supports a single transform or composite transform, but that may change in the future.
 
     Parameters:
     -----------
@@ -540,8 +540,8 @@ def apply_transforms(fixed_image, moving_image, transform, work_dir, interpolati
         Path to fixed image
     moving_image: str
         Path to moving image
-    transform: str
-        Path to transform file, or 'Identity' for an identity transform
+    transforms: str or list of str
+        Path to transform file, a list of files, or 'Identity' for an identity transform
     work_dir: str
         Path to working directory
     interpolation: str
@@ -562,9 +562,13 @@ def apply_transforms(fixed_image, moving_image, transform, work_dir, interpolati
         '--reference-image', fixed_image,
         '--output', moving_image_warped,
         '--interpolation', interpolation,
-        '--transform', transform,
         '--verbose', '1'
     ]
+
+    if type(transforms) == str:
+        apply_cmd.extend(['--transform', transforms])
+    else:
+        apply_cmd.extend([item for t in transforms for item in ('--transform', t)])
 
     run_command(apply_cmd)
 
@@ -987,14 +991,13 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
     smoothing_sigmas (str):
         Smoothing sigmas at each level of the registration. Number of levels must match shrink and iterations parameters.
     apply_transforms (bool):
-        If true, apply the resulting transform to the moving images.
+        If true, apply the resulting transforms to the images.
 
     Returns:
     --------
     dict
-        Dictionary with keys 'forward_transform', 'inverse_transform', and if apply_transforms, 'moving_images_warped'.
-
-
+        Dictionary with keys 'forward_transform', 'inverse_transform', and if apply_transforms, 'moving_images_warped' and
+        'fixed_images_warped'.
     """
     num_modalities = len(fixed_images)
 
@@ -1060,7 +1063,7 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
     inverse_transform = f"{input_transform_prefix}InverseComposite.h5"
 
     if apply_transforms:
-        warped_images = list()
+        fwd_warped_images = list()
         for image_idx in range(num_modalities):
             moving_image_warped = os.path.join(
                 work_dir, f"{get_nifti_file_prefix(moving_images[image_idx])}_to_fixed_{image_idx}_warped.nii.gz")
@@ -1068,10 +1071,20 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
                              '--reference-image', fixed_images[image_idx], '--output', moving_image_warped, '--interpolation',
                              'BSpline', '--transform', forward_transform, '--verbose', '1']
             run_command(apply_fwd_cmd)
-            warped_images.append(moving_image_warped)
+            fwd_warped_images.append(moving_image_warped)
+
+        inv_warped_images = list()
+        for image_idx in range(num_modalities):
+            fixed_image_warped = os.path.join(
+                work_dir, f"{get_nifti_file_prefix(fixed_images[image_idx])}_to_moving_{image_idx}_warped.nii.gz")
+            apply_inv_cmd = ['antsApplyTransforms', '--dimensionality', '3', '--input', fixed_images[image_idx],
+                             '--reference-image', moving_images[image_idx], '--output', fixed_image_warped, '--interpolation',
+                             'BSpline', '--transform', inverse_transform, '--verbose', '1']
+            run_command(apply_fwd_cmd)
+            fwd_warped_images.append(moving_image_warped)
 
         return {'forward_transform': forward_transform, 'inverse_transform': inverse_transform,
-                'moving_images_warped': warped_images}
+                'moving_images_warped': fwd_warped_images, 'fixed_images_warped': inv_warped_images}
     else:
         return {'forward_transform': forward_transform, 'inverse_transform': inverse_transform}
 

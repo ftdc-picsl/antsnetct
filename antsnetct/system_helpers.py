@@ -1,7 +1,7 @@
 import os
 import shutil
 import subprocess
-import traceback
+import tempfile
 
 # Controls verbosity of subcommands
 _verbose = False
@@ -10,8 +10,10 @@ _verbose = False
 def set_verbose(verbose):
     """ Set the verbosity level for system commands
 
-    Args:
-        verbose (bool): If True, enable verbose mode. The command to be run will be printed along with its terminal output.
+    Parameters
+    ----------
+    verbose : bool
+        If True, enable verbose mode. The command to be run will be printed along with its terminal output.
     """
     global _verbose
     _verbose = verbose
@@ -38,15 +40,20 @@ def run_command(cmd):
 
     Verbosity is controlled by the set_verbose(verbose) function.
 
-    Args:
-        cmd (list): A list of command line arguments, as used in subprocess.run
+    Parameters
+    ----------
+    cmd : list
+        A list of command line arguments, as used in subprocess.run
 
-    Raises:
-        PipelineError: If the command returns a non-zero exit code. If an error is raised, a stack trace is printed. The full
-        command stdout and stderr are also printed, unless verbose is set (in which case they are already printed).
+    Raises
+    ------
+    PipelineError :
+        Raised if the command returns a non-zero exit code. The full command stdout and stderr are also printed, unless verbose
+        is set (in which case they are already printed).
 
-    Returns:
-        dict: a dictionary with keys 'cmd_str', 'stderr', 'stdout'.
+    Returns
+    -------
+    dict : with keys 'cmd_str', 'stderr', 'stdout'.
     """
     # Just to be clear we use the global var set by the main function
     global _verbose
@@ -149,3 +156,44 @@ def copy_file(source, destination):
             raise Exception(f"Failed to set user write permission on file {destination}: {e}")
 
 
+def get_temp_file(work_dir, prefix=None, suffix=None):
+    """Get a unique tempfile in work_dir
+
+    The file will not be automatically deleted. It should be used to ensure unique file names
+    within working directories.
+
+    Temp files are named '{prefix}_{unique_id}{suffix}'. This is done to preserve readability of temp files for debugging purposes.
+
+    You can also use this function to define a temporary file prefix, eg
+
+    tmp_file_prefix = get_temp_file(work_dir, prefix='my_function_tmp')
+
+    will create the file '{tmp_file_prefix}', allowing processes to write files starting with tmp_file_prefix without
+    conflicting with other processes.
+
+    Parameters
+    ----------
+    work_dir : str
+        The directory in which to create the temporary file. This must exist.
+    prefix : str, optional
+        The prefix of the temporary file.
+    suffix : str, optional
+        The suffix of the temporary file. The suffix should start with "." if it denotes an extension.
+
+    Returns
+    -------
+    str : The path to the temporary file, f"{work_dir}/{prefix}_{unique_id}{suffix}".
+    """
+    if not os.path.exists(work_dir):
+        raise FileNotFoundError(f"Working directory {work_dir} does not exist.")
+
+    if prefix is None:
+        formatted_prefix = '_'
+    else:
+        formatted_prefix = prefix + '_'
+
+    fd, tmp_name = tempfile.mkstemp(prefix=formatted_prefix, suffix=suffix, dir=work_dir)
+    # don't leave the file open
+    os.close(fd)
+
+    return tmp_name

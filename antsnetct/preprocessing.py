@@ -3,6 +3,7 @@ import re
 
 from .system_helpers import run_command, get_nifti_file_prefix, PipelineError
 
+
 def trim_neck(input_image, work_dir):
     """Trim the neck from an image
 
@@ -26,6 +27,7 @@ def trim_neck(input_image, work_dir):
     run_command(['trim_neck.sh', '-d', '-c', '20', '-w', work_dir, input_image, tmp_image_trim])
 
     return tmp_image_trim
+
 
 def pad_image(input_image, work_dir, pad_mm=10):
     """ Pad an image with zeros
