@@ -34,7 +34,7 @@ def apply_mask(image, mask, work_dir):
 
     masked_img = img * msk_thresh
 
-    masked_image_file = get_temp_file(work_dir, prefix=get_nifti_file_prefix(image), suffix="_masked.nii.gz")
+    masked_image_file = get_temp_file(work_dir, prefix='apply_mask', suffix='_masked.nii.gz')
 
     ants.image_write(masked_img, masked_image_file)
 
@@ -66,7 +66,7 @@ def deep_brain_extraction(anatomical_image, work_dir, modality='t1'):
 
     brain_mask = ants.iMath_get_largest_component(ants.threshold_image(be_output, 0.5, 1.5))
 
-    mask_image_file = get_temp_file(work_dir, prefix=get_nifti_file_prefix(anatomical_image), suffix="_masked.nii.gz")
+    mask_image_file = get_temp_file(work_dir, prefix='brain_masking', suffix="_thresholded.nii.gz")
 
     ants.image_write(brain_mask, mask_image_file)
 
@@ -94,10 +94,10 @@ def deep_atropos(anatomical_image, work_dir):
     anat = ants.image_read(anatomical_image)
     seg = antspynet.deep_atropos(anat)
 
-    tmp_file_prefix = get_temp_file(work_dir, prefix=get_nifti_file_prefix(anatomical_image))
+    tmp_file_prefix = get_temp_file(work_dir, prefix='deep_atropos')
 
     # write results to disk
-    segmentation_fn = os.path.join(work_dir, f"{tmp_file_prefix}_deep_atropos_segmentation.nii.gz")
+    segmentation_fn = f"{tmp_file_prefix}_segmentation.nii.gz"
     ants.image_write(seg['segmentation_image'], segmentation_fn)
 
     posteriors_fn = []
@@ -107,8 +107,7 @@ def deep_atropos(anatomical_image, work_dir):
 
     # Write posteriors to disk with numeric format %02d
     for i, p in enumerate(atropos_classes):
-        posterior_fn = os.path.join(work_dir, f"{get_nifti_file_prefix(anatomical_image)}_deep_atropos" +
-                                    '_posterior%02d.nii.gz' % (i + 1))
+        posterior_fn = f"{tmp_file_prefix}_" + 'posterior%02d.nii.gz' % (i + 1)
         ants.image_write(p, posterior_fn)
         posteriors_fn.append(posterior_fn)
 
@@ -168,8 +167,10 @@ def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=
     if isinstance(anatomical_images, str):
         anatomical_images = [anatomical_images]
 
+    tmp_file_prefix = get_temp_file(work_dir, prefix='ants_atropos_n4')
+
     # Write list of priors to work_dir in c-style numeric format %02d
-    prior_spec = f"{work_dir}/{get_nifti_file_prefix(anatomical_images[0])}_prior_%02d.nii.gz"
+    prior_spec = f"{tmp_file_prefix}_prior_%02d.nii.gz"
 
     for i, p in enumerate(priors):
         copy_file(p, prior_spec % (i+1))
@@ -178,7 +179,7 @@ def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=
 
     n4_prior_classes_args = [arg for tissue_label in n4_prior_classes for arg in ['-y', str(tissue_label)]]
 
-    stage_1_output_prefix = os.path.join(work_dir, f"{get_nifti_file_prefix(anatomical_images[0])}_ants_atropos_n4_")
+    stage_1_output_prefix = f"{tmp_file_prefix}_stage1_"
 
     command = ['antsAtroposN4.sh', '-d', '3']
     command.extend(anatomical_input_args)
@@ -193,7 +194,7 @@ def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=
 
     # Following the bash script, we run antsAtroposN4.sh again
     # using the corrected image as input
-    stage_2_output_prefix = os.path.join(work_dir, f"{get_nifti_file_prefix(anatomical_images[0])}_ants_atropos_n4_stage_2_")
+    stage_2_output_prefix = f"{tmp_file_prefix}_stage_2_"
 
     anatomical_images = [f"{stage_1_output_prefix}Segmentation{i}N4.nii.gz" for i in range(len(anatomical_images))]
     anatomical_input_args = [arg for anat in anatomical_images for arg in ['-a', anat]]
@@ -236,11 +237,12 @@ def denoise_image(anatomical_image, work_dir):
     denoised: str
         Path to the denoised image.
     """
-    truncated = os.path.join(work_dir, f"{get_nifti_file_prefix(anatomical_image)}_denoised.nii.gz")
+    tmp_file_prefix = get_temp_file(work_dir, prefix='denoise')
+    truncated = f"{tmp_file_prefix}_truncated.nii.gz"
     command = ['ImageMath', '3', truncated, 'TruncateImageIntensity', anatomical_image, '0', '0.995', '256']
     run_command(command)
 
-    denoised = os.path.join(work_dir, f"{get_nifti_file_prefix(anatomical_image)}_denoised.nii.gz")
+    denoised = f"{tmp_file_prefix}_denoised.nii.gz"
     command = ['DenoiseImage', '-d', '3', '-i', truncated, '-o', denoised]
     run_command(command)
 
@@ -284,14 +286,16 @@ def n4_bias_correction(anatomical_image, brain_mask, segmentation_posteriors, wo
         Path to bias corrected image
     """
     # Make a pure tissue mask from the segmentation posteriors
-    pure_tissue_mask = os.path.join(work_dir, f"{get_nifti_file_prefix(anatomical_image)}_pure_tissue_mask.nii.gz")
+    tmp_file_prefix = get_temp_file(work_dir, prefix='n4')
+
+    pure_tissue_mask = f"{tmp_file_prefix}_pure_tissue_mask.nii.gz"
 
     # Everything except CSF goes into mask
     command = ['ImageMath', '3', pure_tissue_mask, 'PureTissueN4WeightMask']
     command.extend(segmentation_posteriors[1:])
     run_command(command)
 
-    bias_corrected_anatomical = os.path.join(work_dir, f"{get_nifti_file_prefix(anatomical_image)}_n4_bias_corrected.nii.gz")
+    bias_corrected_anatomical = f"{tmp_file_prefix}_bias_corrected.nii.gz"
     copy_file(anatomical_image, bias_corrected_anatomical)
 
     run_command(['ImageMath', '3', bias_corrected_anatomical, 'TruncateImageIntensity', bias_corrected_anatomical, '0.0',
@@ -344,13 +348,15 @@ def cortical_thickness(segmentation, segmentation_posteriors, work_dir, kk_its=4
     thickness_image:str
         Path to cortical thickness image
     """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='cortical_thickness')
+
     # Make a temporary copy of the segmentation, we will modify this to merge subcortical GM into WM
     kk_seg = ants.image_read(segmentation)
 
     # Add subcortical GM to WM
     kk_seg[kk_seg == sgm_lab] = wm_lab
 
-    kk_seg_file = os.path.join(work_dir, f"{get_nifti_file_prefix(segmentation)}_kk_seg.nii.gz")
+    kk_seg_file = f"{tmp_file_prefix}_kk_seg.nii.gz"
 
     ants.image_write(kk_seg, kk_seg_file)
 
@@ -359,11 +365,11 @@ def cortical_thickness(segmentation, segmentation_posteriors, work_dir, kk_its=4
 
     kk_wm_posterior = wm_posterior + sgm_posterior
 
-    kk_wm_posterior_file = os.path.join(work_dir, f"{get_nifti_file_prefix(segmentation)}_kk_wm_posterior.nii.gz")
+    kk_wm_posterior_file = f"{tmp_file_prefix}_kk_wm_posterior.nii.gz"
 
     ants.image_write(kk_wm_posterior, kk_wm_posterior_file)
 
-    thick_file = os.path.join(work_dir, f"{get_nifti_file_prefix(segmentation)}_cortical_thickness.nii.gz")
+    thick_file = f"{tmp_file_prefix}_cortical_thickness.nii.gz"
     # We'll do things on the command line so we can access all the options and check the exit code
     # kk = ants.kelly_kapowski(s=kk_seg, g=gm_posterior, w=kk_wm_posterior, its=kk_its, r=grad_update, x=grad_smooth,
     #                         verbose=True, gm_label=gm_lab, wm_label=wm_lab)
@@ -391,10 +397,10 @@ def cortical_thickness(segmentation, segmentation_posteriors, work_dir, kk_its=4
     return thick_file
 
 
-def anatomical_template_registration(fixed_image, moving_image, work_dir, fixed_mask=None, moving_mask=None,
-                                     metric='CC', metric_params=[1, 4], transform='SyN[0.2,3,0]', iterations='30x70x70x10',
-                                     shrink_factors='6x4x2x1', smoothing_sigmas='3x2x1x0vox', apply_transforms=True):
-    """Register an anatomical image to a template
+def univariate_pairwise_registration(fixed_image, moving_image, work_dir, fixed_mask=None, moving_mask=None,
+                                     metric='CC', metric_params=[4], transform='SyN[0.2,3,0]', iterations='20x40x60x70x70x10',
+                                     shrink_factors='8x6x4x3x2x1', smoothing_sigmas='5x4x3x2x1x0vox', apply_transforms=True):
+    """Pairwise registration with defaults selected for population template registration.
 
     Does a linear and non-linear registration of the moving image to the fixed image with antsRegistration. Affine
     parameters are optimized for inter-subject registration.
@@ -442,6 +448,7 @@ def anatomical_template_registration(fixed_image, moving_image, work_dir, fixed_
     fixed_image_warped: str
         Path to warped fixed image, if apply_transforms is True
     """
+    tmp_file_prefix = get_temp_file(work_dir, prefix="reg")
 
     metric_param_str = ','.join([str(p) for p in metric_params])
 
@@ -451,11 +458,7 @@ def anatomical_template_registration(fixed_image, moving_image, work_dir, fixed_
 
     # Run antsRegistration
 
-    # Get output names as the moving file prefix only, eg sub-01_sess-01 for sub-01_sess-01_T1w.nii.gz
-    moving_file_prefix = get_nifti_file_prefix(moving_image)
-    fixed_file_prefix = get_nifti_file_prefix(fixed_image)
-
-    output_root = os.path.join(work_dir, f"{moving_file_prefix}_To_{fixed_file_prefix}")
+    output_root = f"{tmp_file_prefix}_movingToFixed_"
     ants_cmd = command = [
         'antsRegistration',
         '--verbose', '1',
@@ -532,7 +535,7 @@ def anatomical_template_registration(fixed_image, moving_image, work_dir, fixed_
 
 
 def apply_transforms(fixed_image, moving_image, transforms, work_dir, interpolation='Linear'):
-    """Apply a transform, resampling moving image into fixed image space.
+    """Apply transforms, resampling moving image into fixed image space.
 
     Parameters:
     -----------
@@ -552,7 +555,9 @@ def apply_transforms(fixed_image, moving_image, transforms, work_dir, interpolat
     moving_image_warped: str
         Path to warped moving image
     """
-    moving_image_warped = f"{work_dir}/{get_nifti_file_prefix(moving_image)}_to_" + \
+    tmp_file_prefix = get_temp_file(work_dir, prefix="aat")
+
+    moving_image_warped = f"{tmp_file_prefix}_{get_nifti_file_prefix(moving_image)}_to_" + \
                                 f"{get_nifti_file_prefix(fixed_image)}_warped.nii.gz"
 
     apply_cmd = [
@@ -646,8 +651,8 @@ def posteriors_to_segmentation(posteriors, work_dir, class_labels=[0, 3, 8, 2, 9
     seg = ants.from_numpy(output_seg_indices, spacing=reference_image.spacing, origin=reference_image.origin,
                           direction=reference_image.direction)
 
-    seg_file = os.path.join(work_dir,
-                            f"{get_nifti_file_prefix(posteriors[0])}_" + 'synthesizedSegmentationFromPosteriors.nii.gz')
+    tmp_file_prefix = get_temp_file(work_dir, prefix='prob_to_seg')
+    seg_file = f"{tmp_file_prefix}_SegFromPosteriors.nii.gz"
 
     ants.image_write(seg, seg_file)
 
@@ -673,14 +678,15 @@ def binarize_brain_mask(segmentation, work_dir):
     # Binarize mask image
     mask = ants.threshold_image(mask, 1, None, 1, 0)
 
-    mask_file = os.path.join(work_dir, 'binarized_brain_mask.nii.gz')
+    tmp_file_prefix = get_temp_file(work_dir, prefix='binarize_mask')
+    mask_file = f"{tmp_file_prefix}_binarized.nii.gz"
 
     ants.image_write(mask, mask_file)
 
     return mask_file
 
 
-def brain_volume_ml(mask_image, work_dir):
+def brain_volume_ml(mask_image):
     """Compute brain volume from a brain mask
 
     Parameters:
@@ -714,7 +720,7 @@ def get_log_jacobian_determinant(reference_image, transform, work_dir, use_geom=
         Path to reference image.
     transform: str
         Path to transform file in the space of the reference image. This should be a composite h5 forward transform
-        from the moving to the fixed space.
+        from the moving to the fixed space, containing a composite Affine transform and a warp.
     work_dir: str
         Path to working directory.
     use_geom: bool
@@ -725,23 +731,26 @@ def get_log_jacobian_determinant(reference_image, transform, work_dir, use_geom=
     log_jacobian: str
         Path to log of the determinant of the Jacobian
     """
-    log_jacobian_file = os.path.join(work_dir, f"{get_nifti_file_prefix(reference_image)}_log_jacobian.nii.gz")
+    tmp_file_prefix = get_temp_file(work_dir, prefix='jacobian')
+
+    log_jacobian_file = f"{tmp_file_prefix}_logjac.nii.gz"
 
     # First decompose transform into its components
 
-    decomposed_basename_prefix = os.path.basename(transform).rsplit('.', 1)[0] + '_decomposed'
+    decomposed_basename_prefix = f"{tmp_file_prefix}_decomposed"
 
     cmd = ['CompositeTransformUtil', '--disassemble', transform, os.path.join(work_dir, decomposed_basename_prefix)]
 
     run_command(cmd)
 
-    warp_file = os.path.join(work_dir, decomposed_basename_prefix + '_01_DisplacementFieldTransform.nii.gz')
+    warp_file = f"{decomposed_basename_prefix}_01_DisplacementFieldTransform.nii.gz"
 
     cmd = ['CreateJacobianDeterminantImage', '3', warp_file, log_jacobian_file, '1', '1' if use_geom else '0']
 
     run_command(cmd)
 
     return log_jacobian_file
+
 
 def normalize_intensity(image, segmentation, work_dir, label=8, scaled_label_mean=1000):
     """Normalize intensity of an image so that the mean intensity of a tissue class is a specified value.
@@ -760,6 +769,8 @@ def normalize_intensity(image, segmentation, work_dir, label=8, scaled_label_mea
         Mean intensity of the tissue class after normalization.
 
     """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='norm_intensity')
+
     img = ants.image_read(image)
     seg = ants.image_read(segmentation)
 
@@ -769,7 +780,7 @@ def normalize_intensity(image, segmentation, work_dir, label=8, scaled_label_mea
 
     img_normalized = img * (scaled_label_mean / mean_intensity_in_mask)
 
-    img_normalized_file = os.path.join(work_dir, f"{get_nifti_file_prefix(image)}_normalized_to_label_{label}.nii.gz")
+    img_normalized_file = f"{tmp_file_prefix}_normalized_to_label_{label}.nii.gz"
 
     ants.image_write(img_normalized, img_normalized_file)
 
@@ -878,7 +889,9 @@ def build_template(images, work_dir, initial_templates=None, template_iterations
         'template_transforms' - List of transforms from input images to template
         'template_inverse_transforms' - List of transforms from template to input images
     """
-    output_prefix = os.path.join(work_dir, f"template_{get_nifti_file_prefix(images[0])}_")
+    template_workdir = get_temp_dir(work_dir, prefix='build_template')
+
+    output_prefix = os.path.join(template_workdir, 'T_template')
 
     template_norm = template_norm.lower()
 
@@ -1010,7 +1023,9 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
         if len(reg_metric_weights) != num_modalities:
             raise ValueError("The number of modalities must match the length of the reg_metric_weights list.")
 
-    input_transform_prefix = os.path.join(work_dir, f"{get_nifti_file_prefix({moving_images[0]})}_to_fixed_")
+    tmp_output_prefix = get_temp_file(work_dir, prefix=f"mv_pairwise_reg")
+
+    transform_prefix = f"{tmp_output_prefix}_moving_to_fixed_"
 
     linear_metric_params = list()
 
@@ -1030,9 +1045,9 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
                     '4x2x1x0vox'])
 
     reg_command = ['antsRegistration', '--dimensionality', '3', '--float', '0', '--collapse-output-transforms', '1',
-                    '--output', input_transform_prefix, '--interpolation', 'Linear', '--winsorize-image-intensities',
-                    '[0.0,0.995]', '--use-histogram-matching', '0', '--initial-moving-transform', f"[ {fixed_images[0]},
-                    {moving_images[0]}, 1 ]", '--write-composite-transform', '1']
+                    '--output', transform_prefix, '--interpolation', 'Linear', '--winsorize-image-intensities',
+                    '[0.0,0.995]', '--use-histogram-matching', '0', '--initial-moving-transform',
+                    f"[ {fixed_images[0]},{moving_images[0]}, 1 ]", '--write-composite-transform', '1']
 
     if transform.startswith('Affine'):
         reg_command.extend(rigid_stage)
@@ -1059,8 +1074,8 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
 
     run_command(reg_command)
 
-    forward_transform = f"{input_transform_prefix}Composite.h5"
-    inverse_transform = f"{input_transform_prefix}InverseComposite.h5"
+    forward_transform = f"{transform_prefix}Composite.h5"
+    inverse_transform = f"{transform_prefix}InverseComposite.h5"
 
     if apply_transforms:
         fwd_warped_images = list()
@@ -1089,18 +1104,33 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
         return {'forward_transform': forward_transform, 'inverse_transform': inverse_transform}
 
 
-def multivariate_sst_registration(fixed_images, moving_images, work_dir, fixed_mask=None, moving_mask=None,
-                                  metric='CC', metric_params=[3], metric_weights=None, transform='SyN[0.2,3,0.5]',
-                                  iterations='30x60x70x10', shrink_factors='4x3x2x1', smoothing_sigmas='3x2x1x0vox',
-                                  apply_transforms=True):
-    """Multivariate registration of images to a single subject template. This is a simplified interface to
-    multivariate_pairwise_registration, with default parameters for SST construction.
+def multivariate_sst_registration(fixed_images, moving_images, work_dir, **kwargs):
+    """Wrapper for multivariate pairwise registration with default parameters for intrasubject registration.
 
-    Parameters
-    ----------
+    Parameters:
+    -----------
+    fixed_images (list):
+        List of fixed images, in the same physical space.
+    moving_images (list):
+        List of moving images, in the same physical space.
+    work_dir (str):
+        Path to working directory.
+    **kwargs: dict
+        Additional keyword arguments for multivariate_pairwise_registration.
     """
+    # Set default values for any parameters that are not provided
+    kwargs.setdefault('fixed_mask', None)
+    kwargs.setdefault('moving_mask', None)
+    kwargs.setdefault('metric', 'CC')
+    kwargs.setdefault('metric_params', [3])
+    kwargs.setdefault('metric_weights', None)
+    kwargs.setdefault('transform', 'SyN[0.2,3,0.5]')
+    kwargs.setdefault('iterations', '30x60x70x10')
+    kwargs.setdefault('shrink_factors', '4x3x2x1')
+    kwargs.setdefault('smoothing_sigmas', '3x2x1x0vox')
+    kwargs.setdefault('apply_transforms', True)
 
-    return multivariate_pairwise_registration(images, work_dir)
+    return multivariate_pairwise_registration(fixed_images, moving_images, work_dir, **kwargs)
 
 
 def combine_masks(masks, work_dir, thresh = 0.0001):
@@ -1130,5 +1160,9 @@ def combine_masks(masks, work_dir, thresh = 0.0001):
 
     combined_mask = combined_mask > thresh
 
-    ants.image_write(combined_mask, os.path.join(work_dir, get_nifti_file_prefix(masks[0]) + '_combined_mask.nii.gz'),
-                     pixeltype='uint8')
+    tmp_file_prefix = get_temp_file(work_dir, prefix=get_nifti_file_prefix(masks[0]))
+    combined_mask_file = f"{tmp_file_prefix}_combined_mask.nii.gz"
+
+    ants.image_write(combined_mask, combined_mask_file, pixeltype='uint8')
+
+    return combined_mask_file

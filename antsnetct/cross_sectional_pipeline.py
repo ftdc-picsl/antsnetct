@@ -210,9 +210,9 @@ def cross_sectional_analysis():
 
                 logger.info("Processing T1w image: " + t1w_bids.get_uri())
 
-                if bool(glob.glob(os.path.join(output_dataset, t1w_bids.get_derivative_rel_path_prefix()))):
-                    logger.info(f"Skipping {str(t1w_bids)}, output already exists. Clean up files matching " +
-                                f"{t1w_bids.get_derivative_rel_path_prefix()} to re-process")
+                if bool(glob.glob(os.path.join(output_dataset, t1w_bids.get_derivative_rel_path_prefix() + '*'))):
+                    logger.warning(f"Skipping {str(t1w_bids)}, output already exists. Clean up files matching " +
+                                   f"{t1w_bids.get_derivative_rel_path_prefix()} to re-process")
                     continue
 
                 # Preprocessing
@@ -237,7 +237,8 @@ def cross_sectional_analysis():
                 seg_priors = get_segmentation_priors(t1w_bids, preproc_t1w_bids, working_dir, args.segmentation_dataset)
 
                 seg_n4 = segment_and_bias_correct(preproc_t1w_bids, brain_mask_bids, working_dir,
-                                                  segmentation_priors=seg_priors, segmentation_method=args.segmentation_method,
+                                                  segmentation_priors=seg_priors,
+                                                  segmentation_method=args.segmentation_method,
                                                   atropos_n4_iterations=args.atropos_n4_iterations,
                                                   atropos_prior_weight=args.atropos_prior_weight)
 
@@ -450,7 +451,7 @@ def get_segmentation_priors(t1w_bids, t1w_bids_preproc, work_dir, segmentation_d
     return prior_seg_probabilities
 
 
-def segment_and_bias_correct(t1w_bids_preproc, brain_mask_bids, work_dir, prior_seg_probabilities=None,
+def segment_and_bias_correct(t1w_bids_preproc, brain_mask_bids, work_dir, segmentation_priors=None,
                              segmentation_method='atropos', atropos_n4_iterations=3, atropos_prior_weight=0.25,
                              denoise=True, n4_spline_spacing=180, n4_convergence='[ 50x50x50x50,1e-7 ]', n4_shrink_factor=3):
     """Segment and bias correct a T1w image
@@ -467,8 +468,9 @@ def segment_and_bias_correct(t1w_bids_preproc, brain_mask_bids, work_dir, prior_
         T1w image object, should be the preprocessed T1w image in the output dataset. Output is in the space of this image.
     brain_mask_bids : BIDSImage
         Brain mask for the preprocessed T1w image.
-    prior_seg_probabilities :  list
-        List of segmentation posteriors as BIDSImage objects. These are used as priors for segmentation and bias correction.
+    segmentation_priors :  list
+        List of files containing segmentation probabilities, in their antsct order: CSF, CGM, WM, SGM, BS, CBM. These are used
+        as priors for segmentation and bias correction.
     segmentation method : str, optional
         Method to use for segmentation. Default is 'atropos', meaning the priors are used for iterative segmentation and bias
         correction with antsAtroposN4.sh. If 'none', the priors (either from the segmentation dataset or ANTsPyNet) are used
@@ -500,13 +502,13 @@ def segment_and_bias_correct(t1w_bids_preproc, brain_mask_bids, work_dir, prior_
         logger.info("Running Atropos with N4 bias correction")
         # Run antsAtroposN4.sh, using the priors for segmentation and bias correction
         seg_output = ants_helpers.ants_atropos_n4(t1w_bids_preproc.get_path(), brain_mask_bids.get_path(),
-                                                         prior_seg_probabilities, work_dir, iterations=atropos_n4_iterations,
+                                                         segmentation_priors, work_dir, iterations=atropos_n4_iterations,
                                                          atropos_prior_weight=atropos_prior_weight, denoise=denoise, n4_spline_spacing=n4_spline_spacing, n4_convergence=n4_convergence, n4_shrink_factor=n4_shrink_factor)
         seg_output['segmentation_image'] = ants_helpers.posteriors_to_segmentation(seg_output['posteriors'], work_dir)
     elif segmentation_method.lower() == 'none':
         logger.info("Segmentation method is none, generating final segmentation directly from priors")
         posteriors_masked = [ants_helpers.apply_mask(posterior, brain_mask_bids.get_path(), work_dir)
-                                for posterior in prior_seg_probabilities]
+                                for posterior in segmentation_priors]
 
         # Copy the prior segmentation
         segmentation_image = ants_helpers.posteriors_to_segmentation(posteriors_masked, work_dir)
@@ -638,17 +640,19 @@ def template_brain_registration(template, template_brain_mask, t1w_brain_image, 
 
     if quick_reg:
         logger.info("Quick registration to template " + template.get_name())
-        template_reg = ants_helpers.anatomical_template_registration(fixed_image, t1w_brain_image.get_path(), work_dir,
-                                                                     metric='Mattes', metric_params=[1, 32],
-                                                                     transform='SyN[0.25,3,0]', iterations='30x70x30x5',
-                                                                     shrink_factors='6x4x2x1', smoothing_sigmas='3x2x1x0vox',
+        template_reg = ants_helpers.univariate_pairwise_registration(fixed_image, t1w_brain_image.get_path(), work_dir,
+                                                                     metric='Mattes', metric_params=[32],
+                                                                     transform='SyN[0.25,3,0]', iterations='40x40x70x30x5',
+                                                                     shrink_factors='6x5x4x2x1',
+                                                                     smoothing_sigmas='4x3x2x1x0vox',
                                                                      apply_transforms=False)
     else:
         logger.info("Registration to template " + template.get_name())
-        template_reg = ants_helpers.anatomical_template_registration(fixed_image, t1w_brain_image.get_path(), work_dir,
-                                                                     metric='CC', metric_params=[1, 4],
-                                                                     transform='SyN[0.2,3,0]', iterations='30x70x70x20',
-                                                                     shrink_factors='6x4x2x1', smoothing_sigmas='3x2x1x0vox',
+        template_reg = ants_helpers.univariate_pairwise_registration(fixed_image, t1w_brain_image.get_path(), work_dir,
+                                                                     metric='CC', metric_params=[4],
+                                                                     transform='SyN[0.2,3,0]', iterations='30x30x70x70x20',
+                                                                     shrink_factors='8x6x4x2x1',
+                                                                     smoothing_sigmas='4x3x2x1x0vox',
                                                                      apply_transforms=False)
 
     template_reg_bids = {}

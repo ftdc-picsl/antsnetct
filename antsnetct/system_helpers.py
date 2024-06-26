@@ -197,3 +197,31 @@ def get_temp_file(work_dir, prefix=None, suffix=None):
     os.close(fd)
 
     return tmp_name
+
+
+def get_temp_dir(work_dir, prefix=None):
+    """Get a unique temp dir under work_dir
+
+    Temp dirs are named '{prefix}_{unique_id}'. This is done to preserve readability of temp files for debugging purposes.
+
+    Parameters
+    ----------
+    work_dir : str
+        The directory in which to create the temporary directory. This must exist.
+    prefix : str, optional
+        The prefix of the temporary file.
+
+    Returns
+    -------
+    str : The path to the temporary file, "{work_dir}/{prefix}_{unique_id}".
+    """
+    if not os.path.exists(work_dir):
+        raise FileNotFoundError(f"Working directory {work_dir} does not exist.")
+
+    if prefix is None:
+        formatted_prefix = '_'
+    else:
+        formatted_prefix = prefix + '_'
+
+    tmp_dir = tempfile.mkdtemp(prefix=formatted_prefix, dir=work_dir)
+    return tmp_dir
