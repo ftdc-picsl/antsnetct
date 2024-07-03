@@ -4,6 +4,8 @@ import os
 import re
 import templateflow
 
+from importlib import metadata
+
 from .system_helpers import copy_file
 
 
@@ -83,7 +85,7 @@ class BIDSImage:
 
     def copy_image(self, destination_ds):
         """
-        Copies the image and its sidecar file to the same relative path in a new dataset.
+        Copies the image and its metadata to the same relative path in a new dataset.
 
         Parameters:
         ----------
@@ -101,11 +103,11 @@ class BIDSImage:
         os.makedirs(os.path.dirname(dest_file_path), exist_ok=True)
         copy_file(self._path, dest_file_path)
 
-        if self.metadata is not None:
+        if self._metadata is not None:
             dest_metadata = copy.deepcopy(self._metadata)
             # Replace relative source URIs with absolute URIs
             if 'Sources' in dest_metadata:
-                for source, idx in enumerate(dest_metadata['Sources']):
+                for idx, source in enumerate(dest_metadata['Sources']):
                     if source.startswith('bids::'):
                         # the source is within this dataset, replace bids:: with bids:{self.ds_name}
                         dest_metadata['Sources'][idx] = f"bids:{self._ds_name}:{source[6:]}"
@@ -458,9 +460,9 @@ def update_output_dataset(output_dataset_dir, output_dataset_name):
 def _get_generated_by(existing_generated_by=None):
     """Get a dictionary for the GeneratedBy field for the BIDS dataset_description.json.
 
-    This is used to record the software used to generate the dataset. The environment variables DOCKER_IMAGE_TAG and
-    DOCKER_IMAGE_VERSION are used if set. Container type is assumed to be "docker" unless the variable SINGULARITY_CONTAINER
-    is defined.
+    This is used to record the software used to generate the dataset. The environment variables DOCKER_IMAGE_TAG is used if
+    set - this is set in the Dockerfile so should be defined if the code is being run inside a container.
+    Container type is assumed to be "docker" unless the variable SINGULARITY_CONTAINER is defined.
 
     Parameters:
     ----------
@@ -473,25 +475,31 @@ def _get_generated_by(existing_generated_by=None):
             A dictionary for the GeneratedBy field in the dataset_description.json
 
     """
+    docker_tag = os.environ.get('DOCKER_IMAGE_TAG', 'undefined')
 
-    docker_tag = os.environ.get('DOCKER_IMAGE_TAG', 'unknown')
+    container_type = 'docker'
+    # If in a singularity container built from docker, both DOCKER_IMAGE_TAG and SINGULARITY_CONTAINER will be defined
+    if 'SINGULARITY_CONTAINER' in os.environ:
+        container_type = 'singularity'
+
+    if docker_tag == 'undefined':
+        # Not in a container, or at least not unless someone has hacked the Dockerfile
+        container_type = 'not_containerized'
 
     generated_by = []
+
+    antsnetct_version = metadata.version('antsnetct')
 
     if existing_generated_by is not None:
         generated_by = copy.deepcopy(existing_generated_by)
         for gb in existing_generated_by:
-            if gb['Name'] == 'antsnetct' and gb['Container']['Tag'] == docker_tag:
+            if gb['Name'] == 'antsnetct' and gb['Version'] == antsnetct_version and gb['Container']['Tag'] == docker_tag:
                 # Don't overwrite existing generated_by if it's already set to this pipeline
                 return generated_by
 
-    container_type = 'docker'
-
-    if 'SINGULARITY_CONTAINER' in os.environ:
-        container_type = 'singularity'
-
-    gen_dict = {'Name': 'antsnetct',
-                'Version': os.environ.get('DOCKER_IMAGE_VERSION', 'unknown'),
+    gen_dict = {
+                'Name': 'antsnetct',
+                'Version': antsnetct_version,
                 'CodeURL': os.environ.get('GIT_REMOTE', 'unknown'),
                 'Container': {'Type': container_type, 'Tag': docker_tag}
                 }
