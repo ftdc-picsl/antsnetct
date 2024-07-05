@@ -72,5 +72,9 @@ def main():
 
     update_version_in_pyproject(next_version)
 
+    run_command('git add pyproject.toml')
+    run_command(f'git commit -m "updating version for development post {tag}"')
+    run_command('git push origin main')
+
 if __name__ == '__main__':
     main()
