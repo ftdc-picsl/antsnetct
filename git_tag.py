@@ -65,5 +65,12 @@ def main():
 
     print(f"Tag {tag} has been created.")
 
+    # Now update pyproject.toml with the next version development version
+    major, minor, patch = version.split('.')
+
+    next_version = f"{major}.{minor}.{int(patch) + 1}dev"
+
+    update_version_in_pyproject(next_version)
+
 if __name__ == '__main__':
     main()

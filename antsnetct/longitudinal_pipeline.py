@@ -88,6 +88,8 @@ def longitudinal_analysis():
 
     args = parser.parse_args()
 
+    logger.info("Parsed args: " + str(args))
+
     system_helpers.set_verbose(args.verbose)
 
     # If the only arg is "--longitudinal", print help and exit
@@ -260,7 +262,7 @@ def longitudinal_analysis():
 
             # Write SST to output dataset under sub-<label>/anat
 
-            sst_sources = [cx_biascorr_t1w_bids[idx].get_uri() for idx in range(num_sessions)]
+            sst_sources = [cx_biascorr_t1w_bids[idx].get_uri(relative=False) for idx in range(num_sessions)]
 
             sst_metadata = { 'Sources' : sst_sources }
 
@@ -349,7 +351,8 @@ def longitudinal_analysis():
             # for each session, warp priors, segment, compute thickness, and warp to SST and group template spaces
             logger.info("Processing sessions using SST priors")
             for idx in range(num_sessions):
-                logger.info(f"Processing session {idx + 1} of {num_sessions}: {cx_preproc_t1w_bids[idx].get_uri()}")
+                logger.info(f"Processing session {idx + 1} of {num_sessions}: " + \
+                    f"{cx_preproc_t1w_bids[idx].get_uri(relative=False)}")
                 t1w_bids = long_preproc_t1w_bids[idx]
                 brain_mask_bids = long_brain_mask_bids[idx]
                 # Warp priors to the session space

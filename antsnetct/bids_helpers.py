@@ -160,7 +160,7 @@ class BIDSImage:
         return self._rel_path
 
 
-    def get_uri(self, relative=False):
+    def get_uri(self, relative=True):
         """Returns the BIDS URI for the image file.
 
         Parameters:
@@ -300,6 +300,8 @@ class TemplateImage:
 
 def resolve_uri(dataset_path, file_uri):
     """Resolve a BIDS URI to an absolute path.
+
+    Currently, only supports resolution of BIDS URIs in the current dataset.
 
     Parameters:
     ----------

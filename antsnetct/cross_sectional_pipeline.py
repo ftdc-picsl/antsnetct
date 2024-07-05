@@ -141,6 +141,12 @@ def cross_sectional_analysis():
 
     args = parser.parse_args()
 
+    logger.info("Parsed args: " + str(args))
+
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(1)
+
     template = None
     template_brain_mask = None
 
@@ -157,10 +163,6 @@ def cross_sectional_analysis():
                                                          resolution=args.template_res, cohort=args.template_cohort)
 
     system_helpers.set_verbose(args.verbose)
-
-    if len(sys.argv) == 1:
-        parser.print_help()
-        sys.exit(1)
 
     input_dataset = args.input_dataset
     output_dataset = args.output_dataset
@@ -208,7 +210,7 @@ def cross_sectional_analysis():
                 suffix=f"antsnetct_{system_helpers.get_nifti_file_prefix(t1w_bids.get_path())}.tmpdir") as working_dir:
             try:
 
-                logger.info("Processing T1w image: " + t1w_bids.get_uri())
+                logger.info("Processing T1w image: " + t1w_bids.get_uri(relative=False))
 
                 if bool(glob.glob(os.path.join(output_dataset, t1w_bids.get_derivative_rel_path_prefix() + '*'))):
                     logger.warning(f"Skipping {str(t1w_bids)}, output already exists. Clean up files matching " +
@@ -261,7 +263,7 @@ def cross_sectional_analysis():
                     shutil.copytree(working_dir, os.path.join(output_dataset, preproc_t1w_bids.get_derivative_rel_path_prefix()
                                                               + "_workdir"))
 
-                logger.info(f"Finished processing {t1w_bids.get_uri()}")
+                logger.info(f"Finished processing {t1w_bids.get_uri(relative=False)}")
 
             except Exception as e:
                 logger.error(f"Caught {type(e)} during processing of {str(t1w_bids)}")
@@ -308,7 +310,8 @@ def preprocess_t1w(t1w_bids, output_dataset, work_dir, orient='LPI', trim_neck=T
     # Copy the preprocessed T1w to the output
     preproc_t1w_bids = bids_helpers.image_to_bids(preproc_t1w, output_dataset, t1w_bids.get_derivative_rel_path_prefix() +
                                                   '_desc-preproc_T1w.nii.gz',
-                                                  metadata={'Sources': [t1w_bids.get_uri()], 'SkullStripped': False})
+                                                  metadata={'Sources': [t1w_bids.get_uri(relative=False)],
+                                                            'SkullStripped': False})
 
     return preproc_t1w_bids
 
@@ -525,7 +528,7 @@ def segment_and_bias_correct(t1w_bids_preproc, brain_mask_bids, segmentation_pri
 
         seg_output['bias_corrected_anatomical_images'] = [
             ants_helpers.n4_bias_correction(denoised_t1w_image, brain_mask_bids.get_path(), posteriors_masked,
-                                            work_dir, n4_spline_spacing=n4_spline_spacing, n4_convergence=n4_convergence,)]
+                                            work_dir, n4_spline_spacing=n4_spline_spacing, n4_convergence=n4_convergence)]
     else:
         raise ValueError('Unknown segmentation method: ' + segmentation_method)
 
@@ -544,7 +547,10 @@ def segment_and_bias_correct(t1w_bids_preproc, brain_mask_bids, segmentation_pri
                                        metadata={'Sources': [t1w_bids_preproc.get_uri(), brain_mask_bids.get_uri()]}))
 
     seg_sources = [t1w_bids_preproc.get_uri(), brain_mask_bids.get_uri()]
-    seg_sources.extend([prob.get_uri() for prob in seg_output_bids['posteriors']])
+
+    if segmentation_method.lower() == 'none':
+        # If not running Atropos, the posteriors are used to generate the segmentation
+        seg_sources.extend([prob.get_uri() for prob in seg_output_bids['posteriors']])
 
     seg_output_bids['segmentation_image'] = \
         bids_helpers.image_to_bids(seg_output['segmentation_image'], t1w_bids_preproc.get_ds_path(),
