@@ -4,6 +4,8 @@ import os
 import re
 import templateflow
 
+from importlib import metadata
+
 from .system_helpers import copy_file
 
 
@@ -83,7 +85,7 @@ class BIDSImage:
 
     def copy_image(self, destination_ds):
         """
-        Copies the image and its sidecar file to the same relative path in a new dataset.
+        Copies the image and its metadata to the same relative path in a new dataset.
 
         Parameters:
         ----------
@@ -101,11 +103,11 @@ class BIDSImage:
         os.makedirs(os.path.dirname(dest_file_path), exist_ok=True)
         copy_file(self._path, dest_file_path)
 
-        if self.metadata is not None:
+        if self._metadata is not None:
             dest_metadata = copy.deepcopy(self._metadata)
             # Replace relative source URIs with absolute URIs
             if 'Sources' in dest_metadata:
-                for source, idx in enumerate(dest_metadata['Sources']):
+                for idx, source in enumerate(dest_metadata['Sources']):
                     if source.startswith('bids::'):
                         # the source is within this dataset, replace bids:: with bids:{self.ds_name}
                         dest_metadata['Sources'][idx] = f"bids:{self._ds_name}:{source[6:]}"
@@ -158,7 +160,7 @@ class BIDSImage:
         return self._rel_path
 
 
-    def get_uri(self, relative=False):
+    def get_uri(self, relative=True):
         """Returns the BIDS URI for the image file.
 
         Parameters:
@@ -240,7 +242,8 @@ class TemplateImage:
         if not template_res_found:
             raise ValueError(f"Resolution {resolution} not found in template metadata")
 
-        template_matches = templateflow.api.get(name, resolution=resolution, desc=description, cohort=cohort, suffix=suffix)
+        template_matches = templateflow.api.get(name, resolution=resolution, desc=description, cohort=cohort, suffix=suffix,
+                                                raise_empty=True)
 
         if type(template_matches) is list:
             raise ValueError(f"Template could not be uniquely identified from the input. Found: {template_matches}")
@@ -297,6 +300,8 @@ class TemplateImage:
 
 def resolve_uri(dataset_path, file_uri):
     """Resolve a BIDS URI to an absolute path.
+
+    Currently, only supports resolution of BIDS URIs in the current dataset.
 
     Parameters:
     ----------
@@ -457,9 +462,9 @@ def update_output_dataset(output_dataset_dir, output_dataset_name):
 def _get_generated_by(existing_generated_by=None):
     """Get a dictionary for the GeneratedBy field for the BIDS dataset_description.json.
 
-    This is used to record the software used to generate the dataset. The environment variables DOCKER_IMAGE_TAG and
-    DOCKER_IMAGE_VERSION are used if set. Container type is assumed to be "docker" unless the variable SINGULARITY_CONTAINER
-    is defined.
+    This is used to record the software used to generate the dataset. The environment variables DOCKER_IMAGE_TAG is used if
+    set - this is set in the Dockerfile so should be defined if the code is being run inside a container.
+    Container type is assumed to be "docker" unless the variable SINGULARITY_CONTAINER is defined.
 
     Parameters:
     ----------
@@ -472,25 +477,31 @@ def _get_generated_by(existing_generated_by=None):
             A dictionary for the GeneratedBy field in the dataset_description.json
 
     """
+    docker_tag = os.environ.get('DOCKER_IMAGE_TAG', 'undefined')
 
-    docker_tag = os.environ.get('DOCKER_IMAGE_TAG', 'unknown')
+    container_type = 'docker'
+    # If in a singularity container built from docker, both DOCKER_IMAGE_TAG and SINGULARITY_CONTAINER will be defined
+    if 'SINGULARITY_CONTAINER' in os.environ:
+        container_type = 'singularity'
+
+    if docker_tag == 'undefined':
+        # Not in a container, or at least not unless someone has hacked the Dockerfile
+        container_type = 'not_containerized'
 
     generated_by = []
+
+    antsnetct_version = metadata.version('antsnetct')
 
     if existing_generated_by is not None:
         generated_by = copy.deepcopy(existing_generated_by)
         for gb in existing_generated_by:
-            if gb['Name'] == 'antsnetct' and gb['Container']['Tag'] == docker_tag:
+            if gb['Name'] == 'antsnetct' and gb['Version'] == antsnetct_version and gb['Container']['Tag'] == docker_tag:
                 # Don't overwrite existing generated_by if it's already set to this pipeline
                 return generated_by
 
-    container_type = 'docker'
-
-    if 'SINGULARITY_CONTAINER' in os.environ:
-        container_type = 'singularity'
-
-    gen_dict = {'Name': 'antsnetct',
-                'Version': os.environ.get('DOCKER_IMAGE_VERSION', 'unknown'),
+    gen_dict = {
+                'Name': 'antsnetct',
+                'Version': antsnetct_version,
                 'CodeURL': os.environ.get('GIT_REMOTE', 'unknown'),
                 'Container': {'Type': container_type, 'Tag': docker_tag}
                 }
@@ -546,8 +557,9 @@ def find_brain_mask(mask_dataset_directory, input_image):
         mask_dataset_name = dataset_description['Name']
 
     search_prefix = input_image.get_derivative_rel_path_prefix()
-    search_dir_relpath = os.path.dirname(search_prefix)
     search_pattern = re.compile(rf"{search_prefix}(?:_space-orig)?(?:_res-01)?_desc-brain_mask.nii.gz")
+
+    search_dir_relpath = os.path.dirname(search_prefix)
 
     for image_file in os.listdir(os.path.join(mask_dataset_directory, search_dir_relpath)):
         image_rel_path = os.path.join(search_dir_relpath, image_file)
@@ -632,8 +644,8 @@ def find_segmentation_probability_images(seg_dataset_directory, input_image):
     return output_posteriors
 
 
-def find_images(input_dataset_dir, participant_label, session_label, modality, bids_suffix):
-    """Find images in a BIDS dataset directory.
+def find_session_images(input_dataset_dir, participant_label, session_label, modality, bids_suffix):
+    """Find images from a session in a BIDS dataset directory.
 
     Parameters:
     -----------
@@ -643,7 +655,7 @@ def find_images(input_dataset_dir, participant_label, session_label, modality, b
     participant_label: str
         Participant label, eg '01'.
     session_label: str
-        Session label, eg 'MR1'.
+        Session label, eg 'MR1'. Set to None if the dataset does not have sessions.
     modality: str
         Modality, eg 'anat', 'func'.
     bids_suffix: str
@@ -657,7 +669,10 @@ def find_images(input_dataset_dir, participant_label, session_label, modality, b
     images = list()
 
     # Path to the data directory to search, eg /data/ds/sub-01/ses-01/anat
-    modality_dir = os.path.join(input_dataset_dir, 'sub-' + participant_label, 'ses-' + session_label, modality)
+    if (session_label is None):
+        modality_dir = os.path.join(input_dataset_dir, 'sub-' + participant_label, modality)
+    else:
+        modality_dir = os.path.join(input_dataset_dir, 'sub-' + participant_label, 'ses-' + session_label, modality)
 
     if not os.path.exists(modality_dir):
         return None
@@ -667,4 +682,35 @@ def find_images(input_dataset_dir, participant_label, session_label, modality, b
             images.append(BIDSImage(input_dataset_dir, os.path.relpath(os.path.join(modality_dir, image), input_dataset_dir)))
 
     return images
+
+
+def find_participant_images(input_dataset_dir, participant_label, modality, bids_suffix):
+    """Find images for a participant in a BIDS dataset directory, across all sessions.
+
+    Parameters:
+    -----------
+
+    input_dataset_dir: str
+        Path to the input dataset directory.
+    participant_label: str
+        Participant label, eg '01'.
+    modality: str
+        Modality, eg 'anat', 'func'.
+    bids_suffix: str
+        BIDS image suffix, eg "T1w".
+
+    Returns:
+    --------
+    list of BIDSImage: A list of BIDSImage objects representing the images found.
+    """
+
+    sessions = [d for d in os.listdir(os.path.join(input_dataset_dir, 'sub-' + participant_label)) if d.startswith('ses-')]
+
+    if not sessions:
+        return find_session_images(input_dataset_dir, participant_label, None, modality, bids_suffix)
+
+    images = list()
+
+    for sess in sessions:
+        images.extend(find_session_images(input_dataset_dir, participant_label, sess[4:], modality, bids_suffix))
 
