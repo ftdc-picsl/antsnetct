@@ -66,3 +66,29 @@ See `antsnetct --help` for current usage.
 
 
 ## Longitudinal thickness
+
+First run the cross-sectional (cx) pipeline on all time points.
+
+Defaults to running all session T1w images, but user can input a custom list.
+
+The SST is built from the *processed* T1w images (ie, `desc-biascorr`) but the longitudinal
+segmentation is done with the *preprocessed* T1w images (ie, `desc-preproc`), which is oriented
+and optionally neck-trimmed, but not denoised or bias-corrected.
+
+
+Pipeline overview:
+
+* Build SST from the cx-processed T1w 
+* Define a common brain mask from the cx sessions (basically the union of the session masks in SST space)
+* Segment SST with ANTsPyNet
+* Register SST to group template (optional)
+
+For each session image:
+
+* Register to SST
+* Warp SST segmentation to each session space
+* Run denoising / N4 / Atropos on session T1w, using SST segmentation as priors.
+* Compute cortical thickness on session T1w
+* Warp derivatives to SST / group template space
+
+See `antsnetct --longitudinal --help` for current usage.
