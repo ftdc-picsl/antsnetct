@@ -122,6 +122,7 @@ def cross_sectional_analysis():
     brain_mask_parser.add_argument("--brain-mask-modality", help="Brain masking modality option to use with antspynet. Only "
                                    "used if no pre-existing mask is found. Options are 't1', 't1nobrainer', 't1combined'",
                                    type=str, default='t1')
+
     segmentation_parser = parser.add_argument_group('Segmentation arguments')
     segmentation_parser.add_argument("--segmentation-dataset", help="Dataset containing segmentations. This dataset can be "
                                      "used for priors, or as a replacement for the built-in segmentation routines.",
@@ -134,6 +135,11 @@ def cross_sectional_analysis():
     segmentation_parser.add_argument("--atropos-n4-iterations", help="Number of iterations of atropos-n4",
                                      type=int, default=3)
     segmentation_parser.add_argument("--atropos-prior-weight", help="Prior weight for Atropos", type=float, default=0.25)
+    segmentation_parser.add_argument("--prior-smoothing-sigma", help="Sigma for smoothing the priors, in voxels. Experimental",
+                                     type=float, default=0)
+    segmentation_parser.add_argument("--csf-prior-gamma", help="Gamma correction for the CSF prior. Defaults to 0 for "
+                                     "no correction. Experimental", type=float,
+                                     default=0)
 
     thickness_parser = parser.add_argument_group('Thickness arguments')
     thickness_parser.add_argument("--thickness-iterations", help="Number of iterations for cortical thickness estimation. "
@@ -236,7 +242,8 @@ def cross_sectional_analysis():
                 # antspynet segmentation can be used as priors for iterative segmentation and bias correction with N4 and
                 # Atropos. If Atropos is not used, the T1w is bias-corrected separately with N4.
                 logger.info("Segmentation and bias correction")
-                seg_priors = get_segmentation_priors(t1w_bids, preproc_t1w_bids, working_dir, args.segmentation_dataset)
+                seg_priors = get_segmentation_priors(t1w_bids, preproc_t1w_bids, working_dir, args.segmentation_dataset,
+                                                     args.prior_smoothing_sigma, args.csf_prior_gamma)
 
                 seg_n4 = segment_and_bias_correct(preproc_t1w_bids, brain_mask_bids, seg_priors, working_dir,
                                                   segmentation_method=args.segmentation_method,
@@ -393,7 +400,8 @@ def get_brain_mask(t1w_bids, t1w_bids_preproc, work_dir, brain_mask_dataset=None
                                       metadata=brain_mask_metadata)
 
 
-def get_segmentation_priors(t1w_bids, t1w_bids_preproc, work_dir, segmentation_dataset=None):
+def get_segmentation_priors(t1w_bids, t1w_bids_preproc, work_dir, segmentation_dataset=None,
+                            anstnet_prior_smoothing_sigma=0, antsnet_csf_prior_gamma=0):
     """Get segmentation priors for a T1w image
 
     If segmentatation_dataset is not None, it is searched for segmentation probabilities based on the T1w image. It is an error
@@ -415,6 +423,10 @@ def get_segmentation_priors(t1w_bids, t1w_bids_preproc, work_dir, segmentation_d
     segmentation_dataset : str, optional
         Path to the segmentation dataset for priors. If provided, it is an error to not find a segmentation. If None,
         segmentation priors are generated with antspynet.
+    anstnet_prior_smoothing_sigma : float, optional
+        Sigma for smoothing the priors, in voxels. Default is 0, meaning no smoothing.
+    antsnet_csf_prior_gamma : float, optional
+        Gamma correction for the CSF prior. Default is 0, meaning no correction.
 
     Returns:
     --------
@@ -449,6 +461,17 @@ def get_segmentation_priors(t1w_bids, t1w_bids_preproc, work_dir, segmentation_d
         logger.info("No segmentation priors found, generating with antspynet")
         antsnet_seg = ants_helpers.deep_atropos(t1w_bids_preproc.get_path(), work_dir)
         prior_seg_probabilities = antsnet_seg['posteriors']
+
+        if anstnet_prior_smoothing_sigma > 0:
+            logger.info(f"Smoothing priors with sigma {anstnet_prior_smoothing_sigma}")
+            priors_smooth = [ants_helpers.smooth_image(prior, anstnet_prior_smoothing_sigma, work_dir)
+                             for prior in prior_seg_probabilities]
+            prior_seg_probabilities = priors_smooth
+
+        if antsnet_csf_prior_gamma > 0:
+            logger.info(f"Gamma correction on CSF prior with gamma {antsnet_csf_prior_gamma}")
+            prior_seg_probabilities[0] = ants_helpers.gamma_correct_image(prior_seg_probabilities[0], antsnet_csf_prior_gamma,
+                                                                          work_dir)
 
     return prior_seg_probabilities
 

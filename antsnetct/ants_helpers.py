@@ -69,6 +69,34 @@ def smooth_image(image, sigma, work_dir):
 
     return smoothed_image_file
 
+def gamma_correction(image, gamma, work_dir):
+    """Apply gamma correction to an image
+
+    Parameters:
+    -----------
+    image: str
+        Path to image.
+    gamma: float
+        Gamma value for gamma correction.
+    work_dir: str
+        Path to working directory.
+
+    Returns:
+    --------
+    corrected_image: str
+        Path to gamma corrected image.
+    """
+    img = ants.image_read(image)
+
+    corrected_img = ants.image_clone(img)
+    corrected_img[corrected_img > 0] = corrected_img[corrected_img > 0] ** gamma
+
+    corrected_image_file = get_temp_file(work_dir, prefix='gamma_correction') + '_corrected.nii.gz'
+
+    ants.image_write(corrected_img, corrected_image_file)
+
+    return corrected_image_file
+
 
 def deep_brain_extraction(anatomical_image, work_dir, modality='t1'):
     """Extract brain from an anatomical image
