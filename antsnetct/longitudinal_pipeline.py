@@ -40,7 +40,7 @@ def longitudinal_analysis():
     required_parser.add_argument("--cross-sectional-dataset", help="BIDS derivatives dataset dir, containing the "
                                  "cross-sectional analysis", type=str, required=True)
     required_parser.add_argument("--output-dataset", help="Output BIDS dataset dir", type=str, required=True)
-    required_parser.add_argument("--participant", "--participant-list", help="Participant to process", type=str)
+    required_parser.add_argument("--participant", help="Participant to process", type=str)
 
     subject_parser = parser.add_argument_group('Subject arguments')
     subject_parser.add_argument("--participant-images", help="Text file containing a list of participant images to process "
@@ -48,7 +48,7 @@ def longitudinal_analysis():
                                  "will be processed.", type=str, default=None)
 
     sst_parser = parser.add_argument_group('Single Subject Template arguments')
-    sst_parser.add_argument("--sst-transform", help="SST transform, rigid or SyN", default='rigid')
+    sst_parser.add_argument("--sst-transform", help="SST transform, rigid affine or syn", default='rigid')
     sst_parser.add_argument("--sst-iterations", help="Number of iterations for SST template building", type=int, default=4)
     sst_parser.add_argument("--sst-brain-extracted-weight", help="Relative weighting of brain-extracted images in SST "
                             "construction. 0.0 means only use whole-head images, 1.0 means only use brain-extracted images.",
@@ -58,13 +58,17 @@ def longitudinal_analysis():
                             "'atropos' or 'antspynet'. If atropos, antspynet posteriors are used as priors.",
                             type=str, default='atropos')
     sst_parser.add_argument("--sst-atropos-prior-weight", help="Prior weight in the SST segmenation. A higher value "
-                            "gives more weight to the antsnet priors", type=int, default=0.5)
+                            "gives more weight to the antsnet priors", type=int, default=0.25)
 
     segmentation_parser = parser.add_argument_group('Segmentation arguments for session processing')
     segmentation_parser.add_argument("--atropos-n4-iterations", help="Number of iterations of atropos-n4",
                                      type=int, default=3)
     segmentation_parser.add_argument("--atropos-prior-weight", help="Prior weight for Atropos in the session space",
                                      type=float, default=0.5)
+    segmentation_parser.add_argument("--prior-smoothing-sigma", help="Sigma for smoothing the priors before session "
+                                     "segmentation, in voxels. Experimental", type=float, default=0)
+    segmentation_parser.add_argument("--prior-csf-gamma", help="Gamma value for CSF prior. Experimental",
+                                     type=float, default=0)
 
     thickness_parser = parser.add_argument_group('Thickness arguments for session processing')
     thickness_parser.add_argument("--thickness-iterations", help="Number of iterations for cortical thickness estimation. "
@@ -92,7 +96,7 @@ def longitudinal_analysis():
 
     system_helpers.set_verbose(args.verbose)
 
-    # If the only arg is "--longitudinal", print help and exit
+    # If no args, print help and exit
     if len(sys.argv) == 1:
         parser.print_help()
         sys.exit(1)
@@ -171,7 +175,7 @@ def longitudinal_analysis():
                                                                                           'desc-biascorr_T1w')))
                 cx_brain_mask_bids.append(bids_helpers.BIDSImage(cx_dataset, relpath.replace('desc-preproc_T1w',
                                                                                              'desc-brain_mask')))
-        logger.info(f"Using selected participant images: {cx_preproc_t1w_bids}")
+        logger.info(f"Using selected participant images: {[im.get_uri() for im in cx_preproc_t1w_bids]}")
     else:
         cx_preproc_t1w_bids = bids_helpers.find_participant_images(cx_dataset, args.participant, 'anat', 'desc-preproc_T1w')
         for idx in range(len(cx_preproc_t1w_bids)):
@@ -238,6 +242,25 @@ def longitudinal_analysis():
                 sess_reg_shrink_factors = '6x4x3x2x1'
                 sess_reg_smoothing_sigmas = '4x3x2x1x0vox'
 
+            if args.sst_transform.lower() == 'rigid':
+                # CC is very slow, not worth it for linear transforms
+                sst_build_metric = 'MI'
+                sess_reg_metric = 'MI'
+                sess_reg_metric_param_str='32'
+                sst_build_transform = 'Rigid[0.1]'
+            elif args.sst_transform.lower() == 'affine':
+                # CC is very slow, not worth it for linear transforms
+                sst_build_metric = 'MI'
+                sess_reg_metric = 'MI'
+                sess_reg_metric_param_str='32'
+                sst_build_transform = 'Affine[0.1]'
+            elif args.sst_transform.lower() == 'syn':
+                sst_build_transform = 'SyN[0.2,3,0.5]'
+            else:
+                raise ValueError(f"Unknown SST transform {sst_build_transform}")
+
+            sess_reg_transform = sst_build_transform
+
             # SST construction
             logger.info("Preprocessing structural images for SST")
             sst_preproc_input = preprocess_sst_input(cx_biascorr_t1w_bids, working_dir)
@@ -246,15 +269,16 @@ def longitudinal_analysis():
 
             logger.info("Building SST")
 
+            # First do a rigid registration to produce an initial template
             sst_output_rigid = ants_helpers.build_sst(sst_preproc_input, working_dir, initial_templates=None,
                                                       reg_transform='Rigid[0.1]', reg_iterations=sst_build_iterations,
-                                                      reg_metric=sst_build_metric, reg_metric_weights=template_weights,
+                                                      reg_metric='MI', reg_metric_weights=template_weights,
                                                       reg_shrink_factors=sst_build_shrink_factors,
                                                       reg_smoothing_sigmas=sst_build_smoothing_sigmas,
-                                                      template_iterations=args.sst_iterations)
+                                                      template_iterations=2)
 
             sst_output = ants_helpers.build_sst(sst_preproc_input, working_dir, initial_templates=sst_output_rigid,
-                                                reg_transform='SyN[0.2, 3, 0.5]', reg_iterations=sst_build_iterations,
+                                                reg_transform=sst_build_transform, reg_iterations=sst_build_iterations,
                                                 reg_metric=sst_build_metric, reg_metric_weights=template_weights,
                                                 reg_shrink_factors=sst_build_shrink_factors,
                                                 reg_smoothing_sigmas=sst_build_smoothing_sigmas,
@@ -264,11 +288,11 @@ def longitudinal_analysis():
 
             sst_sources = [cx_biascorr_t1w_bids[idx].get_uri(relative=False) for idx in range(num_sessions)]
 
-            sst_metadata = { 'Sources' : sst_sources }
+            sst_metadata = { 'Sources' : sst_sources, 'SkullStripped': False }
 
             sst_bids = bids_helpers.image_to_bids(sst_output[0], args.output_dataset,
                                                   os.path.join('sub-' + args.participant, 'anat', 'sub-' + args.participant +
-                                                               '_desc-sst_T1w.nii.gz'), metadata=sst_metadata)
+                                                               '_T1w.nii.gz'), metadata=sst_metadata)
 
             session_sst_transforms = list()
 
@@ -276,16 +300,24 @@ def longitudinal_analysis():
 
             logger.info("Registering all sessions to SST")
             for idx in range(num_sessions):
+                logger.info(f"Registering session {idx + 1} to SST")
                 moving_head = cx_biascorr_t1w_bids[idx].get_path()
                 moving_brain = ants_helpers.apply_mask(moving_head, cx_brain_mask_bids[idx].get_path(), working_dir)
                 moving = [moving_head, moving_brain]
                 session_sst_transforms.append(
                     ants_helpers.multivariate_pairwise_registration(sst_output, moving, working_dir,
-                                                      transform='SyN[0.2, 3, 0.5]', iterations=sess_reg_iterations,
+                                                      transform=sess_reg_transform, iterations=sess_reg_iterations,
                                                       metric=sess_reg_metric, metric_param_str=sess_reg_metric_param_str,
                                                       metric_weights=template_weights, shrink_factors=sess_reg_shrink_factors,
                                                       smoothing_sigmas=sess_reg_smoothing_sigmas, apply_transforms=False)
                 )
+                forward_transform_path = long_preproc_t1w_bids[idx].get_derivative_path_prefix() + \
+                    f"_from-T1w_to-sst_mode-image_xfm.h5"
+                system_helpers.copy_file(session_sst_transforms[idx]['forward_transform'], forward_transform_path)
+
+                inverse_transform_path = long_preproc_t1w_bids[idx].get_derivative_path_prefix() + \
+                    f"_from-sst_to-T1w_mode-image_xfm.h5"
+                system_helpers.copy_file(session_sst_transforms[idx]['inverse_transform'], inverse_transform_path)
 
             # Masks in SST space
             logger.info("Creating SST brain mask")
@@ -306,12 +338,13 @@ def longitudinal_analysis():
             unified_mask_sst_bids = bids_helpers.image_to_bids(unified_mask_sst, args.output_dataset,
                                                                os.path.join('sub-' + args.participant, 'anat',
                                                                             'sub-' + args.participant +
-                                                                            '_desc-sstbrain_mask.nii.gz'))
+                                                                            '_desc-brain_mask.nii.gz'))
 
+            sst_brain_metadata = { 'Sources': [sst_bids.get_uri(), unified_mask_sst_bids.get_uri()], 'SkullStripped': True }
             sst_brain_bids = bids_helpers.image_to_bids(
                 ants_helpers.apply_mask(sst_output[0], unified_mask_sst, working_dir),
                 args.output_dataset, os.path.join('sub-' + args.participant, 'anat', 'sub-' + args.participant +
-                                                                    '_desc-sstbrain_T1w.nii.gz'))
+                                                                    '_desc-brain_T1w.nii.gz'), metadata=sst_brain_metadata)
 
             # Warp the unified mask back to the session spaces
             long_brain_mask_bids = list()
@@ -331,12 +364,14 @@ def longitudinal_analysis():
             # else antspynet. Here we don't have an option for external priors because the SST is newly created
             sst_segmentation_method = 'none' if args.sst_segmentation_method == 'antspynet' else args.sst_segmentation_method
             logger.info("Segmenting SST")
-            sst_deep_atropos = ants_helpers.deep_atropos(sst_bids.get_path(), working_dir)
-            sst_prior_seg_probabilities = sst_deep_atropos['posteriors']
-            sst_seg = cross_sectional_pipeline.segment_and_bias_correct(
-                sst_bids, unified_mask_sst_bids, sst_prior_seg_probabilities, working_dir,
-                segmentation_method=sst_segmentation_method, atropos_n4_iterations=1, atropos_prior_weight=0.25,
-                denoise=True, n4_spline_spacing=180, n4_convergence='[1,1e-7]', n4_shrink_factor=3)
+
+            sst_prior_seg_probabilities = get_sst_segmentation_priors(sst_bids, working_dir,
+                                                                      prior_smoothing_sigma=args.prior_smoothing_sigma,
+                                                                      prior_csf_gamma=args.prior_csf_gamma)
+
+            sst_seg = segment_sst(sst_bids, unified_mask_sst_bids, sst_prior_seg_probabilities, working_dir,
+                                  segmentation_method=sst_segmentation_method,
+                                  atropos_prior_weight=args.sst_atropos_prior_weight)
 
             # align the SST to the group template - note this is a univariate registration, similar to what is done
             # in the cross-sectional pipeline
@@ -353,21 +388,31 @@ def longitudinal_analysis():
             for idx in range(num_sessions):
                 logger.info(f"Processing session {idx + 1} of {num_sessions}: " + \
                     f"{cx_preproc_t1w_bids[idx].get_uri(relative=False)}")
-                t1w_bids = long_preproc_t1w_bids[idx]
+
                 brain_mask_bids = long_brain_mask_bids[idx]
                 # Warp priors to the session space
                 t1w_priors = list()
 
                 for seg_class in range(6):
                     t1w_priors.append(
-                        ants_helpers.apply_transforms(t1w_bids.get_path(), sst_seg['posteriors'][seg_class].get_path(),
+                        ants_helpers.apply_transforms(long_preproc_t1w_bids[idx].get_path(),
+                                                      sst_seg['posteriors'][seg_class].get_path(),
                                                       session_sst_transforms[idx]['inverse_transform'], working_dir)
                     )
+
+                if args.prior_smoothing_sigma > 0:
+                    for idx in range(6):
+                        t1w_priors[idx] = ants_helpers.smooth_image(t1w_priors[idx], args.prior_smoothing_sigma, working_dir)
+
+                if args.prior_csf_gamma > 0:
+                    t1w_priors[0] = ants_helpers.gamma_image(t1w_priors[0], args.prior_csf_gamma, working_dir)
+
                 # Segment the session
                 logger.info(f"Segmenting session {idx + 1}")
                 seg_n4 = cross_sectional_pipeline.segment_and_bias_correct(
-                    t1w_bids, brain_mask_bids, t1w_priors, working_dir, denoise=True, segmentation_method='atropos',
-                    atropos_n4_iterations=args.atropos_n4_iterations, atropos_prior_weight=args.atropos_prior_weight)
+                    long_preproc_t1w_bids[idx], brain_mask_bids, t1w_priors, working_dir, denoise=True,
+                    segmentation_method='atropos', atropos_n4_iterations=args.atropos_n4_iterations,
+                    atropos_prior_weight=args.atropos_prior_weight)
                 # Compute thickness
                 logger.info(f"Cortical thickness for session {idx + 1}")
                 thickness = cross_sectional_pipeline.cortical_thickness(seg_n4, working_dir,
@@ -415,11 +460,11 @@ def preprocess_sst_input(cx_biascorr_t1w_bids, work_dir):
 
     Parameters:
     ----------
-    cx_biascorr_t1w_bids (list of BIDSImage):
+    cx_biascorr_t1w_bids : list of BIDSImage
         List of BIDSImage objects for the input images. These should be the bias-corrected T1w images from cross-sectional
         processing. This function will look for brain masks in the same directory with the suffix 'desc-brain_mask.nii.gz'.
 
-    work_dir (str):
+    work_dir : str
         Working directory
 
     Returns:
@@ -453,6 +498,127 @@ def preprocess_sst_input(cx_biascorr_t1w_bids, work_dir):
     sst_input_combined = [sst_input_t1w_denoised_normalized_heads, sst_input_t1w_denoised_normalized_brains]
 
     return sst_input_combined
+
+def get_sst_segmentation_priors(sst_bids, work_dir, prior_smoothing_sigma=0, prior_csf_gamma=0):
+    """Get segmentation priors for the SST from deep_atropos
+
+    Parameters:
+    -----------
+    sst_bids : BIDSImage
+        SST image
+    work_dir : str
+        Working directory
+    prior_smoothing_sigma : float, optional
+        Sigma for smoothing the priors, in voxels. Default is 0.
+    prior_csf_gamma : float, optional
+        Gamma value for the CSF prior. Default is 0 (no correction).
+
+    """
+    deep_atropos = ants_helpers.deep_atropos(sst_bids.get_path(), work_dir)
+
+    posteriors = deep_atropos['posteriors']
+
+    atropos_prior_images = list()
+
+    if prior_smoothing_sigma > 0:
+        logger.info(f"Smoothing priors with sigma {prior_smoothing_sigma}")
+        atropos_prior_images = [ants_helpers.smooth_image(prior, prior_smoothing_sigma, work_dir)
+                                for prior in deep_atropos['posteriors']]
+    else:
+        atropos_prior_images = posteriors
+
+    if prior_csf_gamma > 0:
+        logger.info(f"Gamma correcting CSF prior with gamma {prior_csf_gamma}")
+        atropos_prior_images[0] = ants_helpers.gamma_image(atropos_prior_images[0], prior_csf_gamma, work_dir)
+
+    return atropos_prior_images
+
+
+def segment_sst(sst_bids, sst_brain_mask_bids, segmentation_priors, work_dir, segmentation_method='atropos',
+                atropos_prior_weight=0.25):
+    """Segment the SST
+
+    If the segmentation_method is 'none', the prior segmentation, generated with deep_atropos) is copied to the output.
+
+    If the segmentation_method is 'atropos', the priors are used to to refine the segmentation with Atropos.
+
+    Parameters:
+    -----------
+    sst_bids : BIDSImage
+        T1w SST object. Output is in the space of this image.
+    sst_brain_mask_bids : BIDSImage
+        Brain mask for the SST.
+    segmentation_priors :  list
+        List of files containing segmentation probabilities, in their antsct order: CSF, CGM, WM, SGM, BS, CBM. These are used
+        as priors for segmentation and bias correction.
+    work_dir : str
+        Path to the working directory.
+    segmentation method : str, optional
+        Method to use for segmentation. Default is 'atropos', meaning the priors are used for segmentation with Atropos.
+    atropos_prior_weight : float, optional
+        Prior weight for Atropos. Default is 0.25. Minimum useful value is 0.2, below this the priors are not very well
+        constrained and you will see priors that overlap in intensity (like SGM and CBM) appear in the wrong places.
+
+    Returns:
+    --------
+    dict
+        Dictionary of segmentation images (as BIDSImage objects) with keys:
+        'segmentation_image' - the segmentation image
+        'posteriors' - list of segmentation posteriors
+    """
+
+    # Output images, to be converted to BIDS before returning
+    seg_output = {}
+
+    if segmentation_method.lower() == 'atropos':
+
+        atropos_prior_images = segmentation_priors
+
+        logger.info("Running Atropos")
+
+        seg_output = ants_helpers.atropos_segmentation(sst_bids.get_path(), sst_brain_mask_bids.get_path(), work_dir,
+                                                       prior_probabilities=atropos_prior_images,
+                                                       atropos_prior_weight=atropos_prior_weight)
+
+        # remap the segmentation posteriors to BIDS labels
+        seg_output['segmentation_image'] = ants_helpers.posteriors_to_segmentation(seg_output['posteriors'], work_dir)
+    elif segmentation_method.lower() == 'none':
+        logger.info("Segmentation method is none, generating final segmentation directly from priors")
+        posteriors_masked = [ants_helpers.apply_mask(posterior, sst_brain_mask_bids.get_path(), work_dir)
+                                for posterior in segmentation_priors]
+
+        seg_output['segmentation_image'] = ants_helpers.posteriors_to_segmentation(posteriors_masked, work_dir)
+        seg_output['posteriors'] = posteriors_masked
+
+    else:
+        raise ValueError('Unknown segmentation method: ' + segmentation_method)
+
+    # Copy the segmentation outputs to the output dataset
+    seg_output_bids = {}
+
+    seg_output_bids['posteriors'] = list()
+
+    seg_posterior_labels = ['CSF', 'CGM', 'WM', 'SGM', 'BS', 'CBM']
+
+    for idx, seg_label in enumerate(seg_posterior_labels):
+        seg_output_bids['posteriors'].append(
+            bids_helpers.image_to_bids(seg_output['posteriors'][idx], sst_bids.get_ds_path(),
+                                       sst_bids.get_derivative_rel_path_prefix() +
+                                       f"_seg-antsnetct_label-{seg_label}_probseg.nii.gz",
+                                       metadata={'Sources': [sst_bids.get_uri(), sst_brain_mask_bids.get_uri()]}))
+
+    seg_sources = [sst_bids.get_uri(), sst_brain_mask_bids.get_uri()]
+
+    if segmentation_method.lower() == 'none':
+        # If not running Atropos, the posteriors are used to generate the segmentation
+        seg_sources.extend([prob.get_uri() for prob in seg_output_bids['posteriors']])
+
+    seg_output_bids['segmentation_image'] = \
+        bids_helpers.image_to_bids(seg_output['segmentation_image'], sst_bids.get_ds_path(),
+                                   sst_bids.get_derivative_rel_path_prefix() + '_seg-antsnetct_dseg.nii.gz',
+                                   metadata={'Sources': seg_sources})
+
+    return seg_output_bids
 
 
 def template_space_derivatives(sst, session_sst_transform, seg_n4, thickness, work_dir, group_template=None,
@@ -501,8 +667,9 @@ def template_space_derivatives(sst, session_sst_transform, seg_n4, thickness, wo
     # Make the jacobian log determinant image in the template space
     jacobian_sst_space = ants_helpers.get_log_jacobian_determinant(sst.get_path(), session_sst_transform, work_dir)
 
-    sst_space_bids['jacobian'] = bids_helpers.image_to_bids(jacobian_sst_space, session_ref_image_bids.get_ds_path(),
-                                                            sst_space_rel_output_prefix + '_desc-logjacobian.nii.gz')
+    if jacobian_sst_space is not None:
+        sst_space_bids['jacobian'] = bids_helpers.image_to_bids(jacobian_sst_space, session_ref_image_bids.get_ds_path(),
+                                                                sst_space_rel_output_prefix + '_desc-logjacobian.nii.gz')
 
     # gray matter probability
     gm_prob_sst_space = ants_helpers.apply_transforms(sst.get_path(), seg_n4['posteriors'][1].get_path(), session_sst_transform,

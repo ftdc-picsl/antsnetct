@@ -42,6 +42,61 @@ def apply_mask(image, mask, work_dir):
 
     return masked_image_file
 
+def smooth_image(image, sigma, work_dir):
+    """Smooth an image with a Gaussian kernel
+
+    Parameters:
+    -----------
+    image: str
+        Path to image.
+    sigma: float
+        Standard deviation of the Gaussian kernel in voxel units.
+    work_dir: str
+        Path to working directory.
+
+    Returns:
+    --------
+    smoothed_image: str
+        Path to smoothed image.
+    """
+    img = ants.image_read(image)
+
+    smoothed_img = ants.smooth_image(img, sigma)
+
+    smoothed_image_file = get_temp_file(work_dir, prefix='smooth_image') + '_smoothed.nii.gz'
+
+    ants.image_write(smoothed_img, smoothed_image_file)
+
+    return smoothed_image_file
+
+def gamma_correction(image, gamma, work_dir):
+    """Apply gamma correction to an image
+
+    Parameters:
+    -----------
+    image: str
+        Path to image.
+    gamma: float
+        Gamma value for gamma correction.
+    work_dir: str
+        Path to working directory.
+
+    Returns:
+    --------
+    corrected_image: str
+        Path to gamma corrected image.
+    """
+    img = ants.image_read(image)
+
+    corrected_img = ants.image_clone(img)
+    corrected_img[corrected_img > 0] = corrected_img[corrected_img > 0] ** gamma
+
+    corrected_image_file = get_temp_file(work_dir, prefix='gamma_correction') + '_corrected.nii.gz'
+
+    ants.image_write(corrected_img, corrected_image_file)
+
+    return corrected_image_file
+
 
 def deep_brain_extraction(anatomical_image, work_dir, modality='t1'):
     """Extract brain from an anatomical image
@@ -315,6 +370,107 @@ def n4_bias_correction(anatomical_image, brain_mask, segmentation_posteriors, wo
             run_command(['ImageMath', '3', bias_corrected_anatomical, 'm', bias_corrected_anatomical, '1000'])
 
     return bias_corrected_anatomical
+
+def atropos_segmentation(anatomical_images, brain_mask, work_dir, iterations=15, convergence_threshold=0.00001,
+                         kmeans_classes=0, prior_probabilities=None, prior_weight=0.25, likelihood_model='Gaussian',
+                         use_mixture_model_proportions=False, mrf_neighborhood='1x1x1', mrf_weight=0.1,
+                         adaptive_smoothing_weight=0.0, partial_volume_classes=None, use_random_seed=True):
+    """Segment anatomical images using Atropos
+
+    Parameters:
+    -----------
+    anatomical_images: str or list of str
+        List coregistered anatomical image files
+    brain_mask: str
+        Path to brain mask
+    work_dir: str
+        Path to working directory
+    iterations: int
+        Number of iterations for Atropos
+    convergence_threshold: float
+        Convergence threshold for Atropos
+    kmeans_classes: int
+        Number of classes for K-means initialization. Default is 0, which implies prior-based initialization.
+    prior_probabilities: list of str
+        List of prior probability images. For an antsCorticalThickness segmentation, these must be in order 1-6 for CSF, GM,
+        WM, deep GM, brainstem, cerebellum. Required if kmeans_classes is 0.
+    prior_weight: float
+        Prior probability weight, used with prior_probabilities.
+    likelihood_model: str
+        Likelihood model for Atropos, with optional parameters. Default is 'Gaussian'. Recommended settings are 'Gaussian'
+        or 'HistogramParzenWindows'.
+    use_mixture_model_proportions: bool
+        Use mixture model proportions in posterior calculation.
+    mrf_neighborhood: str
+        Markov Random Field neighborhood for Atropos. Default is '1x1x1'. Larger neighborhoods are more smooth, but increase
+        computation time substantially.
+    mrf_weight: float
+        MRF weight for Atropos.
+    adaptive_smoothing_weight: float
+        Adaptive smoothing weight for anatomical images. Default is 0.0.
+    partial_volume_classes: list of str
+        List of partial volume classes. Default is None. Example: '1x2' for partial volume between classes 1 and 2.
+    use_random_seed: bool
+        Use a variable random seed for Atropos. Default is True. Set to false to use a fixed seed.
+
+    Returns:
+    --------
+    dict: Dictionary containing the following keys:
+        'segmentation': str
+            Path to segmentation image
+        'posteriors': list of str
+            List of paths to segmentation posteriors for each class.
+
+    The order of class labels and posteriors is defined by the order of the prior_probabilities list if specified, or
+    intensity in the first anatomical image if using kmeans_classes.
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='atropos')
+
+
+    atropos_cmd = ['Atropos', '-d', '3', '--verbose', '-x', brain_mask]
+
+    anatomical_args = list()
+
+    if adaptive_smoothing_weight > 0.0:
+        anatomical_args = [arg for anat in anatomical_images for arg in ['-a', f"[{anat}, {adaptive_smoothing_weight}]"]]
+    else:
+        anatomical_args = [arg for anat in anatomical_images for arg in ['-a', anat]]
+
+    atropos_cmd.extend(anatomical_args)
+
+    num_classes = kmeans_classes
+
+    if prior_probabilities is not None:
+        num_classes = len(prior_probabilities)
+
+    if kmeans_classes > 0:
+        atropos_cmd.extend(['-i', f"KMeans[{kmeans_classes}]"])
+    else:
+        if prior_probabilities is None:
+            raise ValueError("Prior probabilities must be specified if kmeans_classes is 0.")
+        # Write list of priors to work_dir in c-style numeric format %02d
+        prior_spec = f"{tmp_file_prefix}_prior_%02d.nii.gz"
+        for idx, prior in enumerate(prior_probabilities):
+            copy_file(prior, prior_spec % (idx + 1))
+        atropos_cmd.extend(['-i', f"PriorProbabilityImages[{num_classes},{prior_spec},{prior_weight}]"])
+
+    seg_out_prefix = tmp_file_prefix + 'output_'
+
+    atropos_cmd.extend[ '-c', f"[{iterations}, {convergence_threshold}]", '-k', likelihood_model, '-o',
+                       f"[{seg_out_prefix},{seg_out_prefix}Posteriors%02d.nii.gz]", '-w', str(prior_weight), '-l', '1',
+                       '-m', f"[{mrf_weight}, {mrf_neighborhood}]", '-p',
+                       f"Socrates[{1 if use_mixture_model_proportions else 0}]", '-r', str(1) if use_random_seed else str(0),
+                       '-e', '0', '-g', '1']
+
+    if partial_volume_classes is not None:
+        atropos_cmd.extend([arg for pvc in partial_volume_classes for arg in ['-s', str(pvc)]])
+
+    run_command(atropos_cmd)
+
+    segmentation = f"{seg_out_prefix}Segmentation.nii.gz"
+    posteriors = [f"{seg_out_prefix}Posteriors%02d.nii.gz" % i for i in range(1, num_classes + 1)]
+
+    return {'segmentation': segmentation, 'posteriors': posteriors}
 
 
 def cortical_thickness(segmentation, segmentation_posteriors, work_dir, kk_its=45, grad_update=0.025, grad_smooth=1.5,
@@ -614,7 +770,7 @@ def posteriors_to_segmentation(posteriors, work_dir, class_labels=[0, 3, 8, 2, 9
         Path to working directory
     class_labels: list of int
         List of labels corresponding to the classes in order 0-6 for background, CSF, GM, WM, deep GM, brainstem, cerebellum.
-        The default labels use BIDS common imaging derivatives labels. To use antscorticalthickness labels, set this to
+        The default labels use BIDS common imaging derivatives labels. To use antscorticalthickness numeric labels, set this to
         list(range(0,7)).
 
     Returns:
@@ -745,6 +901,12 @@ def get_log_jacobian_determinant(reference_image, transform, work_dir, use_geom=
     run_command(cmd)
 
     warp_file = f"{decomposed_basename_prefix}_01_DisplacementFieldTransform.nii.gz"
+
+    if not os.path.exists(warp_file):
+        # The composite transform might not contain a warp, or might be an inverse transform
+        # in antsnetct we always use forward transforms, so assume here we were passed an affine only transform,
+        # eg for longitudinal registration
+        return None
 
     cmd = ['CreateJacobianDeterminantImage', '3', warp_file, log_jacobian_file, '1', '1' if use_geom else '0']
 
