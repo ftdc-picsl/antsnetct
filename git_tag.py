@@ -39,7 +39,7 @@ def update_version_in_pyproject(version):
 
 def main():
     if len(sys.argv) != 2:
-        print("Usage: python create_tag.py vX.Y.Z")
+        print("Usage: python git_tag.py vX.Y.Z")
         sys.exit(1)
 
     tag = sys.argv[1]
