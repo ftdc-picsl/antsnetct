@@ -48,7 +48,7 @@ def longitudinal_analysis():
                                  "will be processed.", type=str, default=None)
 
     sst_parser = parser.add_argument_group('Single Subject Template arguments')
-    sst_parser.add_argument("--sst-transform", help="SST transform, rigid affine or syn", default='rigid')
+    sst_parser.add_argument("--sst-transform", help="SST transform, rigid affine or syn", type=str, default='rigid')
     sst_parser.add_argument("--sst-iterations", help="Number of iterations for SST template building", type=int, default=4)
     sst_parser.add_argument("--sst-brain-extracted-weight", help="Relative weighting of brain-extracted images in SST "
                             "construction. 0.0 means only use whole-head images, 1.0 means only use brain-extracted images.",
@@ -58,7 +58,7 @@ def longitudinal_analysis():
                             "'atropos' or 'antspynet'. If atropos, antspynet posteriors are used as priors.",
                             type=str, default='atropos')
     sst_parser.add_argument("--sst-atropos-prior-weight", help="Prior weight in the SST segmenation. A higher value "
-                            "gives more weight to the antsnet priors", type=int, default=0.25)
+                            "gives more weight to the antsnet priors", type=float, default=0.25)
 
     segmentation_parser = parser.add_argument_group('Segmentation arguments for session processing')
     segmentation_parser.add_argument("--atropos-n4-iterations", help="Number of iterations of atropos-n4",
