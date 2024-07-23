@@ -1045,7 +1045,7 @@ def build_template(images, work_dir, initial_templates=None, reg_transform='SyN[
     """
     template_workdir = get_temp_dir(work_dir, prefix='build_template')
 
-    output_prefix = os.path.join(template_workdir, 'T_template')
+    output_prefix = os.path.join(template_workdir, 'T_')
 
     template_norm = template_norm.lower()
 
@@ -1117,7 +1117,11 @@ def build_template(images, work_dir, initial_templates=None, reg_transform='SyN[
 
     run_command(template_command)
 
-    template_images = [f"{output_prefix}Template{idx}.nii.gz" for idx in range(num_modalities)]
+    template_images = [f"{output_prefix}template{idx}.nii.gz" for idx in range(num_modalities)]
+
+    for idx,template_file in enumerate(template_images):
+        if not os.path.exists(template_file):
+            raise ValueError(f"Template file {template_file} not found. Template construction failed.")
 
     return template_images
 
@@ -1320,3 +1324,4 @@ def combine_masks(masks, work_dir, thresh = 0.0001):
     ants.image_write(combined_mask, combined_mask_file)
 
     return combined_mask_file
+
