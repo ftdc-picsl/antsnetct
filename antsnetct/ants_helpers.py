@@ -1084,7 +1084,7 @@ def build_template(images, work_dir, initial_templates=None, reg_transform='SyN[
     reg_metric_weights_str = 'x'.join([str(w) for w in reg_metric_weights])
 
     # Write list of images to a csv file
-    image_csv = os.path.join(work_dir, 'template_image_list.csv')
+    image_csv = os.path.join(template_workdir, 'template_image_list.csv')
 
     if num_modalities > 1:
         # Write a CSV file with one row per subject, one column per modality
