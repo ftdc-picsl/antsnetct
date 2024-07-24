@@ -426,6 +426,8 @@ def atropos_segmentation(anatomical_images, brain_mask, work_dir, iterations=15,
     """
     tmp_file_prefix = get_temp_file(work_dir, prefix='atropos')
 
+    if type(anatomical_images) == str:
+        anatomical_images = [anatomical_images]
 
     atropos_cmd = ['Atropos', '-d', '3', '--verbose', '-x', brain_mask]
 
