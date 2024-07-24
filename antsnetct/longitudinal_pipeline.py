@@ -578,7 +578,7 @@ def segment_sst(sst_bids, sst_brain_mask_bids, segmentation_priors, work_dir, se
 
         seg_output = ants_helpers.atropos_segmentation(sst_bids.get_path(), sst_brain_mask_bids.get_path(), work_dir,
                                                        prior_probabilities=atropos_prior_images,
-                                                       atropos_prior_weight=atropos_prior_weight)
+                                                       prior_weight=atropos_prior_weight)
 
         # remap the segmentation posteriors to BIDS labels
         seg_output['segmentation_image'] = ants_helpers.posteriors_to_segmentation(seg_output['posteriors'], work_dir)
