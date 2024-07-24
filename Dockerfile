@@ -26,7 +26,8 @@ RUN apt update && apt install -y bc
 
 # Get c3d
 COPY --from=pyushkevich/tk:2023b /tk/c3d/build/c3d /opt/bin/c3d
-COPY --from=antsx/ants:master /opt/ants /opt/ants
+# Get ants
+COPY --from=antsx/ants:2.5.3 /opt/ants /opt/ants
 
 # Update antspy
 RUN pip install -U \
