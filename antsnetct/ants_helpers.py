@@ -242,10 +242,10 @@ def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=
     command.extend(anatomical_input_args)
     command.extend(n4_prior_classes_args)
     command.extend(['-x', brain_mask, '-p', prior_spec, '-c', str(len(priors)), '-o', stage_1_output_prefix, '-m',
-                   str(iterations), '-n', str(atropos_iterations), '-r', f"[{atropos_mrf_weight}, 1x1x1]", '-w',
-                   str(atropos_mrf_weight), '-g', '1' if denoise else '0', '-b',
-                   f"Socrates[{1 if use_mixture_model_proportions else 0}]", '-w', str(atropos_prior_weight),
-                   '-e', n4_convergence, '-f', str(n4_shrink_factor), '-q', f"[{n4_spline_spacing}]"])
+                   str(iterations), '-n', str(atropos_iterations), '-r', f"[{atropos_mrf_weight}, 1x1x1]", '-g',
+                   '1' if denoise else '0', '-b', f"Socrates[{1 if use_mixture_model_proportions else 0}]",
+                   '-w', str(atropos_prior_weight), '-e', n4_convergence, '-f', str(n4_shrink_factor), '-q',
+                   f"[{n4_spline_spacing}]"])
 
     run_command(command)
 
@@ -261,7 +261,7 @@ def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=
     command.extend(n4_prior_classes_args)
     command.extend(['-x', brain_mask, '-p', prior_spec, '-c', str(len(priors)), '-o', stage_2_output_prefix, '-m', '2',
                     '-n', str(atropos_iterations), '-r', f"[{atropos_mrf_weight}, 1x1x1]", '-g', '0', '-b',
-                    f"Socrates[{1 if use_mixture_model_proportions else '0'}]", '-w', str(atropos_prior_weight), '-e',
+                    f"Socrates[{'1' if use_mixture_model_proportions else '0'}]", '-w', str(atropos_prior_weight), '-e',
                     n4_convergence, '-f', str(n4_shrink_factor), '-q', f"[{n4_spline_spacing}]"])
 
     run_command(command)
@@ -409,7 +409,7 @@ def atropos_segmentation(anatomical_images, brain_mask, work_dir, iterations=15,
     adaptive_smoothing_weight: float
         Adaptive smoothing weight for anatomical images. Default is 0.0.
     partial_volume_classes: list of str
-        List of partial volume classes. Default is None. Example: '1x2' for partial volume between classes 1 and 2.
+        List of partial volume classes. Default is None. Example: ['1x2'] for partial volume between classes 1 and 2.
     use_random_seed: bool
         Use a variable random seed for Atropos. Default is True. Set to false to use a fixed seed.
 
@@ -458,13 +458,14 @@ def atropos_segmentation(anatomical_images, brain_mask, work_dir, iterations=15,
 
     seg_out_prefix = tmp_file_prefix + 'output_'
 
-    atropos_cmd.extend([ '-c', f"[{iterations}, {convergence_threshold}]", '-k', likelihood_model, '-o',
-                       f"[{seg_out_prefix},{seg_out_prefix}Posteriors%02d.nii.gz]", '-w', str(prior_weight), '-l', '1',
-                       '-m', f"[{mrf_weight}, {mrf_neighborhood}]", '-p',
-                       f"Socrates[{1 if use_mixture_model_proportions else 0}]", '-r', str(1) if use_random_seed else str(0),
-                       '-e', '0', '-g', '1'])
+    atropos_cmd.extend(['-c', f"[{iterations},{convergence_threshold}]", '-k', likelihood_model, '-o',
+                       f"[{seg_out_prefix},{seg_out_prefix}Posteriors%02d.nii.gz]", '-l', '1', '-m',
+                       f"[{mrf_weight},{mrf_neighborhood}]", '-p', f"Socrates[{1 if use_mixture_model_proportions else 0}]",
+                       '-r', str(1) if use_random_seed else str(0), '-e', '0', '-g', '1'])
 
     if partial_volume_classes is not None:
+        if isinstance(partial_volume_classes, str):
+            partial_volume_classes = [partial_volume_classes]
         atropos_cmd.extend([arg for pvc in partial_volume_classes for arg in ['-s', str(pvc)]])
 
     run_command(atropos_cmd)
