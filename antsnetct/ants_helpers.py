@@ -459,7 +459,7 @@ def atropos_segmentation(anatomical_images, brain_mask, work_dir, iterations=15,
     seg_out_prefix = tmp_file_prefix + 'output_'
 
     atropos_cmd.extend(['-c', f"[{iterations},{convergence_threshold}]", '-k', likelihood_model, '-o',
-                       f"[{seg_out_prefix},{seg_out_prefix}Posteriors%02d.nii.gz]", '-l', '1', '-m',
+                       f"[{seg_out_prefix}seg.nii.gz,{seg_out_prefix}Posteriors%02d.nii.gz]", '-m',
                        f"[{mrf_weight},{mrf_neighborhood}]", '-p', f"Socrates[{1 if use_mixture_model_proportions else 0}]",
                        '-r', str(1) if use_random_seed else str(0), '-e', '0', '-g', '1'])
 
