@@ -1346,7 +1346,7 @@ def combine_masks(masks, work_dir, thresh = 0.0001):
 
     combined_mask = combined_mask > thresh
 
-    tmp_file_prefix = get_temp_file(work_dir, prefix=get_nifti_file_prefix(masks[0]))
+    tmp_file_prefix = get_temp_file(work_dir, prefix='combine_mask')
     combined_mask_file = f"{tmp_file_prefix}_combined_mask.nii.gz"
 
     ants.image_write(combined_mask, combined_mask_file)

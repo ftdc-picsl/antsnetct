@@ -142,8 +142,8 @@ def cross_sectional_analysis():
                                      default=0)
 
     thickness_parser = parser.add_argument_group('Thickness arguments')
-    thickness_parser.add_argument("--thickness-iterations", help="Number of iterations for cortical thickness estimation. "
-                                  "Set to 0 to skip thickness calculation", type=int, default=45)
+    thickness_parser.add_argument("--thickness-iterations", help="Number of iterations for cortical thickness estimation.",
+                                  type=int, default=45)
 
     args = parser.parse_args()
 
@@ -250,10 +250,8 @@ def cross_sectional_analysis():
                                                   atropos_n4_iterations=args.atropos_n4_iterations,
                                                   atropos_prior_weight=args.atropos_prior_weight)
 
-                # If thickness is requested, calculate it
-                if args.thickness_iterations > 0:
-                    logger.info("Computing cortical thickness")
-                    thickness = cortical_thickness(seg_n4, working_dir, args.thickness_iterations)
+                logger.info("Computing cortical thickness")
+                thickness = cortical_thickness(seg_n4, working_dir, args.thickness_iterations)
 
                 # If an atlas is defined, register the T1w image to the atlas
                 if args.template_name.lower() != 'none':

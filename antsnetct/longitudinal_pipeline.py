@@ -73,8 +73,8 @@ def longitudinal_analysis():
                                      type=float, default=0)
 
     thickness_parser = parser.add_argument_group('Thickness arguments for session processing')
-    thickness_parser.add_argument("--thickness-iterations", help="Number of iterations for cortical thickness estimation. "
-                                  "Set to 0 to skip thickness calculation", type=int, default=45)
+    thickness_parser.add_argument("--thickness-iterations", help="Number of iterations for cortical thickness estimation.",
+                                  type=int, default=45)
 
     template_parser = parser.add_argument_group('Group template arguments')
     template_parser.add_argument("--template-name", help="Template to use for registration, or 'none' to disable this step.",
