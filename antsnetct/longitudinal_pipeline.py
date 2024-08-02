@@ -55,10 +55,12 @@ def longitudinal_analysis():
                             type=float, default=0.5)
     sst_parser.add_argument("--sst-reg-quick", help="Do quick registration to the SST", action='store_true')
     sst_parser.add_argument("--sst-segmentation-method", help="Segmentation method to use on the SST. Either "
-                            "'atropos' or 'antspynet'. If atropos, antspynet posteriors are used as priors.",
-                            type=str, default='atropos')
+                            "'antspynet_atropos' (antspynet priors, then atropos) or 'antspynet' (no atropos) or "
+                            "'cx_atropos' (average cross-sectional priors, then atropos), or 'cx' "
+                            "(average cross-sectional priors).", type=str, choices =
+                                ['antspynet_atropos', 'antspynet', 'cx_atropos', 'cx'], default='antspynet_atropos')
     sst_parser.add_argument("--sst-atropos-prior-weight", help="Prior weight in the SST segmenation. A higher value "
-                            "gives more weight to the antsnet priors", type=float, default=0.25)
+                            "gives more weight to the priors", type=float, default=0.25)
 
     segmentation_parser = parser.add_argument_group('Segmentation arguments for session processing')
     segmentation_parser.add_argument("--atropos-n4-iterations", help="Number of iterations of atropos-n4",
@@ -71,8 +73,8 @@ def longitudinal_analysis():
                                      type=float, default=0)
 
     thickness_parser = parser.add_argument_group('Thickness arguments for session processing')
-    thickness_parser.add_argument("--thickness-iterations", help="Number of iterations for cortical thickness estimation. "
-                                  "Set to 0 to skip thickness calculation", type=int, default=45)
+    thickness_parser.add_argument("--thickness-iterations", help="Number of iterations for cortical thickness estimation.",
+                                  type=int, default=45)
 
     template_parser = parser.add_argument_group('Group template arguments')
     template_parser.add_argument("--template-name", help="Template to use for registration, or 'none' to disable this step.",
@@ -154,6 +156,8 @@ def longitudinal_analysis():
 
     logger.info("Output dataset path: " + output_dataset)
     logger.info("Output dataset name: " + output_dataset_description['Name'])
+
+    # Note - it's important that the session images be in a consistent order
 
     # preprocessed images to be processed longitudinally
     cx_preproc_t1w_bids = list()
@@ -360,14 +364,26 @@ def longitudinal_analysis():
                     )
 
             # Segment the SST
-            # in the cross-sectional pipeline, options are 'atropos' or 'none' - none uses external priors if provided,
-            # else antspynet. Here we don't have an option for external priors because the SST is newly created
-            sst_segmentation_method = 'none' if args.sst_segmentation_method == 'antspynet' else args.sst_segmentation_method
-            logger.info("Segmenting SST")
 
-            sst_prior_seg_probabilities = get_sst_segmentation_priors(sst_bids, working_dir,
-                                                                      prior_smoothing_sigma=args.prior_smoothing_sigma,
-                                                                      prior_csf_gamma=args.prior_csf_gamma)
+            sst_prior_seg_probabilities = None
+
+            if args.sst_segmentation_method.startswith('antspynet'):
+                logger.info("Segmenting SST with deep_atropos")
+                sst_prior_seg_probabilities = \
+                    get_antsnet_sst_segmentation_priors(sst_bids, working_dir, prior_smoothing_sigma=args.prior_smoothing_sigma,
+                                                        prior_csf_gamma=args.prior_csf_gamma)
+            else:
+                logger.info("Segmenting SST with cross-sectional priors")
+                sst_prior_seg_probabilities = \
+                    get_cx_sst_segmentation_priors(sst_bids, cx_preproc_t1w_bids, session_sst_transforms, working_dir,
+                                                   prior_smoothing_sigma=args.prior_smoothing_sigma,
+                                                   prior_csf_gamma=args.prior_csf_gamma)
+
+            # 'none' if we are not segmenting the SST, and just pasing the priors on
+            # or 'atropos' if we are using the priors to segment the SST, and passing those posteriors for session processing
+            sst_segmentation_method = 'atropos' if args.sst_segmentation_method.endswith('atropos') else 'none'
+
+            logger.info("Segmenting SST")
 
             sst_seg = segment_sst(sst_bids, unified_mask_sst_bids, sst_prior_seg_probabilities, working_dir,
                                   segmentation_method=sst_segmentation_method,
@@ -499,7 +515,7 @@ def preprocess_sst_input(cx_biascorr_t1w_bids, work_dir):
 
     return sst_input_combined
 
-def get_sst_segmentation_priors(sst_bids, work_dir, prior_smoothing_sigma=0, prior_csf_gamma=0):
+def get_antsnet_sst_segmentation_priors(sst_bids, work_dir, prior_smoothing_sigma=0, prior_csf_gamma=0):
     """Get segmentation priors for the SST from deep_atropos
 
     Parameters:
@@ -512,6 +528,11 @@ def get_sst_segmentation_priors(sst_bids, work_dir, prior_smoothing_sigma=0, pri
         Sigma for smoothing the priors, in voxels. Default is 0.
     prior_csf_gamma : float, optional
         Gamma value for the CSF prior. Default is 0 (no correction).
+
+    Returns:
+    --------
+    list
+        List of segmentation priors, in the order CSF, CGM, WM, SGM, BS, CBM
 
     """
     deep_atropos = ants_helpers.deep_atropos(sst_bids.get_path(), work_dir)
@@ -532,6 +553,53 @@ def get_sst_segmentation_priors(sst_bids, work_dir, prior_smoothing_sigma=0, pri
         atropos_prior_images[0] = ants_helpers.gamma_image(atropos_prior_images[0], prior_csf_gamma, work_dir)
 
     return atropos_prior_images
+
+def get_cx_sst_segmentation_priors(sst_bids, cx_t1w_preproc_bids, cx_sst_transforms, work_dir, prior_smoothing_sigma=0,
+                                   prior_csf_gamma=0):
+    """Get segmentation priors for the SST by averaging the cross-sectional segmentations
+
+    Parameters:
+    -----------
+    sst_bids : BIDSImage
+        SST image
+    cx_t1w_preproc_bids : list
+        List of cross-sectionally processed T1w images, these are used to find priors
+    cx_sst_transforms : list
+        List of transforms from the cross-sectional images to the SST, in the same order as cx_t1w_preproc_bids
+    work_dir : str
+        Working directory
+    prior_smoothing_sigma : float, optional
+        Sigma for smoothing the priors, in voxels. Default is 0.
+    prior_csf_gamma : float, optional
+        Gamma value for the CSF prior. Default is 0 (no correction).
+
+    Returns:
+    --------
+    list
+        List of segmentation priors, in the order CSF, CGM, WM, SGM, BS, CBM
+
+    """
+    sst_priors = list()
+
+    for post_label in ['CSF', 'CGM', 'WM', 'SGM', 'BS', 'CBM']:
+        label_posteriors = list()
+        for idx in range(len(cx_t1w_preproc_bids)):
+            session_posterior = cx_t1w_preproc_bids[idx].get_derivative_path_prefix() + '_seg-antsnetct_label-' + \
+                                post_label + '_probseg.nii.gz'
+            label_posteriors.append(ants_helpers.apply_transforms(sst_bids.get_path(), session_posterior,
+                                                                  cx_sst_transforms[idx]['forward_transform'],
+                                                                  work_dir, interpolation='Linear'))
+        sst_priors.append(ants_helpers.average_images(label_posteriors, work_dir))
+
+    if prior_smoothing_sigma > 0:
+        logger.info(f"Smoothing priors with sigma {prior_smoothing_sigma}")
+        sst_priors = [ants_helpers.smooth_image(prior, prior_smoothing_sigma, work_dir) for prior in sst_priors]
+
+    if prior_csf_gamma > 0:
+        logger.info(f"Gamma correcting CSF prior with gamma {prior_csf_gamma}")
+        sst_priors[0] = ants_helpers.gamma_image(sst_priors[0], prior_csf_gamma, work_dir)
+
+    return sst_priors
 
 
 def segment_sst(sst_bids, sst_brain_mask_bids, segmentation_priors, work_dir, segmentation_method='atropos',

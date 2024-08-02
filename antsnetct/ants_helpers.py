@@ -69,6 +69,31 @@ def smooth_image(image, sigma, work_dir):
 
     return smoothed_image_file
 
+def average_images(images, work_dir):
+    """Average a list of 3D images.
+
+    Parameters:
+    -----------
+    images: list of str
+        List of paths to images to average
+    work_dir: str
+        Path to working directory
+
+    Returns:
+    --------
+    avg_image: str
+        Path to average image
+    """
+    avg_image_file = get_temp_file(work_dir, prefix='average_images') + '_mean.nii.gz'
+
+    cmd = ['AverageImages', '3', avg_image_file, '0']
+
+    cmd.extend(images)
+
+    run_command(cmd)
+
+    return avg_image_file
+
 def gamma_correction(image, gamma, work_dir):
     """Apply gamma correction to an image
 
@@ -1321,7 +1346,7 @@ def combine_masks(masks, work_dir, thresh = 0.0001):
 
     combined_mask = combined_mask > thresh
 
-    tmp_file_prefix = get_temp_file(work_dir, prefix=get_nifti_file_prefix(masks[0]))
+    tmp_file_prefix = get_temp_file(work_dir, prefix='combine_mask')
     combined_mask_file = f"{tmp_file_prefix}_combined_mask.nii.gz"
 
     ants.image_write(combined_mask, combined_mask_file)
