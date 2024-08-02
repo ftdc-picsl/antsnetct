@@ -29,18 +29,14 @@ COPY --from=pyushkevich/tk:2023b /tk/c3d/build/c3d /opt/bin/c3d
 # Get ants
 COPY --from=antsx/ants:2.5.3 /opt/ants /opt/ants
 
-# Update antspy
-RUN pip install -U \
-        https://github.com/ANTsX/ANTsPy/releases/download/v0.5.2/antspyx-0.5.2-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl \
-        templateflow==24.2.0 \
-    && rm -rf /root/.cache/pip
-
 COPY scripts/trim_neck.sh /opt/bin/trim_neck.sh
 # Copy data and code from builder
 COPY --from=builder /home/antspyuser/.keras /home/antspyuser/.keras
 COPY . /opt/src/antsnetct
 
-RUN pip install /opt/src/antsnetct
+# Install templateflow
+RUN pip install templateflow==24.2.0 /opt/src/antsnetct \
+    && rm -rf /root/.cache/pip
 
 LABEL maintainer="Philip A Cook (https://github.com/cookpa)"
 LABEL description="Containerized BIDS cortical thickness pipelines using antspynet."
