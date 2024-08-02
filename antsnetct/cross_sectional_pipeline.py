@@ -375,7 +375,7 @@ def get_brain_mask(t1w_bids, t1w_bids_preproc, work_dir, brain_mask_dataset=None
         brain_mask = bids_helpers.find_brain_mask(t1w_bids.get_ds_path(), t1w_bids)
         if brain_mask is not None:
             # Found a brain mask in input dataset
-            logger.info("Using brain mask: " + brain_mask)
+            logger.info("Using brain mask: " + str(brain_mask))
             found_brain_mask = True
             brain_mask_path = brain_mask.get_path()
             brain_mask_metadata = brain_mask.get_metadata()
