@@ -132,10 +132,27 @@ class BIDSImage:
         """
         Replaces the metadata with a new dictionary. The changes are written immediately to the sidecar file.
 
-        Parameters:
+        Parameters
+        ----------
             metadata (dict): A dictionary of metadata.
         """
         self._metadata = copy.deepcopy(metadata)
+        with open(self._sidecar_file, 'w') as f:
+            json.dump(self._metadata, f, indent=4, sort_keys=True)
+
+
+    def update_metadata(self, extra_metadata):
+        """
+        Adds or overwrites metadata. The changes are written immediately to the sidecar file.
+
+        Parameters:
+        ----------
+        extra_metadata : dict
+            A dictionary of additional metadata. If a key already exists in the metadata, the value is overwritten. Otherwise,
+            it is added to the metadata.
+        """
+        for key, value in extra_metadata.items():
+            self._metadata[key] = value
         with open(self._sidecar_file, 'w') as f:
             json.dump(self._metadata, f, indent=4, sort_keys=True)
 
