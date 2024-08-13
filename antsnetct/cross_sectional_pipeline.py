@@ -6,6 +6,7 @@ from . import system_helpers
 from .system_helpers import PipelineError
 
 import argparse
+import copy
 import glob
 import json
 import logging
@@ -586,7 +587,7 @@ def segment_and_bias_correct(t1w_bids_preproc, brain_mask_bids, segmentation_pri
     seg_metadata = dict()
 
     if prior_metadata is not None:
-        seg_metadata = prior_metadata.deepcopy()
+        seg_metadata = copy.deepcopy(prior_metadata)
 
     if 'Sources' not in seg_metadata:
         seg_metadata['Sources'] = list()
