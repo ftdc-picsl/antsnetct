@@ -410,8 +410,8 @@ def get_brain_mask(t1w_bids, t1w_bids_preproc, work_dir, brain_mask_dataset=None
     if brain_mask_reslice is None:
         # Relice an existing mask into the preprocessed space
         brain_mask_reslice = ants_helpers.reslice_to_reference(t1w_bids_preproc.get_path(), brain_mask_path, work_dir)
+        # relative path for the new bids image
         brain_mask_reslice_rel_path = t1w_bids_preproc.get_derivative_rel_path_prefix() + '_desc-brain_mask.nii.gz'
-        brain_mask_metadata['Sources'] = [t1w_bids.get_uri()]
 
     return bids_helpers.image_to_bids(brain_mask_reslice, t1w_bids_preproc.get_ds_path(), brain_mask_reslice_rel_path,
                                       metadata=brain_mask_metadata)
