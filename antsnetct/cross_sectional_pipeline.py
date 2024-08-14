@@ -369,7 +369,7 @@ def get_brain_mask(t1w_bids, t1w_bids_preproc, work_dir, brain_mask_dataset=None
     ValueError
         If the brain mask dataset is not None and does not contain a brain mask for the specified T1w image.
     """
-
+    brain_mask_bids = None
     brain_mask_path = None
     brain_mask_metadata = None
     brain_mask_reslice = None
@@ -378,24 +378,27 @@ def get_brain_mask(t1w_bids, t1w_bids_preproc, work_dir, brain_mask_dataset=None
 
     # If a mask dataset is defined, it is an error to not find a mask
     if brain_mask_dataset is not None:
-        brain_mask = bids_helpers.find_brain_mask(brain_mask_dataset, t1w_bids)
-        if brain_mask is None:
+        brain_mask_bids = bids_helpers.find_brain_mask(brain_mask_dataset, t1w_bids)
+        if brain_mask_bids is None:
             raise ValueError('Brain mask dataset does not contain a brain mask for ' + str(t1w_bids))
         # Found a brain mask
-        logger.info("Using brain mask: " + str(brain_mask))
+        logger.info("Using brain mask: " + str(brain_mask_bids))
         found_brain_mask = True
         brain_mask_path = brain_mask.get_path()
         brain_mask_metadata = brain_mask.get_metadata()
 
     # If no mask dataset is defined, try to find a mask in the input dataset
     if not found_brain_mask:
-        brain_mask = bids_helpers.find_brain_mask(t1w_bids.get_ds_path(), t1w_bids)
-        if brain_mask is not None:
+        brain_mask_bids = bids_helpers.find_brain_mask(t1w_bids.get_ds_path(), t1w_bids)
+        if brain_mask_bids is not None:
             # Found a brain mask in input dataset
-            logger.info("Using brain mask: " + str(brain_mask))
+            logger.info("Using brain mask: " + str(brain_mask_bids))
             found_brain_mask = True
-            brain_mask_path = brain_mask.get_path()
-            brain_mask_metadata = brain_mask.get_metadata()
+            brain_mask_path = brain_mask_bids.get_path()
+            brain_mask_metadata = brain_mask_bids.get_metadata()
+
+    if found_brain_mask:
+        brain_mask_metadata['Sources'] = [t1w_bids.get_uri(), brain_mask_bids.get_uri(relative=False)]
 
     if not found_brain_mask:
         logger.info("No brain mask found, generating one with antspynet")
@@ -407,10 +410,8 @@ def get_brain_mask(t1w_bids, t1w_bids_preproc, work_dir, brain_mask_dataset=None
     if brain_mask_reslice is None:
         # Relice an existing mask into the preprocessed space
         brain_mask_reslice = ants_helpers.reslice_to_reference(t1w_bids_preproc.get_path(), brain_mask_path, work_dir)
-
-    brain_mask_reslice_rel_path = t1w_bids_preproc.get_derivative_rel_path_prefix() + '_desc-brain_mask.nii.gz'
-
-    brain_mask_metadata['Sources'] = [t1w_bids_preproc.get_uri()]
+        brain_mask_reslice_rel_path = t1w_bids_preproc.get_derivative_rel_path_prefix() + '_desc-brain_mask.nii.gz'
+        brain_mask_metadata['Sources'] = [t1w_bids.get_uri()]
 
     return bids_helpers.image_to_bids(brain_mask_reslice, t1w_bids_preproc.get_ds_path(), brain_mask_reslice_rel_path,
                                       metadata=brain_mask_metadata)
