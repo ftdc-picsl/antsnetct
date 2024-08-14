@@ -398,9 +398,8 @@ def get_brain_mask(t1w_bids, t1w_bids_preproc, work_dir, brain_mask_dataset=None
             brain_mask_metadata = brain_mask_bids.get_metadata()
 
     if found_brain_mask:
-        brain_mask_metadata['Sources'] = [t1w_bids.get_uri(), brain_mask_bids.get_uri(relative=False)]
-
-    if not found_brain_mask:
+        brain_mask_metadata['Sources'] = [t1w_bids_preproc.get_uri(), brain_mask_bids.get_uri(relative=False)]
+    else:
         logger.info("No brain mask found, generating one with antspynet")
         brain_mask_path = ants_helpers.deep_brain_extraction(t1w_bids_preproc.get_path(), work_dir, brain_mask_method)
         brain_mask_metadata = {'Type': 'Brain', 'Sources': [t1w_bids_preproc.get_uri()],
