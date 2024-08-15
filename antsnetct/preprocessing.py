@@ -32,11 +32,11 @@ def pad_image(input_image, work_dir, pad_mm=10):
 
     Parameters:
     ----------
-    input_image (str):
+    input_image : str
         Input image filename
-    work_dir (str):
+    work_dir : str
         Working directory
-    pad_mm (float):
+    pad_mm : float
         Pad size in mm, applied to all sides of the image
 
     Returns:
@@ -59,16 +59,16 @@ def conform_image_orientation(input_image, output_orientation, work_dir):
 
     Parameters:
     ----------
-    input_image (str):
+    input_image : str
         Input image filename.
-    output_orientation (str):
+    output_orientation : str
         Output orientation defined by a three-letter axis code, e.g. 'LPI'.
-    work_dir (str):
+    work_dir : str
         Working directory
 
     Returns:
     -------
-    reoriented_image (str):
+    reoriented_image : str
         Output image filename
     """
     output_file_prefix = get_temp_file(work_dir, prefix='conform_orientation')
@@ -84,18 +84,18 @@ def reset_origin_by_centroid(input_image, centroid_image, work_dir, output_data_
 
     Parameters:
     ----------
-    input_image (str):
+    input_image : str
         Input image filename
-    centroid_image (str):
+    centroid_image : str
         Image to use for the centroid computation. Can be the image itself, or a mask.
-    output_data_type (str):
+    output_data_type : str
         Output data type, e.g. 'uchar' for masks.
-    work_dir (str):
+    work_dir : str
         Working directory.
 
     Returns:
     -------
-    output_image (str):
+    output_image : str
         Output image filename, with the origin reset.
     """
     output_file_prefix = get_temp_file(work_dir, prefix='reset_origin')

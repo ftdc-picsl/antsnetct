@@ -89,7 +89,7 @@ class BIDSImage:
 
         Parameters:
         ----------
-        destination_ds (str):
+        destination_ds : str
             The root directory of the destination dataset.
 
         Returns:
@@ -134,7 +134,8 @@ class BIDSImage:
 
         Parameters
         ----------
-            metadata (dict): A dictionary of metadata.
+        metadata : dict
+            A dictionary of metadata.
         """
         self._metadata = copy.deepcopy(metadata)
         with open(self._sidecar_file, 'w') as f:
@@ -182,7 +183,12 @@ class BIDSImage:
 
         Parameters:
         ----------
-        relative (bool): If True, returns the relative URI; otherwise, returns the absolute URI.
+        relative : bool, optional
+            If True, returns the relative URI; otherwise, returns the absolute URI.
+
+        Returns:
+        --------
+        str: The BIDS URI for the image file.
         """
         if relative:
             return f"bids::{self._rel_path}"
@@ -322,9 +328,9 @@ def resolve_uri(dataset_path, file_uri):
 
     Parameters:
     ----------
-        dataset_path (str):
+        dataset_path : str
             The root directory of the BIDS dataset.
-        file_uri (str):
+        file_uri :str
             The BIDS URI, in the format "bids:DATASET:RELATIVE_PATH" or "bids::RELATIVE_PATH".
 
     Returns:
@@ -347,7 +353,7 @@ def get_image_sidecar(image_file):
 
     Parameters:
     ----------
-    image_file (str):
+    image_file : str
         The path to the image file.
 
     Returns:
@@ -369,7 +375,7 @@ def get_sidecar_image(sidecar_file):
 
     Parameters:
     ----------
-    sidecar_file (str):
+    sidecar_file : str
         The path to the sidecar JSON file.
 
     Returns:
@@ -394,15 +400,15 @@ def image_to_bids(src_image, dataset_dir, dest_rel_path, metadata=None, overwrit
 
     Parameters:
     -----------
-    src_image: str
+    src_image : str
         Path to the source image file.
-    dataset_dir: str
+    dataset_dir : str
         Path to the dataset directory.
-    dest_rel_path: str
+    dest_rel_path : str
         Relative path from the dataset to the image to be created.
-    metadata: dict
+    metadata : dict
         Metadata to be written to the sidecar file.
-    overwrite: bool
+    overwrite : bool
         If True, overwrite the destination file if it already exists. If False, raise an exception if the file already exists.
 
     Returns:
@@ -439,9 +445,9 @@ def update_output_dataset(output_dataset_dir, output_dataset_name):
 
     Parameters:
     -----------
-    output_dataset_dir: str
+    output_dataset_dir : str
         Path to the output dataset directory. If the directory does not exist, it will be created.
-    output_dataset_name: str
+    output_dataset_name : str
         Name of the output dataset, used if the dataset_description.json file does not exist.
     """
 
@@ -485,7 +491,7 @@ def _get_generated_by(existing_generated_by=None):
 
     Parameters:
     ----------
-        existing_generated_by: dict
+        existing_generated_by : dict
             The existing generated_by field, if any.
 
     Returns:
@@ -534,9 +540,9 @@ def set_sources(sidecar_path, sources):
 
     Parameters:
     -----------
-    sidecar_path: str
+    sidecar_path : str
         Path to the sidecar JSON file
-    sources: str or list of str
+    sources : str or list of str
         List of source URIs
     """
 
@@ -558,9 +564,9 @@ def find_brain_mask(mask_dataset_directory, input_image):
 
     Parameters:
     ----------
-    mask_dataset_directory: str
+    mask_dataset_directory : str
         Path to the mask dataset directory
-    input_image: BIDSImage
+    input_image : BIDSImage
         The input image that the mask is derived from.
 
     Returns:
@@ -604,9 +610,9 @@ def find_segmentation_probability_images(seg_dataset_directory, input_image):
 
     Parameters:
     -----------
-    seg_dataset_directory: str
+    seg_dataset_directory : str
         Path to the segmentation dataset directory
-    input_image: BIDSImage
+    input_image : BIDSImage
         BIDSImage object representing the input image, which is the source for the segmentations.
 
     Returns:
@@ -667,15 +673,15 @@ def find_session_images(input_dataset_dir, participant_label, session_label, mod
     Parameters:
     -----------
 
-    input_dataset_dir: str
+    input_dataset_dir : str
         Path to the input dataset directory.
-    participant_label: str
+    participant_label : str
         Participant label, eg '01'.
-    session_label: str
+    session_label : str
         Session label, eg 'MR1'. Set to None if the dataset does not have sessions.
-    modality: str
+    modality : str
         Modality, eg 'anat', 'func'.
-    bids_suffix: str
+    bids_suffix : str
         BIDS image suffix, eg "T1w".
 
     Returns:
@@ -707,13 +713,13 @@ def find_participant_images(input_dataset_dir, participant_label, modality, bids
     Parameters:
     -----------
 
-    input_dataset_dir: str
+    input_dataset_dir : str
         Path to the input dataset directory.
-    participant_label: str
+    participant_label : str
         Participant label, eg '01'.
-    modality: str
+    modality : str
         Modality, eg 'anat', 'func'.
-    bids_suffix: str
+    bids_suffix : str
         BIDS image suffix, eg "T1w".
 
     Returns:
