@@ -168,9 +168,9 @@ def deep_atropos(anatomical_image, work_dir):
     Returns:
     --------
     dict with keys:
-        segmentation: str
+        segmentation : str
             Path to segmentation image
-        posteriors: list of str
+        posteriors : list of str
             List of paths to segmentation posteriors in order: CSF, GM, WM, deep GM, brainstem, cerebellum.
     """
     anat = ants.image_read(anatomical_image)
@@ -204,44 +204,43 @@ def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=
 
     Parameters:
     -----------
-    anatomical_images: list of str
+    anatomical_images : list of str
         List of paths to coregistered anatomical images
-    brain_mask: str
+    brain_mask : str
         Path to brain mask
     priors: list of str
         List of priors in order 1-6 for CSF, GM, WM, deep GM, brainstem, cerebellum
-    work_dir: str
+    work_dir : str
         Path to working directory
-    iterations: int
+    iterations : int
         Number of iterations of the N4-Atropos loop
-    atropos_iterations: int
+    atropos_iterations : int
         Number of iterations for Atropos inside each N4-Atropos iterations
     atropos_prior_weight: float
         Prior weight for Atropos
-    atropos_mrf_weight: float
+    atropos_mrf_weight : float
         MRF weight for Atropos
-    denoise: bool
+    denoise : bool
         Denoise input images
-    use_mixture_model_proportions: bool
+    use_mixture_model_proportions : bool
         Use mixture model proportions
-    n4_prior_classes: list of int
+    n4_prior_classes : list of int
         List of prior classes
-    n4_spline_spacing: int
+    n4_spline_spacing : int
         Spline spacing for N4
-    n4_convergence: str
+    n4_convergence : str
         Convergence criteria for N4
-    n4_shrink_factor: int
+    n4_shrink_factor : int
         Shrink factor for N4
 
     Returns:
     --------
-    segmentation_n4_dict: dict
-        Dictionary containing the following keys:
-        'bias_corrected_anatomical_images': list of str
+    dict with keys:
+        'bias_corrected_anatomical_images' : list of str
             List of paths to bias corrected images for each input modality
-        'segmentation': str
+        'segmentation' : str
             Path to segmentation image
-        'posteriors': list of str
+        'posteriors' : list of str
             List of paths to segmentation posteriors in order: CSF, GM, WM, deep GM, brainstem, cerebellum
 
     """
@@ -309,9 +308,9 @@ def denoise_image(anatomical_image, work_dir):
 
     Parameters:
     -----------
-    anatomical_image: str
+    anatomical_image : str
         Path to the anatomical image to denoise.
-    work_dir: str
+    work_dir : str
         Path to working directory.
 
     Returns:
@@ -340,26 +339,26 @@ def n4_bias_correction(anatomical_image, brain_mask, segmentation_posteriors, wo
 
     Parameters:
     -----------
-    anatomical_image: str
+    anatomical_image : str
         Path to the anatomical image to correct
-    brain_mask: str
+    brain_mask : str
         Path to the brain mask
     segmentation_posteriors: (str)
         List of segmentation posteriors in order 1-6 for CSF, GM, WM, deep GM, brainstem, cerebellum. Posteriors
         2-6 are used to create a pure tissue mask for N4 bias correction.
-    work_dir: str
+    work_dir : str
         Path to working directory
-    iterations: int
+    iterations : int
         Number of iterations, this is how many times to run N4. Default is 2, to match how antsCorticalThickness.sh
         processes images.
-    normalize: bool
+    normalize : bool
         Normalize the whole image to the range 0-1000 after bias correction. Default is True, to match
         antsCorticalThickness.sh.
-    n4_convergence: str
+    n4_convergence : str
         Convergence criteria for N4
-    n4_shrink_factor: int
+    n4_shrink_factor : int
         Shrink factor for N4
-    n4_spline_spacing: int
+    n4_spline_spacing : int
         Spline spacing for N4
 
     Returns:
@@ -404,46 +403,46 @@ def atropos_segmentation(anatomical_images, brain_mask, work_dir, iterations=15,
 
     Parameters:
     -----------
-    anatomical_images: str or list of str
+    anatomical_image : str or list of str
         List coregistered anatomical image files
-    brain_mask: str
+    brain_mask : str
         Path to brain mask
-    work_dir: str
+    work_dir : str
         Path to working directory
-    iterations: int
+    iterations : int
         Number of iterations for Atropos
-    convergence_threshold: float
+    convergence_threshold : float
         Convergence threshold for Atropos
-    kmeans_classes: int
+    kmeans_classes : int
         Number of classes for K-means initialization. Default is 0, which implies prior-based initialization.
     prior_probabilities: list of str
         List of prior probability images. For an antsCorticalThickness segmentation, these must be in order 1-6 for CSF, GM,
         WM, deep GM, brainstem, cerebellum. Required if kmeans_classes is 0.
-    prior_weight: float
+    prior_weight : float
         Prior probability weight, used with prior_probabilities.
-    likelihood_model: str
+    likelihood_model : str
         Likelihood model for Atropos, with optional parameters. Default is 'Gaussian'. Recommended settings are 'Gaussian'
         or 'HistogramParzenWindows'.
-    use_mixture_model_proportions: bool
+    use_mixture_model_proportions : bool
         Use mixture model proportions in posterior calculation.
-    mrf_neighborhood: str
+    mrf_neighborhood : str
         Markov Random Field neighborhood for Atropos. Default is '1x1x1'. Larger neighborhoods are more smooth, but increase
         computation time substantially.
-    mrf_weight: float
+    mrf_weight : float
         MRF weight for Atropos.
-    adaptive_smoothing_weight: float
+    adaptive_smoothing_weight : float
         Adaptive smoothing weight for anatomical images. Default is 0.0.
-    partial_volume_classes: list of str
+    partial_volume_classes : list of str
         List of partial volume classes. Default is None. Example: ['1x2'] for partial volume between classes 1 and 2.
-    use_random_seed: bool
+    use_random_seed : bool
         Use a variable random seed for Atropos. Default is True. Set to false to use a fixed seed.
 
     Returns:
     --------
-    dict: Dictionary containing the following keys:
-        'segmentation': str
+    dict with keys:
+        'segmentation' : str
             Path to segmentation image
-        'posteriors': list of str
+        'posteriors' : list of str
             List of paths to segmentation posteriors for each class.
 
     The order of class labels and posteriors is defined by the order of the prior_probabilities list if specified, or
@@ -510,23 +509,23 @@ def cortical_thickness(segmentation, segmentation_posteriors, work_dir, kk_its=4
 
     Parameters:
     -----------
-    segmentation: str
+    segmentation : str
         Path to segmentation image.
-    segmentation_posteriors: (str)
+    segmentation_posteriors : str
         List of segmentation posteriors in order 1-6 for CSF, GM, WM, deep GM, brainstem, cerebellum
-    work_dir: str
+    work_dir : str
         Path to working directory
-    kk_its: int
+    kk_its : int
         Number of iterations for cortical thickness estimation
-    grad_update: float
+    grad_update : float
         gradient descent update step size parameter
-    grad_smooth: float
+    grad_smooth : float
         gradient field smoothing parameter
-    gm_lab: int
+    gm_lab : int
         Label for cortical gray matter in the segmentation image
-    wm_lab: int
+    wm_lab : int
         Label for white matter in the segmentation image
-    sgm_lab: int
+    sgm_lab : int
         Label for subcortical gray matter in the segmentation image
 
     Returns:
@@ -597,43 +596,44 @@ def univariate_pairwise_registration(fixed_image, moving_image, work_dir, fixed_
 
     Parameters:
     -----------
-    fixed_image: str
+    fixed_image : str
         Path to fixed image
-    moving_image: str
+    moving_image : str
         Path to moving image
-    work_dir: str
+    work_dir : str
         Path to working directory
-    fixed_mask: str
+    fixed_mask : str
         Path to fixed metric mask
-    moving_mask: str
+    moving_mask : str
         Path to moving metric mask
-    metric: str
+    metric : str
         Image metric to use for registration with parameters. Default is 'CC' for cross-correlation.
-    metric_param_str: str
+    metric_param_str : str
         Parameters for the image metric, appended to the metric argument such that we use
         "{metric_name}[{fixed},{moving},1,{metric_param_str}]". Default is '4' for cross-correlation with a radius of 4 voxels.
-    transform: str
+    transform : str
         Transformation model, e.g. 'SyN[0.2,3,0]' for symmetric normalization with gradient step length 0.2, 3 voxel smoothing
         of the update field and no smoothing of the deformation field.
-    iterations: str
+    iterations : str
         Number of iterations at each level of the registration. Number of levels must match shrink and smoothing parameters.
-    shrink_factors: str
+    shrink_factors : str
         Shrink factors at each level of the registration. Number of levels must match iterations and smoothing parameters.
-    smoothing_sigmas: str
+    smoothing_sigmas : str
         Smoothing sigmas at each level of the registration. Number of levels must match shrink and iterations parameters.
-    apply_transforms: bool
+    apply_transforms : bool
         Apply the resulting transform to the moving and fixed images
 
     Returns:
     --------
-    fwd_transform: str
-        Path to composite forward transform
-    inv_transform: str
-        Path to composite inverse transform
-    moving_image_warped: str
-        Path to warped moving image, if apply_transforms is True
-    fixed_image_warped: str
-        Path to warped fixed image, if apply_transforms is True
+    dict with keys:
+        'fwd_transform' : str
+            Path to composite forward transform
+        'inv_transform' : str
+            Path to composite inverse transform
+        'moving_image_warped' : str
+            Path to warped moving image, if apply_transforms is True
+        'fixed_image_warped' : str
+            Path to warped fixed image, if apply_transforms is True
     """
     tmp_file_prefix = get_temp_file(work_dir, prefix="reg")
 
@@ -724,20 +724,20 @@ def apply_transforms(fixed_image, moving_image, transforms, work_dir, interpolat
 
     Parameters:
     -----------
-    fixed_image: str
+    fixed_image : str
         Path to fixed image
-    moving_image: str
+    moving_image : str
         Path to moving image
-    transforms: str or list of str
+    transforms : str or list of str
         Path to transform file, a list of files, or 'Identity' for an identity transform
-    work_dir: str
+    work_dir : str
         Path to working directory
-    interpolation: str
+    interpolation : str
         Interpolation method, e.g. 'Linear', 'NearestNeighbor'
 
     Returns:
     --------
-    moving_image_warped: str
+    moving_image_warped : str
         Path to warped moving image
     """
     tmp_file_prefix = get_temp_file(work_dir, prefix="aat")
@@ -771,16 +771,16 @@ def reslice_to_reference(reference_image, source_image, work_dir):
 
     Parameters:
     -----------
-    reference_image: str
+    reference_image : str
         Path to reference image
-    source_image: str
+    source_image : str
         Path to source image
-    work_dir: str
+    work_dir : str
         Path to working directory
 
     Returns:
     --------
-    resliced_image: str
+    resliced_image : str
         Path to resliced image
     """
     resliced = apply_transforms(reference_image, source_image, 'Identity', work_dir, interpolation='NearestNeighbor')
@@ -792,18 +792,18 @@ def posteriors_to_segmentation(posteriors, work_dir, class_labels=[0, 3, 8, 2, 9
 
     Parameters:
     -----------
-    posteriors: list of str
+    posteriors : list of str
         List of paths to segmentation posteriors in order 1-6 for CSF, GM, WM, deep GM, brainstem, cerebellum
     work_dir: str
         Path to working directory
-    class_labels: list of int
+    class_labels : list of int
         List of labels corresponding to the classes in order 0-6 for background, CSF, GM, WM, deep GM, brainstem, cerebellum.
         The default labels use BIDS common imaging derivatives labels. To use antscorticalthickness numeric labels, set this to
         list(range(0,7)).
 
     Returns:
     --------
-    segmentation: str
+    segmentation : str
         Path to segmentation image
     """
 
@@ -849,14 +849,14 @@ def binarize_brain_mask(segmentation, work_dir):
 
     Parameters:
     -----------
-    segmentation: str
+    segmentation : str
         Path to labeled segmentation image where all positive labels are part of the brain mask
-    work_dir: str
+    work_dir : str
         Path to working directory
 
     Returns:
     --------
-    brain_mask: str
+    brain_mask : str
         Path to brain mask
     """
     mask = ants.image_read(segmentation)
@@ -876,13 +876,13 @@ def brain_volume_ml(mask_image):
 
     Parameters:
     -----------
-    mask_image: str
+    mask_image : str
         Path to brain mask or labeled segmentation, where brain volume is the volume of all voxels >= 1
         Path to working directory
 
     Returns:
     --------
-    brain_volume: float
+    brain_volume : float
         Brain volume in mm^3
     """
     mask = ants.image_read(mask_image)
@@ -901,19 +901,19 @@ def get_log_jacobian_determinant(reference_image, transform, work_dir, use_geom=
 
     Parameters:
     -----------
-    reference_image: str
+    reference_image : str
         Path to reference image.
-    transform: str
+    transform : str
         Path to transform file in the space of the reference image. This should be a composite h5 forward transform
         from the moving to the fixed space, containing a composite Affine transform and a warp.
-    work_dir: str
+    work_dir : str
         Path to working directory.
-    use_geom: bool
+    use_geom : bool
         If True, use the geometric calculation.
 
     Returns:
     --------
-    log_jacobian: str
+    log_jacobian : str
         Path to log of the determinant of the Jacobian
     """
     tmp_file_prefix = get_temp_file(work_dir, prefix='jacobian')
@@ -948,15 +948,15 @@ def normalize_intensity(image, segmentation, work_dir, label=8, scaled_label_mea
 
     Parameters:
     -----------
-    image: str
+    image : str
         Path to image to normalize.
-    segmentation: str
+    segmentation : str
         Path to segmentation image.
-    work_dir: str
+    work_dir : str
         Path to working directory.
-    label: int
+    label : int
         Label of tissue class to normalize.
-    scaled_label_mean: float
+    scaled_label_mean : float
         Mean intensity of the tissue class after normalization.
 
     """
@@ -984,25 +984,26 @@ def build_sst(images, work_dir, **kwargs):
 
     Parameters:
     ----------
-    images (list):
+    images : list
         List of BIDSImage objects, or a list containing one list of images for each modality. For example, a single-modality
         template may have images=['a.nii.gz', 'b.nii.gz', 'c.nii.gz'], while a multi-modality template might have
         images=[['a_t1w.nii.gz', 'b_t1w.nii.gz', 'c_t1w.nii.gz'], ['a_t2w.nii.gz', 'b_t2w.nii.gz', 'c_t2w.nii.gz']]. The
         number of modalities must match the length of the reg_metric_weights, and the images from the same subject must
         be at the same index in each modality list.
-    work_dir (str):
+    work_dir : str
         Working directory
-    **kwargs:
+    **kwargs :
         Additional keyword arguments build_template.
 
     Returns:
     -------
-    dict
-        Dictionary with keys
-
-        'template_image' - template image filename
-        'template_input_warped' - List of warped input images
-        'template_transforms' - List of transforms from input images to template
+    dict with keys:
+        'template_image' : str
+            template image filename
+        'template_input_warped' : str
+            List of warped input images
+        'template_transforms': str
+            List of transforms from input images to template
 
     """
     kwargs.setdefault('initial_templates', None)
@@ -1033,37 +1034,37 @@ def build_template(images, work_dir, initial_templates=None, reg_transform='SyN[
 
     Parameters:
     ----------
-    images (list):
+    images : list
         List of BIDSImage objects, or a list containing one list of images for each modality. For example, a single-modality
         template may have images=['a.nii.gz', 'b.nii.gz', 'c.nii.gz'], while a multi-modality template might have
         images=[['a_t1w.nii.gz', 'b_t1w.nii.gz', 'c_t1w.nii.gz'], ['a_t2w.nii.gz', 'b_t2w.nii.gz', 'c_t2w.nii.gz']]. The
         number of modalities must match the length of the reg_metric_weights, and the images from the same subject must
         be at the same index in each modality list.
-    work_dir (str):
+    work_dir :str
         Working directory
-    initial_templates (str or list):
+    initial_templates : str or list of str
         Initial template(s) to use for registration. If None, the first image for each modality is used.
-    template_iterations (int):
+    template_iterations : int
         Number of iterations for template construction.
-    reg_transform (str):
+    reg_transform : str
         Transform for registration.
-    reg_metric (str):
+    reg_metric : str
         Metric for registration. This controls the metric for the final registration. Earlier linear stages use MI. This is
         passed directly to the template script, and hence needs to contain the metric name and parameters, eg 'CC[4]'.
-    reg_metric_weights (list):
+    reg_metric_weights : list
         Weights for the registration metric. Default is None, for equal weights.
-    reg_iterations (str):
+    reg_iterations : str
         Number of iterations for registration.
-    reg_shrink_factors (str):
+    reg_shrink_factors : str
         Shrink factors for registration
-    reg_smoothing_sigmas (str):
+    reg_smoothing_sigmas : str
         Smoothing sigmas for registration
-    reg_transform (str):
+    reg_transform : str
         Transform for registration. Should be Rigid[step], Affine[step], SyN[params] or BSplineSyN[params]. If using a
         deformable transform, affine and rigid stages are prepended automatically.
-    template_norm (str):
+    template_norm : str
         Template intensity normalization. Options are 'mean', 'normalized_mean', 'median'.
-    template_sharpen (str):
+    template_sharpen : str
         Template sharpening. Options are 'none', 'laplacian', 'unsharp_mask'.
 
     Returns:
@@ -1162,42 +1163,49 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
 
     Parameters:
     -----------
-    fixed_images (list):
+    fixed_images : list
         List of fixed images, in the same physical space.
-    moving_images (list):
+    moving_images : list
         List of moving images, in the same physical space.
-    work_dir (str):
+    work_dir : str
         Path to working directory.
-    fixed_mask (str):
+    fixed_mask : str
         Path to fixed mask image.
-    moving_mask (str):
+    moving_mask : str
         Path to moving mask image.
-    metric (str):
+    metric : str
         Image metric to use for registration with parameters. Default is 'CC' for cross-correlation.
-    metric_param_str (str):
+    metric_param_str : str
         Parameters for the image metric, appended to the metric argument such that we use
         "{metric_name}[{fixed},{moving},{modality_weight}",{metric_param_str}]. Default is '4' for cross-correlation with a
         radius of 4 voxels.
-    metric_weights (list):
+    metric_weights : list
         Weights for the registration metric. Default is None, for equal weights. If not None, must be a list of the same
         length as the number of modalities.
-    transform (str):
+    transform : str
         Transformation model, e.g. 'SyN[0.2,3,0]' for symmetric normalization with gradient step length 0.2, 3 voxel smoothing
         of the update field and no smoothing of the deformation field.
-    iterations (str):
+    iterations : str
         Number of iterations at each level of the registration. Number of levels must match shrink and smoothing parameters.
-    shrink_factors (str):
+    shrink_factors : str
         Shrink factors at each level of the registration. Number of levels must match iterations and smoothing parameters.
-    smoothing_sigmas (str):
+    smoothing_sigmas : str
         Smoothing sigmas at each level of the registration. Number of levels must match shrink and iterations parameters.
-    apply_transforms (bool):
+    apply_transforms : bool
         If true, apply the resulting transforms to the images.
 
     Returns:
     --------
-    dict
-        Dictionary with keys 'forward_transform', 'inverse_transform', and if apply_transforms, 'moving_images_warped' and
-        'fixed_images_warped'.
+    dict with keys:
+        'forward_transform' : str
+            Forward composite transform
+        'inverse_transform' : str
+            Inverse composite transform
+    if apply_transforms, additional keys are:
+        'moving_images_warped' : list of str
+            List of warped moving images
+        'fixed_images_warped' : list of str
+            List of warped fixed images
     """
     num_modalities = len(fixed_images)
 
@@ -1326,12 +1334,12 @@ def combine_masks(masks, work_dir, thresh = 0.0001):
 
     Parameters:
     ----------
-    masks (list):
+    masks : list of str
         List of masks to combine. Must be in the same space.
-    work_dir (str):
+    work_dir : str
         Path to working directory
-    thresh (float):
-        Threshold for inclusion in the combined mask.
+    thresh : float
+        Threshold for inclusion in the combined mask. Voxels whose sum over all masks exceeds this value are included.
 
     Returns:
     -------

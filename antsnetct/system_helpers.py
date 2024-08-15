@@ -123,9 +123,9 @@ def copy_file(source, destination):
 
     Parameters:
     ----------
-    src (str):
+    src : str
         The source file.
-    dst (str):
+    dst : str
         The destination file.
 
     Returns:
