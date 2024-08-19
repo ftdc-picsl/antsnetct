@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "antsnetct"
-version = "0.0.10dev"
+version = "0.1.0"
 authors = [{ name = "Philip Cook", email = "cookpa@pennmedicine.upenn.edu" }]
 description = "ANTsPyNet cortical thickness"
 readme = "README.md"
