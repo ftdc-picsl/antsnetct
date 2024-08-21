@@ -183,9 +183,10 @@ def longitudinal_analysis():
     else:
         cx_preproc_t1w_bids = bids_helpers.find_participant_images(cx_dataset, args.participant, 'anat', 'desc-preproc_T1w')
         for idx in range(len(cx_preproc_t1w_bids)):
-             cx_biascorr_t1w_bids.append(bids_helpers.BIDSImage(cx_dataset, relpath.replace('desc-preproc_T1w',
-                                                                                            'desc-biascorr_T1w')))
-             cx_brain_mask_bids.append(bids_helpers.BIDSImage(cx_dataset, relpath.replace('desc-preproc_T1w',
+            relpath = cx_preproc_t1w_bids[idx].get_rel_path()
+            cx_biascorr_t1w_bids.append(bids_helpers.BIDSImage(cx_dataset, relpath.replace('desc-preproc_T1w',
+                                                                                           'desc-biascorr_T1w')))
+            cx_brain_mask_bids.append(bids_helpers.BIDSImage(cx_dataset, relpath.replace('desc-preproc_T1w',
                                                                                           'desc-brain_mask')))
         logger.info(f"Using all available participant images: {cx_preproc_t1w_bids}")
 
