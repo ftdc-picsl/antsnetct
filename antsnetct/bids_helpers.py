@@ -138,7 +138,7 @@ class BIDSImage:
             A dictionary of metadata.
         """
         self._metadata = copy.deepcopy(metadata)
-        with open(self._sidecar_file, 'w') as f:
+        with open(self._sidecar_path, 'w') as f:
             json.dump(self._metadata, f, indent=4, sort_keys=True)
 
 
@@ -154,7 +154,7 @@ class BIDSImage:
         """
         for key, value in extra_metadata.items():
             self._metadata[key] = value
-        with open(self._sidecar_file, 'w') as f:
+        with open(self._sidecar_path, 'w') as f:
             json.dump(self._metadata, f, indent=4, sort_keys=True)
 
 
