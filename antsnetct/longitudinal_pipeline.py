@@ -260,6 +260,7 @@ def longitudinal_analysis():
             sess_reg_iterations = sst_build_iterations
             sess_reg_shrink_factors = sst_build_shrink_factors
             sess_reg_smoothing_sigmas = sst_build_smoothing_sigmas
+            sess_reg_transform = sst_build_transform
 
             # SST construction
             logger.info("Preprocessing structural images for SST")
