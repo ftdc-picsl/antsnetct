@@ -222,16 +222,12 @@ def longitudinal_analysis():
 
             # for antsMultivariateTemplateConstruction2.sh
             sst_build_metric = 'CC[3]'
-            sst_build_iterations = '20x20x20x50x10'
+            sst_build_iterations = '20x30x30x30x10'
             sst_build_shrink_factors = '6x4x3x2x1'
             sst_build_smoothing_sigmas = '4x2x1x1x0vox'
 
-            # session pairwise reg to SST after SST construction
             sess_reg_metric = 'CC'
             sess_reg_metric_param_str='3'
-            sess_reg_iterations = '20x20x20x40x10'
-            sess_reg_shrink_factors = '6x4x3x2x1'
-            sess_reg_smoothing_sigmas = '4x3x2x1x0vox'
 
             if args.sst_reg_quick:
                 # for antsMultivariateTemplateConstruction2.sh
@@ -243,9 +239,6 @@ def longitudinal_analysis():
                 # session pairwise reg to SST after SST construction
                 sess_reg_metric = 'MI'
                 sess_reg_metric_param_str='32'
-                sess_reg_iterations = '20x20x20x20x0'
-                sess_reg_shrink_factors = '6x4x3x2x1'
-                sess_reg_smoothing_sigmas = '4x3x2x1x0vox'
 
             if args.sst_transform.lower() == 'rigid':
                 # CC is very slow, not worth it for linear transforms
@@ -264,7 +257,9 @@ def longitudinal_analysis():
             else:
                 raise ValueError(f"Unknown SST transform {sst_build_transform}")
 
-            sess_reg_transform = sst_build_transform
+            sess_reg_iterations = sst_build_iterations
+            sess_reg_shrink_factors = sst_build_shrink_factors
+            sess_reg_smoothing_sigmas = sst_build_smoothing_sigmas
 
             # SST construction
             logger.info("Preprocessing structural images for SST")
@@ -276,10 +271,10 @@ def longitudinal_analysis():
 
             # First do a rigid registration to produce an initial template
             sst_output_rigid = ants_helpers.build_sst(sst_preproc_input, working_dir, initial_templates=None,
-                                                      reg_transform='Rigid[0.1]', reg_iterations=sst_build_iterations,
+                                                      reg_transform='Rigid[0.1]', reg_iterations='40x60x40x0',
                                                       reg_metric='MI', reg_metric_weights=template_weights,
-                                                      reg_shrink_factors=sst_build_shrink_factors,
-                                                      reg_smoothing_sigmas=sst_build_smoothing_sigmas,
+                                                      reg_shrink_factors='6x4x2x1',
+                                                      reg_smoothing_sigmas='3x2x1x0vox',
                                                       template_iterations=2)
 
             sst_output = ants_helpers.build_sst(sst_preproc_input, working_dir, initial_templates=sst_output_rigid,
