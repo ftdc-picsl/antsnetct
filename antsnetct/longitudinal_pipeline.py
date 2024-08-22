@@ -36,16 +36,24 @@ def longitudinal_analysis():
 
     ''')
 
-    required_parser = parser.add_argument_group('required_parser arguments')
+    required_parser = parser.add_argument_group('Required arguments')
     required_parser.add_argument("--cross-sectional-dataset", help="BIDS derivatives dataset dir, containing the "
                                  "cross-sectional analysis", type=str, required=True)
     required_parser.add_argument("--output-dataset", help="Output BIDS dataset dir", type=str, required=True)
     required_parser.add_argument("--participant", help="Participant to process", type=str)
 
-    subject_parser = parser.add_argument_group('Subject arguments')
+    subject_parser = parser.add_argument_group('General optional arguments')
     subject_parser.add_argument("--participant-images", help="Text file containing a list of participant images to process "
                                  "relative to the cross-sectional dataset. If not provided, all images for the participant "
                                  "will be processed.", type=str, default=None)
+
+    optional_parser = parser.add_argument_group('optional_parser arguments')
+    optional_parser.add_argument("-h", "--help", action="help", help="show this help message and exit")
+    optional_parser.add_argument("--keep-workdir", help="Copy working directory to output, for debugging purposes. Either "
+                                 "'never', 'on_error', or 'always'.", type=str, default='on_error')
+    optional_parser.add_argument("--num-threads", help="Number of threads to use for ANTs commands. If 0, ANTs will use as "
+                                 "many threads as there are virtual CPUs, up to a maximum of 8.", type=int, default=1)
+    optional_parser.add_argument("--verbose", help="Verbose output", action='store_true')
 
     sst_parser = parser.add_argument_group('Single Subject Template arguments')
     sst_parser.add_argument("--sst-transform", help="SST transform, rigid affine or syn", type=str, default='rigid')
@@ -86,11 +94,6 @@ def longitudinal_analysis():
                                  "cohorts", type=str, default=None)
     template_parser.add_argument("--template-reg-quick", help="Do quick registration to the template", action='store_true')
 
-    optional_parser = parser.add_argument_group('optional_parser arguments')
-    optional_parser.add_argument("-h", "--help", action="help", help="show this help message and exit")
-    optional_parser.add_argument("--keep-workdir", help="Copy working directory to output, for debugging purposes. Either "
-                                 "'never', 'on_error', or 'always'.", type=str, default='on_error')
-    optional_parser.add_argument("--verbose", help="Verbose output", action='store_true')
 
     args = parser.parse_args()
 
@@ -147,6 +150,9 @@ def longitudinal_analysis():
 
     logger.info("Cross-sectional dataset path: " + cx_dataset)
     logger.info("Cross-sectional dataset name: " + cx_dataset_description['Name'])
+
+    system_helpers.set_num_threads(args.num_threads)
+    logger.info(f"Using {system_helpers.get_num_threads()} threads for ITK processes")
 
     # Create the output dataset and add this container to the GeneratedBy, if needed
     bids_helpers.update_output_dataset(output_dataset, cx_dataset_description['Name'] + '_longitudinal')

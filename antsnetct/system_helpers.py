@@ -6,7 +6,6 @@ import tempfile
 
 import tensorflow as tf
 
-logger = logging.getLogger(__name__)
 
 # Controls verbosity of subcommands
 _verbose = False
@@ -169,7 +168,8 @@ def get_temp_file(work_dir, prefix=None, suffix=None):
     The file will not be automatically deleted. It should be used to ensure unique file names
     within working directories.
 
-    Temp files are named '{prefix}_{unique_id}{suffix}'. This is done to preserve readability of temp files for debugging purposes.
+    Temp files are named '{prefix}_{unique_id}{suffix}'. This is done to preserve readability of temp files for debugging
+    purposes.
 
     You can also use this function to define a temporary file prefix, eg
 
@@ -234,7 +234,7 @@ def get_temp_dir(work_dir, prefix=None):
     return tmp_dir
 
 
-def set_threads(num_threads=0):
+def set_num_threads(num_threads=0):
     """Set the number of threads to use.
 
     The number of threads to use in ANTs commands is set by the environment variable ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS.
@@ -243,10 +243,7 @@ def set_threads(num_threads=0):
     relatively fast.
 
     The number of threads can be set explicitly, or automatically. If num_threads is 0, the number of threads is set
-    automatically. The algorithm is
-
-    1. If the environment variable ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS is set, use that value.
-    2. Set number of threads to min(system_cores, 8).
+    automatically to min(system_cores, 8).
 
     Parameters:
     ----------
@@ -259,10 +256,31 @@ def set_threads(num_threads=0):
     if num_threads > 0:
         os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = str(num_threads)
     else:
-        if 'ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS' in os.environ:
-            num_threads = int(os.environ['ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS'])
-        else:
-            num_threads = min(os.cpu_count(), 8)
-            os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = str(num_threads)
+        num_threads = min(os.cpu_count(), 8)
+        os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = str(num_threads)
 
-    logger.info(f"Using {num_threads} threads for ITK processes")
+
+def get_num_threads():
+    """Get the number of threads currently set in the environment.
+
+    To avoid using all cores and degrading system performance, this function will raise an error if the environment variable
+    ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS is not set, or is not a positive integer.
+
+    Returns:
+    -------
+    int : The value of ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS in the current environment.
+
+    Raises:
+    ------
+    KeyError : If ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS is not set in the environment.
+    RuntimeError : If ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS is not a positive integer.
+    """
+    if 'ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS' in os.environ:
+        try:
+            num_threads = int(os.environ['ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS'])
+            return num_threads
+        except:
+            raise RuntimeError('ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS must be a positive integer, not '
+                               f"'{os.environ['ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS']}'")
+    else:
+        raise KeyError("ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS is not set in the environment.")

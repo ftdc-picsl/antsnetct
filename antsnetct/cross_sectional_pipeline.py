@@ -107,6 +107,8 @@ def cross_sectional_analysis():
     optional_parser.add_argument("-h", "--help", action="help", help="show this help message and exit")
     optional_parser.add_argument("--keep-workdir", help="Copy working directory to output, for debugging purposes. Either "
                                  "'never', 'on_error', or 'always'.", type=str, default='on_error')
+    optional_parser.add_argument("--num-threads", help="Number of threads to use for ANTs commands. If 0, ANTs will use as "
+                                 "many threads as there are virtual CPUs, up to a maximum of 8.", type=int, default=1)
     optional_parser.add_argument("--verbose", help="Verbose output from subcommands", action='store_true')
 
     neck_trim_parser = parser.add_argument_group('Pre-processing arguments')
@@ -204,6 +206,9 @@ def cross_sectional_analysis():
         raise ValueError('Segmentation method is use_existing but no segmentation dataset is defined')
     if args.segmentation_method == 'deep_atropos' and args.segmentation_dataset is not None:
         raise ValueError('Segmentation method is deep_atropos but a segmentation dataset is defined.')
+
+    system_helpers.set_num_threads(args.num_threads)
+    logger.info(f"Using {system_helpers.get_num_threads()} threads for ITK processes")
 
     logger.info("Input dataset path: " + input_dataset)
     logger.info("Input dataset name: " + input_dataset_description['Name'])
