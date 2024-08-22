@@ -138,7 +138,7 @@ class BIDSImage:
             A dictionary of metadata.
         """
         self._metadata = copy.deepcopy(metadata)
-        with open(self._sidecar_file, 'w') as f:
+        with open(self._sidecar_path, 'w') as f:
             json.dump(self._metadata, f, indent=4, sort_keys=True)
 
 
@@ -154,7 +154,7 @@ class BIDSImage:
         """
         for key, value in extra_metadata.items():
             self._metadata[key] = value
-        with open(self._sidecar_file, 'w') as f:
+        with open(self._sidecar_path, 'w') as f:
             json.dump(self._metadata, f, indent=4, sort_keys=True)
 
 
@@ -682,7 +682,8 @@ def find_session_images(input_dataset_dir, participant_label, session_label, mod
     modality : str
         Modality, eg 'anat', 'func'.
     bids_suffix : str
-        BIDS image suffix, eg "T1w".
+        BIDS image suffix, eg "T1w", with additional keys as needed eg "desc-preproc_T1w". Do not include
+        the file extension. This function will search for both .nii and .nii.gz files.
 
     Returns:
     --------
@@ -720,7 +721,8 @@ def find_participant_images(input_dataset_dir, participant_label, modality, bids
     modality : str
         Modality, eg 'anat', 'func'.
     bids_suffix : str
-        BIDS image suffix, eg "T1w".
+        BIDS image suffix, eg "T1w", with additional keys as needed eg "desc-preproc_T1w". Do not include
+        the file extension. This function will search for both .nii and .nii.gz files.
 
     Returns:
     --------
@@ -736,4 +738,6 @@ def find_participant_images(input_dataset_dir, participant_label, modality, bids
 
     for sess in sessions:
         images.extend(find_session_images(input_dataset_dir, participant_label, sess[4:], modality, bids_suffix))
+
+    return images
 
