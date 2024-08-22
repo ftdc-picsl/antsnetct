@@ -3,8 +3,9 @@
 import tensorflow as tf
 
 from .log_config import configure_logging
-
-tf.config.threading.set_intra_op_parallelism_threads(1)
-tf.config.threading.set_inter_op_parallelism_threads(1)
+from .system_helpers import set_num_threads
 
 configure_logging()
+
+# Set default number of threads - this might be overidden by the user
+set_num_threads()
