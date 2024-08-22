@@ -423,9 +423,7 @@ def longitudinal_analysis():
                 # Segment the session
                 logger.info(f"Segmenting session {idx + 1}")
                 seg_n4 = cross_sectional_pipeline.segment_and_bias_correct(
-                    long_preproc_t1w_bids[idx], brain_mask_bids, t1w_priors, working_dir, denoise=True,
-                    segmentation_method='atropos', atropos_n4_iterations=args.atropos_n4_iterations,
-                    atropos_prior_weight=args.atropos_prior_weight)
+                    long_preproc_t1w_bids[idx], brain_mask_bids, t1w_priors, working_dir, denoise=True, do_atropos=True, atropos_n4_iterations=args.atropos_n4_iterations, atropos_prior_weight=args.atropos_prior_weight)
                 # Compute thickness
                 logger.info(f"Cortical thickness for session {idx + 1}")
                 thickness = cross_sectional_pipeline.cortical_thickness(seg_n4, working_dir,
