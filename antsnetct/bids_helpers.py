@@ -1,4 +1,5 @@
 import copy
+import filelock
 import json
 import os
 import re
@@ -320,7 +321,6 @@ class TemplateImage:
         return self._uri
 
 
-
 def resolve_uri(dataset_path, file_uri):
     """Resolve a BIDS URI to an absolute path.
 
@@ -415,7 +415,6 @@ def image_to_bids(src_image, dataset_dir, dest_rel_path, metadata=None, overwrit
     --------
     BIDSImage: BIDSImage object representing the new image
     """
-
     dest_file_path = os.path.join(dataset_dir, dest_rel_path)
     dest_sidecar_path = get_image_sidecar(dest_file_path)
 
@@ -435,51 +434,6 @@ def image_to_bids(src_image, dataset_dir, dest_rel_path, metadata=None, overwrit
             json.dump(metadata, f, indent=4, sort_keys=True)
 
     return BIDSImage(dataset_dir, dest_rel_path)
-
-
-def update_output_dataset(output_dataset_dir, output_dataset_name):
-    """Create or update a BIDS output dataset
-
-    This is used to make or update an output dataset. If the dataset exists, its GeneratedBy field is updated to include
-    this pipeline, if needed.
-
-    Parameters:
-    -----------
-    output_dataset_dir : str
-        Path to the output dataset directory. If the directory does not exist, it will be created.
-    output_dataset_name : str
-        Name of the output dataset, used if the dataset_description.json file does not exist.
-    """
-
-    if not os.path.isdir(output_dataset_dir):
-        os.makedirs(output_dataset_dir)
-
-    if not os.path.exists(os.path.join(output_dataset_dir, 'dataset_description.json')):
-        # Write dataset_description.json
-        output_ds_description = {'Name': output_dataset_name, 'BIDSVersion': '1.8.0',
-                                'DatasetType': 'derivative', 'GeneratedBy': _get_generated_by()
-                                }
-        # Write json to output dataset
-        with open(os.path.join(output_dataset_dir, 'dataset_description.json'), 'w') as file_out:
-            json.dump(output_ds_description, file_out, indent=4, sort_keys=True)
-    else:
-        # Get output dataset metadata
-        with open(f"{output_dataset_dir}/dataset_description.json", 'r') as file_in:
-            output_dataset_json = json.load(file_in)
-        # Check dataset name
-        if not 'Name' in output_dataset_json:
-            raise ValueError(f"Output dataset description is missing Name, check "
-                                f"{output_dataset_dir}/data_description.json")
-        # If this container doesn't already exist in the generated_by list, it will be added
-        old_gen_by = None
-        if 'GeneratedBy' in output_dataset_json:
-            old_gen_by = output_dataset_json['GeneratedBy']
-        generated_by = _get_generated_by(old_gen_by)
-        # If we updated the generated_by, write it back to the output dataset
-        if old_gen_by is None or len(generated_by) > len(old_gen_by):
-            output_dataset_json['GeneratedBy'] = generated_by
-            with open(f"{output_dataset_dir}/dataset_description.json", 'w') as file_out:
-                json.dump(output_dataset_json, file_out, indent=4, sort_keys=True)
 
 
 def _get_generated_by(existing_generated_by=None):
@@ -531,6 +485,147 @@ def _get_generated_by(existing_generated_by=None):
 
     generated_by.append(gen_dict)
     return generated_by
+
+
+def _get_dataset_links(existing_dataset_links, dataset_link_paths):
+    """Get a dictionary for the DatasetLinks field for the BIDS dataset_description.json.
+
+    This is used to record links to other datasets. If the dataset link already exists, the URI is checked to ensure it
+    matches the existing URI.
+
+    Parameters:
+    ----------
+        existing_dataset_links : dict
+            The existing DatasetLinks field, if any.
+        dataset_link_paths : str
+            The new dataset links to add.
+
+    Returns:
+    --------
+        dict :
+            A dictionary for the DatasetLinks field in the dataset_description.json
+
+    Raises:
+    -------
+    ValueError : If a dataset link already exists with a different URI.
+    """
+    if existing_dataset_links is None:
+        dataset_links = {}
+    else:
+        dataset_links = copy.deepcopy(existing_dataset_links)
+
+    for path in dataset_link_paths:
+        # Get the dataset name from the dataset_description.json
+        path_link = _get_single_dataset_link(path)
+
+        name = path_link['Name']
+        uri = path_link['URI']
+
+        if name in dataset_links:
+            if dataset_links[name] != uri:
+                raise ValueError(f"Dataset link {name} already exists with URI {existing_dataset_links[name]}, but new URI "
+                                 f"{uri} provided")
+        else:
+            dataset_links[name] = uri
+
+    return dataset_links
+
+
+def _get_single_dataset_link(dataset_path):
+    """Get a dataset link for the BIDS dataset_description.json from a path to a dataset.
+
+    Parameters:
+    -----------
+    dataset_path : str
+        Path to the dataset directory.
+
+    Returns:
+    --------
+    dict :
+        A dictionary for the dataset link, with keys 'Name' and 'URI'. The URI is a file:// URI to the dataset.
+    """
+    description_file = os.path.join(dataset_path, 'dataset_description.json')
+    if not os.path.exists(description_file):
+        raise FileNotFoundError(f"dataset_description.json not found in dataset path {dataset_path}")
+
+    with open(description_file, 'r') as f:
+        ds_description = json.load(f)
+
+    if 'Name' not in ds_description:
+        raise ValueError("Dataset name ('Name') not found in dataset_description.json")
+
+    dataset_link = { 'Name':ds_description['Name'], 'URI': f"file://{os.path.abspath(dataset_path)}" }
+
+    return dataset_link
+
+
+def update_output_dataset(output_dataset_dir, output_dataset_name, dataset_link_paths=None):
+    """Create or update a BIDS output dataset
+
+    This is used to make or update an output dataset. If the dataset exists, its metadata is updated. Specifically, the
+    GeneratedBy field is updated to include this pipeline, if needed. If dataset links are provided, they are added to the
+    description if needed.
+
+    Parameters:
+    -----------
+    output_dataset_dir : str
+        Path to the output dataset directory. If the directory does not exist, it will be created.
+    output_dataset_name : str
+        Name of the output dataset, used if the dataset_description.json file does not exist.
+    dataset_link_paths : list of str, optional
+        List of paths to other datasets, to which the output dataset is linked.
+
+    Raises:
+    -------
+    ValueError: If dataset_link_paths provides a name that already exists, but with a different URI.
+    """
+    os.makedirs(output_dataset_dir, exist_ok=True)
+
+    lock_file = os.path.join(output_dataset_dir, 'antsnetct_dataset_metadata.lock')
+
+    if os.path.exists(lock_file):
+        print(f"WARNING: lock file exists in dataset {output_dataset_dir}. Will wait for it to be released.")
+
+    with filelock.SoftFileLock(lock_file, timeout=30):
+        if not os.path.exists(os.path.join(output_dataset_dir, 'dataset_description.json')):
+            # Write dataset_description.json
+            output_ds_description = {'Name': output_dataset_name, 'BIDSVersion': '1.8.0',
+                                    'DatasetType': 'derivative', 'GeneratedBy': _get_generated_by()
+                                    }
+            if (dataset_link_paths is not None):
+                output_ds_description['DatasetLinks'] = _get_dataset_links(None, dataset_link_paths)
+            # Write json to output dataset
+            with open(os.path.join(output_dataset_dir, 'dataset_description.json'), 'w') as file_out:
+                json.dump(output_ds_description, file_out, indent=4, sort_keys=True)
+        else:
+            # Get output dataset metadata
+            with open(f"{output_dataset_dir}/dataset_description.json", 'r') as file_in:
+                output_ds_description = json.load(file_in)
+            # Check dataset name
+            if not 'Name' in output_ds_description:
+                raise ValueError(f"Output dataset description is missing Name, check "
+                                    f"{output_dataset_dir}/data_description.json")
+
+            old_gen_by = output_ds_description.get('GeneratedBy')
+
+            # If this container doesn't already exist in the generated_by list, it will be added
+            output_ds_description['GeneratedBy'] = _get_generated_by(old_gen_by)
+
+            old_ds_links = output_ds_description.get('DatasetLinks')
+
+            output_ds_description['DatasetLinks'] = _get_dataset_links(old_ds_links, dataset_link_paths)
+
+            ds_modified = False
+
+            if old_gen_by is None or len(output_ds_description['GeneratedBy']) > len(old_gen_by):
+                ds_modified = True
+            if dataset_link_paths is not None:
+                if old_ds_links is None or len(output_ds_description['DatasetLinks']) > len(old_ds_links):
+                    ds_modified = True
+
+            if ds_modified:
+                with open(f"{output_dataset_dir}/dataset_description.json", 'w') as file_out:
+                    json.dump(output_ds_description, file_out, indent=4, sort_keys=True)
 
 
 def set_sources(sidecar_path, sources):
