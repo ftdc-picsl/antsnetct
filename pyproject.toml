@@ -18,7 +18,8 @@ classifiers = [
 
 dependencies = [
     "antspynet",
-    "antspyx"
+    "antspyx",
+    "filelock"
 ]
 
 [project.urls]

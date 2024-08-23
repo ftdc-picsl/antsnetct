@@ -1,4 +1,5 @@
 import copy
+import filelock
 import json
 import os
 import re
@@ -580,46 +581,51 @@ def update_output_dataset(output_dataset_dir, output_dataset_name, dataset_link_
     """
     os.makedirs(output_dataset_dir, exist_ok=True)
 
-    if not os.path.exists(os.path.join(output_dataset_dir, 'dataset_description.json')):
-        # Write dataset_description.json
-        output_ds_description = {'Name': output_dataset_name, 'BIDSVersion': '1.8.0',
-                                'DatasetType': 'derivative', 'GeneratedBy': _get_generated_by()
-                                }
-        if (dataset_link_paths is not None):
-            output_ds_description['DatasetLinks'] = _get_dataset_links(None, dataset_link_paths)
-        # Write json to output dataset
-        with open(os.path.join(output_dataset_dir, 'dataset_description.json'), 'w') as file_out:
-            json.dump(output_ds_description, file_out, indent=4, sort_keys=True)
-    else:
-        # Get output dataset metadata
-        with open(f"{output_dataset_dir}/dataset_description.json", 'r') as file_in:
-            output_ds_description = json.load(file_in)
-        # Check dataset name
-        if not 'Name' in output_ds_description:
-            raise ValueError(f"Output dataset description is missing Name, check "
-                                f"{output_dataset_dir}/data_description.json")
+    lock_file = os.path.join(output_dataset_dir, 'antsnetct_dataset_metadata.lock')
 
+    if os.path.exists(lock_file):
+        print(f"WARNING: lock file exists in dataset {output_dataset_dir}. Will wait for it to be released.")
 
-        old_gen_by = output_ds_description.get('GeneratedBy')
-
-        # If this container doesn't already exist in the generated_by list, it will be added
-        output_ds_description['GeneratedBy'] = _get_generated_by(old_gen_by)
-
-        old_ds_links = output_ds_description.get('DatasetLinks')
-
-        output_ds_description['DatasetLinks'] = _get_dataset_links(old_ds_links, dataset_link_paths)
-
-        ds_modified = False
-
-        if old_gen_by is None or output_ds_description['GeneratedBy'] > len(old_gen_by):
-            ds_modified = True
-        if dataset_link_paths is not None:
-            if old_ds_links is None or len(output_ds_description['DatasetLinks']) > len(old_ds_links):
-                ds_modified = True
-
-        if ds_modified:
-            with open(f"{output_dataset_dir}/dataset_description.json", 'w') as file_out:
+    with filelock.SoftFileLock(lock_file, timeout=30):
+        if not os.path.exists(os.path.join(output_dataset_dir, 'dataset_description.json')):
+            # Write dataset_description.json
+            output_ds_description = {'Name': output_dataset_name, 'BIDSVersion': '1.8.0',
+                                    'DatasetType': 'derivative', 'GeneratedBy': _get_generated_by()
+                                    }
+            if (dataset_link_paths is not None):
+                output_ds_description['DatasetLinks'] = _get_dataset_links(None, dataset_link_paths)
+            # Write json to output dataset
+            with open(os.path.join(output_dataset_dir, 'dataset_description.json'), 'w') as file_out:
                 json.dump(output_ds_description, file_out, indent=4, sort_keys=True)
+        else:
+            # Get output dataset metadata
+            with open(f"{output_dataset_dir}/dataset_description.json", 'r') as file_in:
+                output_ds_description = json.load(file_in)
+            # Check dataset name
+            if not 'Name' in output_ds_description:
+                raise ValueError(f"Output dataset description is missing Name, check "
+                                    f"{output_dataset_dir}/data_description.json")
+
+            old_gen_by = output_ds_description.get('GeneratedBy')
+
+            # If this container doesn't already exist in the generated_by list, it will be added
+            output_ds_description['GeneratedBy'] = _get_generated_by(old_gen_by)
+
+            old_ds_links = output_ds_description.get('DatasetLinks')
+
+            output_ds_description['DatasetLinks'] = _get_dataset_links(old_ds_links, dataset_link_paths)
+
+            ds_modified = False
+
+            if old_gen_by is None or output_ds_description['GeneratedBy'] > len(old_gen_by):
+                ds_modified = True
+            if dataset_link_paths is not None:
+                if old_ds_links is None or len(output_ds_description['DatasetLinks']) > len(old_ds_links):
+                    ds_modified = True
+
+            if ds_modified:
+                with open(f"{output_dataset_dir}/dataset_description.json", 'w') as file_out:
+                    json.dump(output_ds_description, file_out, indent=4, sort_keys=True)
 
 
 def set_sources(sidecar_path, sources):
