@@ -155,7 +155,7 @@ def longitudinal_analysis():
     logger.info(f"Using {system_helpers.get_num_threads()} threads for ITK processes")
 
     # Create the output dataset and add this container to the GeneratedBy, if needed
-    bids_helpers.update_output_dataset(output_dataset, cx_dataset_description['Name'] + '_longitudinal')
+    bids_helpers.update_output_dataset(output_dataset, cx_dataset_description['Name'] + '_longitudinal', [cx_dataset])
 
     with open(os.path.join(output_dataset, 'dataset_description.json'), 'r') as f:
         output_dataset_description = json.load(f)

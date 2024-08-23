@@ -213,8 +213,15 @@ def cross_sectional_analysis():
     logger.info("Input dataset path: " + input_dataset)
     logger.info("Input dataset name: " + input_dataset_description['Name'])
 
-    # Create the output dataset and add this container to the GeneratedBy, if needed
-    bids_helpers.update_output_dataset(output_dataset, input_dataset_description['Name'] + '_antsnetct')
+    # Create the output dataset and add metadata as needed
+    output_dataset_link_paths = [os.path.abspath(input_dataset)]
+    if args.brain_mask_dataset is not None:
+        output_dataset_link_paths.append(os.path.abspath(args.brain_mask_dataset))
+    if args.segmentation_dataset is not None:
+        output_dataset_link_paths.append(os.path.abspath(args.segmentation_dataset))
+
+    bids_helpers.update_output_dataset(output_dataset, input_dataset_description['Name'] + '_antsnetct',
+                                       output_dataset_link_paths)
 
     with open(os.path.join(output_dataset, 'dataset_description.json'), 'r') as f:
         output_dataset_description = json.load(f)
