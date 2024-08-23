@@ -414,7 +414,6 @@ def image_to_bids(src_image, dataset_dir, dest_rel_path, metadata=None, overwrit
     --------
     BIDSImage: BIDSImage object representing the new image
     """
-
     dest_file_path = os.path.join(dataset_dir, dest_rel_path)
     dest_sidecar_path = get_image_sidecar(dest_file_path)
 
@@ -434,6 +433,57 @@ def image_to_bids(src_image, dataset_dir, dest_rel_path, metadata=None, overwrit
             json.dump(metadata, f, indent=4, sort_keys=True)
 
     return BIDSImage(dataset_dir, dest_rel_path)
+
+
+def _get_generated_by(existing_generated_by=None):
+    """Get a dictionary for the GeneratedBy field for the BIDS dataset_description.json.
+
+    This is used to record the software used to generate the dataset. The environment variables DOCKER_IMAGE_TAG is used if
+    set - this is set in the Dockerfile so should be defined if the code is being run inside a container.
+    Container type is assumed to be "docker" unless the variable SINGULARITY_CONTAINER is defined.
+
+    Parameters:
+    ----------
+        existing_generated_by : dict
+            The existing generated_by field, if any.
+
+    Returns:
+    --------
+        dict:
+            A dictionary for the GeneratedBy field in the dataset_description.json
+
+    """
+    docker_tag = os.environ.get('DOCKER_IMAGE_TAG', 'undefined')
+
+    container_type = 'docker'
+    # If in a singularity container built from docker, both DOCKER_IMAGE_TAG and SINGULARITY_CONTAINER will be defined
+    if 'SINGULARITY_CONTAINER' in os.environ:
+        container_type = 'singularity'
+
+    if docker_tag == 'undefined':
+        # Not in a container, or at least not unless someone has hacked the Dockerfile
+        container_type = 'not_containerized'
+
+    generated_by = []
+
+    antsnetct_version = metadata.version('antsnetct')
+
+    if existing_generated_by is not None:
+        generated_by = copy.deepcopy(existing_generated_by)
+        for gb in existing_generated_by:
+            if gb['Name'] == 'antsnetct' and gb['Version'] == antsnetct_version and gb['Container']['Tag'] == docker_tag:
+                # Don't overwrite existing generated_by if it's already set to this pipeline
+                return generated_by
+
+    gen_dict = {
+                'Name': 'antsnetct',
+                'Version': antsnetct_version,
+                'CodeURL': os.environ.get('GIT_REMOTE', 'unknown'),
+                'Container': {'Type': container_type, 'Tag': docker_tag}
+                }
+
+    generated_by.append(gen_dict)
+    return generated_by
 
 
 def _get_dataset_links(existing_dataset_links, dataset_link_paths):
@@ -465,11 +515,10 @@ def _get_dataset_links(existing_dataset_links, dataset_link_paths):
 
     for path in dataset_link_paths:
         # Get the dataset name from the dataset_description.json
-        path_link = get_dataset_link(path)
+        path_link = _get_single_dataset_link(path)
 
-        name = path_link.keys()[0]
-
-        uri = path_link[name]
+        name = path_link['Name']
+        uri = path_link['URI']
 
         if name in dataset_links:
             if dataset_links[name] != uri:
@@ -481,7 +530,7 @@ def _get_dataset_links(existing_dataset_links, dataset_link_paths):
     return dataset_links
 
 
-def get_dataset_link(dataset_path):
+def _get_single_dataset_link(dataset_path):
     """Get a dataset link for the BIDS dataset_description.json from a path to a dataset.
 
     Parameters:
@@ -492,8 +541,7 @@ def get_dataset_link(dataset_path):
     Returns:
     --------
     dict :
-        A dictionary for the dataset link, in the format {dataset_name : dataset_uri}. The dataset_uri is a file URI derived
-        from the dataset_path.
+        A dictionary for the dataset link, with keys 'Name' and 'URI'. The URI is a file:// URI to the dataset.
     """
     description_file = os.path.join(dataset_path, 'dataset_description.json')
     if not os.path.exists(description_file):
@@ -505,7 +553,7 @@ def get_dataset_link(dataset_path):
     if 'Name' not in ds_description:
         raise ValueError("Dataset name ('Name') not found in dataset_description.json")
 
-    dataset_link = { ds_description['Name'] : f"file://{os.path.abspath(dataset_path)}" }
+    dataset_link = { 'Name':ds_description['Name'], 'URI': f"file://{os.path.abspath(dataset_path)}" }
 
     return dataset_link
 
@@ -573,57 +621,6 @@ def update_output_dataset(output_dataset_dir, output_dataset_name, dataset_link_
         if ds_modified:
             with open(f"{output_dataset_dir}/dataset_description.json", 'w') as file_out:
                 json.dump(output_ds_description, file_out, indent=4, sort_keys=True)
-
-
-def _get_generated_by(existing_generated_by=None):
-    """Get a dictionary for the GeneratedBy field for the BIDS dataset_description.json.
-
-    This is used to record the software used to generate the dataset. The environment variables DOCKER_IMAGE_TAG is used if
-    set - this is set in the Dockerfile so should be defined if the code is being run inside a container.
-    Container type is assumed to be "docker" unless the variable SINGULARITY_CONTAINER is defined.
-
-    Parameters:
-    ----------
-        existing_generated_by : dict
-            The existing generated_by field, if any.
-
-    Returns:
-    --------
-        dict:
-            A dictionary for the GeneratedBy field in the dataset_description.json
-
-    """
-    docker_tag = os.environ.get('DOCKER_IMAGE_TAG', 'undefined')
-
-    container_type = 'docker'
-    # If in a singularity container built from docker, both DOCKER_IMAGE_TAG and SINGULARITY_CONTAINER will be defined
-    if 'SINGULARITY_CONTAINER' in os.environ:
-        container_type = 'singularity'
-
-    if docker_tag == 'undefined':
-        # Not in a container, or at least not unless someone has hacked the Dockerfile
-        container_type = 'not_containerized'
-
-    generated_by = []
-
-    antsnetct_version = metadata.version('antsnetct')
-
-    if existing_generated_by is not None:
-        generated_by = copy.deepcopy(existing_generated_by)
-        for gb in existing_generated_by:
-            if gb['Name'] == 'antsnetct' and gb['Version'] == antsnetct_version and gb['Container']['Tag'] == docker_tag:
-                # Don't overwrite existing generated_by if it's already set to this pipeline
-                return generated_by
-
-    gen_dict = {
-                'Name': 'antsnetct',
-                'Version': antsnetct_version,
-                'CodeURL': os.environ.get('GIT_REMOTE', 'unknown'),
-                'Container': {'Type': container_type, 'Tag': docker_tag}
-                }
-
-    generated_by.append(gen_dict)
-    return generated_by
 
 
 def set_sources(sidecar_path, sources):
