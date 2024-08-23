@@ -578,8 +578,7 @@ def update_output_dataset(output_dataset_dir, output_dataset_name, dataset_link_
     -------
     ValueError: If dataset_link_paths provides a name that already exists, but with a different URI.
     """
-    if not os.path.isdir(output_dataset_dir):
-        os.makedirs(output_dataset_dir)
+    os.makedirs(output_dataset_dir, exist_ok=True)
 
     if not os.path.exists(os.path.join(output_dataset_dir, 'dataset_description.json')):
         # Write dataset_description.json
