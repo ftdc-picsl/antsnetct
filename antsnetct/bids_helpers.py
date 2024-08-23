@@ -463,8 +463,7 @@ def _get_dataset_links(existing_dataset_links, dataset_link_paths):
     else:
         dataset_links = copy.deepcopy(existing_dataset_links)
 
-    for path in dataset_link_paths.items():
-
+    for path in dataset_link_paths:
         # Get the dataset name from the dataset_description.json
         path_link = get_dataset_link(path)
 
@@ -553,9 +552,10 @@ def update_output_dataset(output_dataset_dir, output_dataset_name, dataset_link_
             raise ValueError(f"Output dataset description is missing Name, check "
                                 f"{output_dataset_dir}/data_description.json")
 
-        # If this container doesn't already exist in the generated_by list, it will be added
+
         old_gen_by = output_ds_description.get('GeneratedBy')
 
+        # If this container doesn't already exist in the generated_by list, it will be added
         output_ds_description['GeneratedBy'] = _get_generated_by(old_gen_by)
 
         old_ds_links = output_ds_description.get('DatasetLinks')
@@ -564,8 +564,7 @@ def update_output_dataset(output_dataset_dir, output_dataset_name, dataset_link_
 
         ds_modified = False
 
-        if old_gen_by is None or len(generated_by) > len(old_gen_by):
-            output_ds_description['GeneratedBy'] = generated_by
+        if old_gen_by is None or output_ds_description['GeneratedBy'] > len(old_gen_by):
             ds_modified = True
         if dataset_link_paths is not None:
             if old_ds_links is None or len(output_ds_description['DatasetLinks']) > len(old_ds_links):
