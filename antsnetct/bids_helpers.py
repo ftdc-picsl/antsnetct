@@ -617,7 +617,7 @@ def update_output_dataset(output_dataset_dir, output_dataset_name, dataset_link_
 
             ds_modified = False
 
-            if old_gen_by is None or output_ds_description['GeneratedBy'] > len(old_gen_by):
+            if old_gen_by is None or len(output_ds_description['GeneratedBy']) > len(old_gen_by):
                 ds_modified = True
             if dataset_link_paths is not None:
                 if old_ds_links is None or len(output_ds_description['DatasetLinks']) > len(old_ds_links):
