@@ -870,6 +870,38 @@ def binarize_brain_mask(segmentation, work_dir):
 
     return mask_file
 
+def binary_morphology(mask, work_dir, operation='close', radius=2):
+    """Apply binary morphological operations to a mask
+
+    Parameters:
+    -----------
+    mask : str
+        Path to binary mask image
+    work_dir : str
+        Path to working directory
+    operation : str
+        Morphological operation to apply. Default is 'close'. Options are 'close', 'open', 'dilate', 'erode'.
+    radius : int
+        Radius of the structuring element in voxels. Default is 2.
+
+    Returns:
+    --------
+    mask_morph : str
+        Path to morphologically processed mask
+
+    """
+    mask_image = ants.image_read(mask)
+
+    tmp_file_prefix = get_temp_file(work_dir, prefix='morphology')
+
+    mask_morph_file = f"{tmp_file_prefix}_morph.nii.gz"
+
+    mask_morph = ants.morphology(mask_image, operation, radius, mtype='binary', value=1)
+
+    ants.image_write(mask_morph, mask_morph_file)
+
+    return mask_morph_file
+
 
 def brain_volume_ml(mask_image):
     """Compute brain volume from a brain mask

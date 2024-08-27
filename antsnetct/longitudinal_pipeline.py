@@ -541,16 +541,16 @@ def get_antsnet_sst_segmentation_priors(sst_bids, work_dir, prior_smoothing_sigm
 
     atropos_prior_images = list()
 
+    if prior_csf_gamma > 0:
+        logger.info(f"Gamma correcting CSF prior with gamma {prior_csf_gamma}")
+        atropos_prior_images[0] = ants_helpers.gamma_correction(atropos_prior_images[0], prior_csf_gamma, work_dir)
+
     if prior_smoothing_sigma > 0:
         logger.info(f"Smoothing priors with sigma {prior_smoothing_sigma}")
         atropos_prior_images = [ants_helpers.smooth_image(prior, prior_smoothing_sigma, work_dir)
                                 for prior in deep_atropos['posteriors']]
     else:
         atropos_prior_images = posteriors
-
-    if prior_csf_gamma > 0:
-        logger.info(f"Gamma correcting CSF prior with gamma {prior_csf_gamma}")
-        atropos_prior_images[0] = ants_helpers.gamma_correction(atropos_prior_images[0], prior_csf_gamma, work_dir)
 
     return atropos_prior_images
 
