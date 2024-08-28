@@ -280,7 +280,7 @@ def cross_sectional_analysis():
 
                 seg_n4 = segment_and_bias_correct(preproc_t1w_bids, brain_mask_bids, seg_priors['prior_seg_probabilities'],
                                                   working_dir, prior_metadata=seg_priors['prior_metadata'],
-                                                  do_atropos_n4=args.segmentation_method == 'atropos',
+                                                  do_atropos_n4=args.do_ants_atropos_n4,
                                                   atropos_n4_iterations=args.atropos_n4_iterations,
                                                   atropos_prior_weight=args.atropos_prior_weight)
 
