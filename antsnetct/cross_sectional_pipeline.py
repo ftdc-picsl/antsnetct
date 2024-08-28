@@ -504,7 +504,7 @@ def get_template_segmentation_priors(t1w_bids_preproc, t1w_brain_mask_bids, temp
         prior_template = bids_helpers.TemplateImage(name=template.get_name(), resolution=template.get_resolution(),
                                        cohort=template.get_cohort(), suffix='probseg', label=seg_class)
         prior_sources.append(prior_template.get_uri())
-        priors_session_space.append(ants_helpers.apply_transforms(t1w_brain, prior_template,
+        priors_session_space.append(ants_helpers.apply_transforms(t1w_brain, prior_template.get_path(),
                                                                   reg['inverse_transform'], work_dir,
                                                                   interpolation='Gaussian'))
 
