@@ -235,9 +235,23 @@ class TemplateImage:
         _resolution (str): The resolution label of the template or None
         _suffix (str): The suffix of the template
         _derivative_space_file_string (str): A string for use in derivatives created in this template space
-    """
 
-    def __init__(self, name, suffix, resolution='01', description=None, cohort=None):
+    Parameters:
+    -----------
+    name : str
+        The name of the template, without the 'tpl-' prefix.
+    suffix : str
+        BIDS suffix of the required image, eg 'T1w', 'mask'.
+    resolution : str, optional
+        Resolution label of the template, eg '01', '1'. If None, the first resolution found in the metadata is used.
+    description : str, optional
+        Description of the template.
+    cohort : str, optional
+        Cohort of the template.
+    extra_filters : dict, optional
+        Additional BIDS filters, eg atlas, label.
+    """
+    def __init__(self, name, suffix, resolution='01', description=None, cohort=None, **extra_filters):
 
         template_metadata = templateflow.api.get_metadata(name)
 
@@ -266,8 +280,8 @@ class TemplateImage:
         if not template_res_found:
             raise ValueError(f"Resolution {resolution} not found in template metadata")
 
-        template_matches = templateflow.api.get(name, resolution=resolution, desc=description, cohort=cohort, suffix=suffix,
-                                                raise_empty=True)
+        template_matches = templateflow.api.get(name, resolution=resolution, cohort=cohort, desc=description, suffix=suffix,
+                                                extension=".nii.gz", raise_empty=True, **extra_filters)
 
         if type(template_matches) is list:
             raise ValueError(f"Template could not be uniquely identified from the input. Found: {template_matches}")
@@ -289,24 +303,28 @@ class TemplateImage:
 
         self._derivative_space_string = derivative_string
 
-        _uri = f"bids:templateflow:tpl-{self._name}/" + os.path.basename(self._path)
+        self._uri = f"bids:templateflow:tpl-{self._name}/" + os.path.basename(self._path)
 
 
-    def get_path(self):
-        """Returns the absolute path to the image file."""
-        return self._path
+    def get_cohort(self):
+        """Returns the cohort of the template."""
+        return self._cohort
+
+    def get_desc(self):
+        """Returns the description of the template."""
+        return self._desc
 
     def get_name(self):
         """Returns the name of the template."""
         return self._name
 
+    def get_path(self):
+        """Returns the absolute path to the image file."""
+        return self._path
+
     def get_resolution(self):
         """Returns the resolution of the template."""
         return self._resolution
-
-    def get_desc(self):
-        """Returns the description of the template."""
-        return self._desc
 
     def get_derivative_space_string(self):
         """

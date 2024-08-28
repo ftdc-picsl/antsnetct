@@ -330,7 +330,7 @@ def denoise_image(anatomical_image, work_dir):
     return denoised
 
 
-def n4_bias_correction(anatomical_image, brain_mask, segmentation_posteriors, work_dir, iterations=2, normalize=True,
+def n4_bias_correction(anatomical_image, brain_mask, work_dir, segmentation_posteriors=None, iterations=2, normalize=True,
                        n4_convergence='[50x50x50x50,1e-7]', n4_shrink_factor=3, n4_spline_spacing=180):
     """Correct bias field in an anatomical image.
 
@@ -343,22 +343,22 @@ def n4_bias_correction(anatomical_image, brain_mask, segmentation_posteriors, wo
         Path to the anatomical image to correct
     brain_mask : str
         Path to the brain mask
-    segmentation_posteriors: (str)
-        List of segmentation posteriors in order 1-6 for CSF, GM, WM, deep GM, brainstem, cerebellum. Posteriors
-        2-6 are used to create a pure tissue mask for N4 bias correction.
     work_dir : str
         Path to working directory
-    iterations : int
+        segmentation_posteriors : list of str, optional
+        List of segmentation posteriors in order 1-6 for CSF, GM, WM, deep GM, brainstem, cerebellum. Posteriors
+        2-6 are used to create a pure tissue mask for N4 bias correction.
+    iterations : int, optional
         Number of iterations, this is how many times to run N4. Default is 2, to match how antsCorticalThickness.sh
         processes images.
-    normalize : bool
+    normalize : bool, optional
         Normalize the whole image to the range 0-1000 after bias correction. Default is True, to match
         antsCorticalThickness.sh.
-    n4_convergence : str
+    n4_convergence : str, optional
         Convergence criteria for N4
-    n4_shrink_factor : int
+    n4_shrink_factor : int, optional
         Shrink factor for N4
-    n4_spline_spacing : int
+    n4_spline_spacing : int, optional
         Spline spacing for N4
 
     Returns:
@@ -369,12 +369,14 @@ def n4_bias_correction(anatomical_image, brain_mask, segmentation_posteriors, wo
     # Make a pure tissue mask from the segmentation posteriors
     tmp_file_prefix = get_temp_file(work_dir, prefix='n4')
 
-    pure_tissue_mask = f"{tmp_file_prefix}_pure_tissue_mask.nii.gz"
+    pure_tissue_mask = None
 
-    # Everything except CSF goes into mask
-    command = ['ImageMath', '3', pure_tissue_mask, 'PureTissueN4WeightMask']
-    command.extend(segmentation_posteriors[1:])
-    run_command(command)
+    if segmentation_posteriors is not None:
+        pure_tissue_mask = f"{tmp_file_prefix}_pure_tissue_mask.nii.gz"
+        # Everything except CSF goes into mask
+        command = ['ImageMath', '3', pure_tissue_mask, 'PureTissueN4WeightMask']
+        command.extend(segmentation_posteriors[1:])
+        run_command(command)
 
     bias_corrected_anatomical = f"{tmp_file_prefix}_bias_corrected.nii.gz"
     copy_file(anatomical_image, bias_corrected_anatomical)
@@ -385,15 +387,21 @@ def n4_bias_correction(anatomical_image, brain_mask, segmentation_posteriors, wo
     # run iteratively as is done in antsCorticalThickness.sh
     for iteration in range(2):
         # bias correct
-        run_command(['N4BiasFieldCorrection', '-d', '3', '-i', bias_corrected_anatomical, '-o', bias_corrected_anatomical,
+        n4_cmd = ['N4BiasFieldCorrection', '-d', '3', '-i', bias_corrected_anatomical, '-o', bias_corrected_anatomical,
                      '-c', n4_convergence, '-s', str(n4_shrink_factor), '-b', f"[{n4_spline_spacing}]", '-x', brain_mask,
-                     '-w', pure_tissue_mask, '-v', '1'])
+                     '-v', '1']
+
+        if pure_tissue_mask is not None:
+            n4_cmd.extend(['-w', pure_tissue_mask])
+
+        run_command(n4_cmd)
         # Normalize and rescale
         if normalize:
             run_command(['ImageMath', '3', bias_corrected_anatomical, 'Normalize', bias_corrected_anatomical])
             run_command(['ImageMath', '3', bias_corrected_anatomical, 'm', bias_corrected_anatomical, '1000'])
 
     return bias_corrected_anatomical
+
 
 def atropos_segmentation(anatomical_images, brain_mask, work_dir, iterations=15, convergence_threshold=0.00001,
                          kmeans_classes=0, prior_probabilities=None, prior_weight=0.25, likelihood_model='Gaussian',
@@ -869,6 +877,75 @@ def binarize_brain_mask(segmentation, work_dir):
     ants.image_write(mask, mask_file)
 
     return mask_file
+
+
+def threshold_image(image, work_dir, lower=None, upper=None, inside_value=1, outside_value=0):
+    """Threshold an image.
+
+    Parameters:
+    -----------
+    image : str
+        Path to image to threshold
+    work_dir : str
+        Path to working directory
+    lower : float, optional
+        Lower threshold value. If none, default to the minimum value in the image minus an epsilon.
+    upper : float, optional
+        Upper threshold value. If none, default to the maximum value in the image plus an epsilon.
+    inside_value : float
+        Value to set for voxels within the threshold. Default is 1.
+    outside_value : float, optional
+        Value to set for voxels outside the threshold. Default is 0.
+
+    Returns:
+    --------
+    thresholded_image : str
+        Path to thresholded image
+
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='threshold')
+
+    mask_file = f"{tmp_file_prefix}_thresholded.nii.gz"
+
+    mask = ants.threshold_image(image, lower, upper, inside_value, outside_value)
+
+    ants.image_write(mask, mask_file)
+
+    return mask_file
+
+
+
+def binary_morphology(mask, work_dir, operation='close', radius=2):
+    """Apply binary morphological operations to a mask
+
+    Parameters:
+    -----------
+    mask : str
+        Path to binary mask image
+    work_dir : str
+        Path to working directory
+    operation : str
+        Morphological operation to apply. Default is 'close'. Options are 'close', 'open', 'dilate', 'erode'.
+    radius : int
+        Radius of the structuring element in voxels. Default is 2.
+
+    Returns:
+    --------
+    mask_morph : str
+        Path to morphologically processed mask
+
+    """
+    mask_image = ants.image_read(mask)
+
+    tmp_file_prefix = get_temp_file(work_dir, prefix='morphology')
+
+    mask_morph_file = f"{tmp_file_prefix}_morph.nii.gz"
+
+    mask_morph = ants.morphology(mask_image, operation, radius, mtype='binary', value=1)
+
+    ants.image_write(mask_morph, mask_morph_file)
+
+    return mask_morph_file
 
 
 def brain_volume_ml(mask_image):
