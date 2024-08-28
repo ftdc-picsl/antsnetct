@@ -582,10 +582,12 @@ def segment_and_bias_correct(t1w_bids_preproc, brain_mask_bids, segmentation_pri
 
         # Denoise and then bias correct the T1w image
         if denoise:
+            logger.info("Denoising T1w image")
             denoised_t1w_image = ants_helpers.denoise_image(t1w_bids_preproc.get_path(), work_dir)
         else:
             denoised_t1w_image = t1w_bids_preproc.get_path()
 
+        logger.info("Bias correcting T1w image")
         seg_output['bias_corrected_anatomical_images'] = [
             ants_helpers.n4_bias_correction(denoised_t1w_image, brain_mask_bids.get_path(), posteriors_masked,
                                             work_dir, n4_spline_spacing=n4_spline_spacing, n4_convergence=n4_convergence)]
