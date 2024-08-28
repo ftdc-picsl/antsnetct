@@ -501,8 +501,21 @@ def get_template_segmentation_priors(t1w_bids_preproc, t1w_brain_mask_bids, temp
     prior_metadata = { 'PriorGenerationMethod' : 'atlas' }
 
     for seg_class in seg_class_labels:
-        prior_template = bids_helpers.TemplateImage(name=template.get_name(), resolution=template.get_resolution(),
-                                       cohort=template.get_cohort(), suffix='probseg', label=seg_class)
+        try:
+            prior_template = bids_helpers.TemplateImage(name=template.get_name(), resolution=template.get_resolution(),
+                                                        cohort=template.get_cohort(), suffix='probseg', label=seg_class)
+        except Exception:
+            # templateflow doesn't throw anything more specific if it doesn't find the image
+            # templateflow does not use BIDS common derived labels, so we have to catch this
+            if (seg_class == 'SGM'):
+                logger.warning(f"Template {template.get_name()} does not have a segmentation for SGM, trying SCGM")
+                prior_template = bids_helpers.TemplateImage(name=template.get_name(), resolution=template.get_resolution(),
+                                                            cohort=template.get_cohort(), suffix='probseg', label='SCGM')
+            elif (seg_class == 'CGM'):
+                logger.warning(f"Template {template.get_name()} does not have a segmentation for CGM, trying GM")
+                prior_template = bids_helpers.TemplateImage(name=template.get_name(), resolution=template.get_resolution(),
+                                                            cohort=template.get_cohort(), suffix='probseg', label='GM')
+
         prior_sources.append(prior_template.get_uri())
         priors_session_space.append(ants_helpers.apply_transforms(t1w_brain, prior_template.get_path(),
                                                                   reg['inverse_transform'], work_dir,
