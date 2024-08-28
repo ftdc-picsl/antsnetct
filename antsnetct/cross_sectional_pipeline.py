@@ -475,13 +475,13 @@ def get_template_segmentation_priors(t1w_bids_preproc, t1w_brain_mask_bids, temp
     """
     logger.info("Generating segmentation priors from template")
 
-    t1w_brain = ants_helpers.apply_mask(t1w_bids_preproc.get_path(), t1w_brain_mask_bids, work_dir)
+    t1w_brain = ants_helpers.apply_mask(t1w_bids_preproc.get_path(), t1w_brain_mask_bids.get_path(), work_dir)
 
-    t1w_brain_n4 = ants_helpers.n4_bias_correction(t1w_brain, t1w_brain_mask_bids, work_dir)
+    t1w_brain_n4 = ants_helpers.n4_bias_correction(t1w_brain, t1w_brain_mask_bids.get_path(), work_dir)
 
     logger.info("Registering T1w brain to template")
 
-    reg = template_brain_registration(template, template_brain_mask, t1w_brain_n4, False, work_dir)
+    reg = template_brain_registration(template.get_path(), template_brain_mask.get_path(), t1w_brain_n4, False, work_dir)
 
     # Warp the priors from the template to the session space
     seg_class_labels = ['CSF', 'CGM', 'WM', 'SGM', 'BS', 'CBM']
