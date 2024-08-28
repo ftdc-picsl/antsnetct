@@ -303,7 +303,7 @@ class TemplateImage:
 
         self._derivative_space_string = derivative_string
 
-        _uri = f"bids:templateflow:tpl-{self._name}/" + os.path.basename(self._path)
+        self._uri = f"bids:templateflow:tpl-{self._name}/" + os.path.basename(self._path)
 
 
     def get_cohort(self):
@@ -325,8 +325,6 @@ class TemplateImage:
     def get_resolution(self):
         """Returns the resolution of the template."""
         return self._resolution
-
-
 
     def get_derivative_space_string(self):
         """

@@ -271,7 +271,7 @@ def cross_sectional_analysis():
                 # Get segmentation priors. If a segmentation dataset is defined, it is an error to not find a segmentation.
                 # If no pre-existing segmentation is found, priors are generated with anyspynet.
                 # If the user asked for deep_atropos segmentation, then there can be no existing segmentation, and deep_atropos
-                # is called here to generate the segmentation priors.
+                # is called to generate the segmentation priors.
                 if args.segmentation_template_name is not None:
                     # Old way, this is slow
                     seg_template = bids_helpers.TemplateImage(args.segmentation_template_name, suffix='T1w', description=None,
@@ -281,7 +281,8 @@ def cross_sectional_analysis():
                                                                          resolution=args.segmentation_template_res)
 
                     seg_priors = get_template_segmentation_priors(preproc_t1w_bids, brain_mask_bids, seg_template,
-                                                                  seg_template_brain_mask, working_dir)
+                                                                  seg_template_brain_mask, working_dir,
+                                                                  quick_reg=args.template_reg_quick)
                 else:
                     # Uses the segmentation dataset to find segmentation priors, or generates them with deep_atropos
                     seg_priors = get_segmentation_priors(t1w_bids, preproc_t1w_bids, working_dir, args.segmentation_dataset,
@@ -444,7 +445,8 @@ def get_brain_mask(t1w_bids, t1w_bids_preproc, work_dir, brain_mask_dataset=None
                                       metadata=brain_mask_metadata)
 
 
-def get_template_segmentation_priors(t1w_bids_preproc, t1w_brain_mask_bids, template, template_brain_mask, work_dir):
+def get_template_segmentation_priors(t1w_bids_preproc, t1w_brain_mask_bids, template, template_brain_mask, work_dir,
+                                     quick_reg=False):
     """Get segmentation priors for a T1w image using the template, as in the old antsCorticalThickness.sh pipeline.
 
     This function registers the brain-extracted image to a group template, and then warps the priors from the template to the
@@ -463,6 +465,8 @@ def get_template_segmentation_priors(t1w_bids_preproc, t1w_brain_mask_bids, temp
         Brain mask for the template.
     work_dir : str
         Path to the working directory.
+    quick_reg : bool, optional
+        If true, use a quick registration to the template. Default is False.
 
     Returns:
     --------
@@ -485,7 +489,7 @@ def get_template_segmentation_priors(t1w_bids_preproc, t1w_brain_mask_bids, temp
 
     reg_mask = ants_helpers.binary_morphology(template_brain_mask.get_path(), work_dir, operation='dilate', radius=12)
 
-    reg = _pairwise_brain_registration(template_brain, t1w_brain_n4, False, work_dir, fixed_mask=reg_mask)
+    reg = _pairwise_brain_registration(template_brain, t1w_brain_n4, quick_reg, work_dir, fixed_mask=reg_mask)
 
     # Warp the priors from the template to the session space
     seg_class_labels = ['CSF', 'CGM', 'WM', 'SGM', 'BS', 'CBM']
