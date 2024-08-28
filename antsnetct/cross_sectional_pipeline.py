@@ -663,8 +663,9 @@ def segment_and_bias_correct(t1w_bids_preproc, brain_mask_bids, segmentation_pri
             denoised_t1w_image = t1w_bids_preproc.get_path()
 
         seg_output['bias_corrected_anatomical_images'] = [
-            ants_helpers.n4_bias_correction(denoised_t1w_image, brain_mask_bids.get_path(), posteriors_masked,
-                                            work_dir, n4_spline_spacing=n4_spline_spacing, n4_convergence=n4_convergence)]
+            ants_helpers.n4_bias_correction(denoised_t1w_image, brain_mask_bids.get_path(), work_dir,
+                                            segmentation_posteriors=posteriors_masked, n4_spline_spacing=n4_spline_spacing,
+                                            n4_convergence=n4_convergence)]
 
     # Copy the segmentation outputs to the output dataset
     seg_output_bids = {}
