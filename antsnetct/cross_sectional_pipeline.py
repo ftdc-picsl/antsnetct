@@ -138,9 +138,12 @@ def cross_sectional_analysis():
                                                     "optionally be used as priors for antsAtroposN4.sh.")
     segmentation_parser.add_argument("--segmentation-dataset", help="Dataset containing individual segmentations.", type=str,
                                      default=None)
-    segmentation_parser.add_argument('--segmentation-template', help="Template to use for warping segmentation priors to the "
-                                     "session space. This is a legacy option to provide priors similar to those used in "
+    segmentation_parser.add_argument('--segmentation-template-name', help="Template to use for warping segmentation priors to "
+                                     "the session space. This is a legacy option to provide priors similar to those used in "
                                      "antsCorticalThickness.sh.", type=str, default=None)
+    segmentation_parser.add_argument('--segmentation-template-res', help="Resolution of the segmentation template, eg '01', "
+                                     "'02', etc. Note this is a templateflow index and not a physical spacing. If the selected "
+                                     "template does not define multiple resolutions, this is ignored.", type=str, default='01')
     segmentation_parser.add_argument("--do-ants-atropos-n4", help="Run antsAtroposN4.sh. If this is specified, the "
                                      "segmentation defined by the segmentation dataset, atlas, or deep_atropos is used as a "
                                      "prior.", action='store_true')
@@ -203,8 +206,8 @@ def cross_sectional_analysis():
         raise ValueError('Session must be defined')
 
     # Check segmentation options make sense
-    if args.segmentation_template != None and args.segmentation_dataset != None:
-        raise ValueError('Only one of segmentation-dataset and segmentation-template can be defined')
+    if args.segmentation_template_name != None and args.segmentation_dataset != None:
+        raise ValueError('Only one of segmentation-dataset and segmentation-template-name can be defined')
 
     system_helpers.set_num_threads(args.num_threads)
     logger.info(f"Using {system_helpers.get_num_threads()} threads for ITK processes")
@@ -271,8 +274,14 @@ def cross_sectional_analysis():
                 # is called here to generate the segmentation priors.
                 if args.segmentation_template is not None:
                     # Old way, this is slow
-                    seg_priors = get_template_segmentation_priors(preproc_t1w_bids, brain_mask_bids, template,
-                                                                  template_brain_mask, working_dir)
+                    seg_template = bids_helpers.TemplateImage(args.segmentation_template_name, suffix='T1w', description=None,
+                                              resolution=args.segmentation_template_res)
+                    seg_template_brain_mask = bids_helpers.TemplateImage(args.segmentation_template_name, suffix='mask',
+                                                                         description='brain',
+                                                                         resolution=args.segmentation_template_res)
+
+                    seg_priors = get_template_segmentation_priors(preproc_t1w_bids, brain_mask_bids, seg_template,
+                                                                  seg_template_brain_mask, working_dir)
                 else:
                     # Uses the segmentation dataset to find segmentation priors, or generates them with deep_atropos
                     seg_priors = get_segmentation_priors(t1w_bids, preproc_t1w_bids, working_dir, args.segmentation_dataset,
