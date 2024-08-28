@@ -878,6 +878,43 @@ def binarize_brain_mask(segmentation, work_dir):
 
     return mask_file
 
+
+def threshold_image(image, work_dir, lower=None, upper=None, inside_value=1, outside_value=0):
+    """Threshold an image.
+
+    Parameters:
+    -----------
+    image : str
+        Path to image to threshold
+    work_dir : str
+        Path to working directory
+    lower : float, optional
+        Lower threshold value. If none, default to the minimum value in the image minus an epsilon.
+    upper : float, optional
+        Upper threshold value. If none, default to the maximum value in the image plus an epsilon.
+    inside_value : float
+        Value to set for voxels within the threshold. Default is 1.
+    outside_value : float, optional
+        Value to set for voxels outside the threshold. Default is 0.
+
+    Returns:
+    --------
+    thresholded_image : str
+        Path to thresholded image
+
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='threshold')
+
+    mask_file = f"{tmp_file_prefix}_thresholded.nii.gz"
+
+    mask = ants.threshold_image(image, lower, upper, inside_value, outside_value)
+
+    ants.image_write(mask, mask_file)
+
+    return mask_file
+
+
+
 def binary_morphology(mask, work_dir, operation='close', radius=2):
     """Apply binary morphological operations to a mask
 

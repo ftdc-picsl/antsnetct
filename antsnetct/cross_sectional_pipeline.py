@@ -475,13 +475,17 @@ def get_template_segmentation_priors(t1w_bids_preproc, t1w_brain_mask_bids, temp
     """
     logger.info("Generating segmentation priors from template")
 
+    template_brain = ants_helpers.apply_mask(template.get_path(), template_brain_mask.get_path(), work_dir)
+
     t1w_brain = ants_helpers.apply_mask(t1w_bids_preproc.get_path(), t1w_brain_mask_bids.get_path(), work_dir)
 
     t1w_brain_n4 = ants_helpers.n4_bias_correction(t1w_brain, t1w_brain_mask_bids.get_path(), work_dir)
 
     logger.info("Registering T1w brain to template")
 
-    reg = template_brain_registration(template.get_path(), template_brain_mask.get_path(), t1w_brain_n4, False, work_dir)
+    reg_mask = ants_helpers.binary_morphology(template_brain_mask.get_path(), work_dir, operation='dilate', radius=12)
+
+    reg = _pairwise_brain_registration(template_brain, t1w_brain_n4, False, work_dir, fixed_mask=reg_mask)
 
     # Warp the priors from the template to the session space
     seg_class_labels = ['CSF', 'CGM', 'WM', 'SGM', 'BS', 'CBM']
@@ -769,10 +773,10 @@ def template_brain_registration(template, template_brain_mask, t1w_brain_image, 
         Moving T1w brain image to register to the template.
     quick_reg : bool
         Do quick registration to the template.
-    use_reg_mask : bool, optional
-        Use dilated brain mask in the template space to speed up registration.
     work_dir : str
         Path to the working directory.
+    use_reg_mask : bool, optional
+        Use dilated brain mask in the template space to speed up registration.
 
     Output is to the same dataset as the t1w_brain_image.
 
@@ -793,19 +797,11 @@ def template_brain_registration(template, template_brain_mask, t1w_brain_image, 
 
     if quick_reg:
         logger.info("Quick registration to template " + template.get_name())
-        template_reg = ants_helpers.univariate_pairwise_registration(fixed_image, t1w_brain_image.get_path(), work_dir,
-                                                                     metric='Mattes', metric_param_str='32',
-                                                                     fixed_mask=fixed_mask, transform='SyN[0.25,3,0]',
-                                                                     iterations='40x40x70x30x5', shrink_factors='6x5x4x2x1',
-                                                                     smoothing_sigmas='4x3x2x1x0vox', apply_transforms=False)
     else:
         logger.info("Registration to template " + template.get_name())
-        template_reg = ants_helpers.univariate_pairwise_registration(fixed_image, t1w_brain_image.get_path(), work_dir,
-                                                                     metric='CC', metric_param_str='4', fixed_mask=fixed_mask,
-                                                                     transform='SyN[0.2,3,0]', iterations='30x30x70x70x20',
-                                                                     shrink_factors='8x6x4x2x1',
-                                                                     smoothing_sigmas='4x3x2x1x0vox',
-                                                                     apply_transforms=False)
+
+    template_reg = _pairwise_brain_registration(fixed_image, t1w_brain_image.get_path(), quick_reg, work_dir,
+                                                fixed_mask=fixed_mask)
 
     template_reg_bids = {}
 
@@ -826,6 +822,47 @@ def template_brain_registration(template, template_brain_mask, t1w_brain_image, 
 
     return template_reg_bids
 
+
+def _pairwise_brain_registration(fixed, moving, quick_reg, work_dir, fixed_mask=None, moving_mask=None):
+    """Register two brain images. Similar to template_brain_registration, but does not produce BIDS information
+
+    Parameters:
+    -----------
+    fixed : str
+        Path to the fixed image.
+    moving : str
+        Path to the moving image.
+    quick_reg : bool
+        Do quick registration.
+    work_dir : str
+        Path to the working directory.
+    fixed_mask : str, optional
+        Path to the fixed registration mask.
+    moving_mask : str, optional
+        Path to the moving registration mask.
+
+    Returns:
+    --------
+    dict
+        A dictionary with keys:
+            'forward_transform' - path to the forward transform in the output dataset
+            'inverse_transform' - path to the inverse transform in the output dataset
+    """
+    if quick_reg:
+        template_reg = ants_helpers.univariate_pairwise_registration(fixed, moving, work_dir,
+                                                                     metric='Mattes', metric_param_str='32',
+                                                                     fixed_mask=fixed_mask, moving_mask=moving_mask,
+                                                                     transform='SyN[0.25,3,0]', iterations='40x40x70x30x5',
+                                                                     shrink_factors='6x5x4x2x1',
+                                                                     smoothing_sigmas='4x3x2x1x0vox', apply_transforms=False)
+    else:
+        template_reg = ants_helpers.univariate_pairwise_registration(fixed, moving, work_dir,
+                                                                     metric='CC', metric_param_str='4', fixed_mask=fixed_mask,
+                                                                     moving_mask=moving_mask, transform='SyN[0.2,3,0]',
+                                                                     iterations='30x30x70x70x20', shrink_factors='8x6x4x2x1',
+                                                                     smoothing_sigmas='4x3x2x1x0vox', apply_transforms=False)
+
+    return template_reg
 
 def template_space_derivatives(template, template_reg, seg_n4, thickness, work_dir):
     """Make template space derivatives: thickness, jacobian, GM probability
