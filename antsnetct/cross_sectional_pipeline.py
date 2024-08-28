@@ -272,7 +272,7 @@ def cross_sectional_analysis():
                 # If no pre-existing segmentation is found, priors are generated with anyspynet.
                 # If the user asked for deep_atropos segmentation, then there can be no existing segmentation, and deep_atropos
                 # is called here to generate the segmentation priors.
-                if args.segmentation_template is not None:
+                if args.segmentation_template_name is not None:
                     # Old way, this is slow
                     seg_template = bids_helpers.TemplateImage(args.segmentation_template_name, suffix='T1w', description=None,
                                               resolution=args.segmentation_template_res)
