@@ -36,8 +36,8 @@ def longitudinal_analysis():
     ''')
 
     required_parser = parser.add_argument_group('Required arguments')
-    required_parser.add_argument("--cross-sectional-dataset", help="BIDS derivatives dataset dir, containing the "
-                                 "cross-sectional analysis", type=str, required=True)
+    required_parser.add_argument("--cross-sectional-dataset", "--input-dataset", help="BIDS derivatives dataset dir, "
+                                 "containing the cross-sectional analysis", type=str, required=True)
     required_parser.add_argument("--output-dataset", help="Output BIDS dataset dir", type=str, required=True)
     required_parser.add_argument("--participant", help="Participant to process", type=str)
 
