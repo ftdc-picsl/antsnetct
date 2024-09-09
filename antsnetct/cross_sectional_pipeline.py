@@ -209,6 +209,10 @@ def cross_sectional_analysis():
     if args.segmentation_template_name != None and args.segmentation_dataset != None:
         raise ValueError('Only one of segmentation-dataset and segmentation-template-name can be defined')
 
+    # Using a segmentation template implies we want to do antsAtroposN4
+    if args.segmentation_template_name != None:
+        args.do_ants_atropos_n4 = True
+
     system_helpers.set_num_threads(args.num_threads)
     logger.info(f"Using {system_helpers.get_num_threads()} threads for ITK processes")
 
