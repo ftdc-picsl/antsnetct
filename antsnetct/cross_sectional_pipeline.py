@@ -125,7 +125,6 @@ def cross_sectional_analysis():
     required_parser.add_argument("--input-dataset", help="Input BIDS dataset dir, containing the source images", type=str,
                           required=True)
     required_parser.add_argument("--participant", help="Participant to process", type=str, required=True)
-    required_parser.add_argument("--session", help="Session to process", type=str, required=True)
     required_parser.add_argument("--output-dataset", help="Output BIDS dataset dir", type=str, required=True)
 
     optional_parser = parser.add_argument_group("General optional arguments")
@@ -135,6 +134,8 @@ def cross_sectional_analysis():
                                  "'never', 'on_error', or 'always'.", type=str, default='on_error')
     optional_parser.add_argument("--num-threads", help="Number of threads to use for ANTs commands. If 0, ANTs will use as "
                                  "many threads as there are virtual CPUs, up to a maximum of 8.", type=int, default=1)
+    optional_parser.add_argument("--session", help="Session to process. Using this overrides any session filter in the BIDS "
+                                 "filter file.", type=str, default=None)
     optional_parser.add_argument("--skip-bids-validation", help="Skip BIDS validation", action='store_true')
     optional_parser.add_argument("--verbose", help="Verbose output from subcommands", action='store_true')
 
