@@ -281,6 +281,9 @@ def cross_sectional_analysis():
         return
 
     for t1w_bids in input_t1w_bids:
+        logger.info("Found T1w image: " + t1w_bids.get_uri(relative=False))
+
+    for t1w_bids in input_t1w_bids:
         with tempfile.TemporaryDirectory(
                 suffix=f"antsnetct_{system_helpers.get_nifti_file_prefix(t1w_bids.get_path())}.tmpdir") as working_dir:
             try:
