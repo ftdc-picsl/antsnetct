@@ -897,7 +897,7 @@ def find_participant_images(input_dataset_dir, participant_label, work_dir, vali
     layout = bids.BIDSLayout(tmp_dataset_dir, indexer=indexer)
 
     # bids_matches are bids.BIDSFile objects
-    bids_matches = layout.get(layout, subject=participant_label, extension=['.nii', '.nii.gz'], **filters)
+    bids_matches = layout.get(subject=participant_label, extension=['.nii', '.nii.gz'], **filters)
 
     images = list()
 
