@@ -29,9 +29,16 @@ def cross_sectional_analysis():
     parser = argparse.ArgumentParser(formatter_class=RawDefaultsHelpFormatter, add_help = False,
                                      description='''Cortical thickness analysis with ANTsPyNet.
 
-    Input is by participant and session.
+    Input is by participant and session,
 
         '--participant 01 --session MR1'
+
+    or just by participant,
+
+        '--participant 01'
+
+    which will process all sessions in sequence. A BIDS filter can be used to select a subset of T1w images to process. Session
+    labels on the command line override any session keys in the filter file.
 
     Output is to a BIDS derivative dataset.
 
@@ -44,6 +51,24 @@ def cross_sectional_analysis():
 
     If a brain mask dataset or segmentation dataset are specified at run time, there must be masks or segmentations for the
     input data, or an error will be raised. This is to prevent inconsistent processing.
+
+    --- BIDS options ---
+
+    By default, the pybids BIDS validator is run on the input dataset. This can be disabled with '--skip-bids-validation'. BIDS
+    validation looks for "raw BIDS" data only, and must be skipped if your input dataset is a derivative dataset.
+
+    The BIDS validator will simply ignore data that does not conform to the BIDS standard. To get useful diagnostic information
+    on validation failures, run a standalone BIDS validator on the input dataset.
+
+    Users can select a subset of T1w images to process with a BIDS filter file. Following the *prep pipelines, the filters
+    should contain a dict "t1w" with keys and values to filter on. The default filter for t1w images is
+
+        "t1w": {
+            "datatype": "anat",
+            "suffix": "T1w"
+        }
+
+    User-defined filters override this, so they should include the default filter keys.
 
 
     --- Preprocessing ---
@@ -105,10 +130,12 @@ def cross_sectional_analysis():
 
     optional_parser = parser.add_argument_group("General optional arguments")
     optional_parser.add_argument("-h", "--help", action="help", help="show this help message and exit")
+    optional_parser.add_argument("--bids-filter", help="BIDS filter file", type=str, default=None)
     optional_parser.add_argument("--keep-workdir", help="Copy working directory to output, for debugging purposes. Either "
                                  "'never', 'on_error', or 'always'.", type=str, default='on_error')
     optional_parser.add_argument("--num-threads", help="Number of threads to use for ANTs commands. If 0, ANTs will use as "
                                  "many threads as there are virtual CPUs, up to a maximum of 8.", type=int, default=1)
+    optional_parser.add_argument("--skip-bids-validation", help="Skip BIDS validation", action='store_true')
     optional_parser.add_argument("--verbose", help="Verbose output from subcommands", action='store_true')
 
     neck_trim_parser = parser.add_argument_group("Pre-processing arguments")
@@ -202,8 +229,8 @@ def cross_sectional_analysis():
 
     if args.participant is None:
         raise ValueError('Participant must be defined')
-    if args.session is None:
-        raise ValueError('Session must be defined')
+
+    validate_bids = not args.skip_bids_validation
 
     # Check segmentation options make sense
     if args.segmentation_template_name != None and args.segmentation_dataset != None:
@@ -235,15 +262,25 @@ def cross_sectional_analysis():
     logger.info("Output dataset path: " + output_dataset)
     logger.info("Output dataset name: " + output_dataset_description['Name'])
 
-    # There might be multiple T1ws, if so we process them all
-    input_t1w_bids = bids_helpers.find_session_images(input_dataset, args.participant, args.session, 'anat', 'T1w')
+    # get all the T1ws, optionally with a filter to select a subset
+    bids_t1w_filter = bids_helpers.get_modality_filter_query('t1w', args.bids_filter)
+
+    if args.session is not None:
+        # Add session to the filter
+        bids_t1w_filter['session'] = args.session
+
+    logger.info("Searching for T1w images with filter: " + str(bids_t1w_filter))
+
+    bids_wd = tempfile.TemporaryDirectory(suffix=f"antsnetct_bids_{args.participant}.tmpdir")
+    input_t1w_bids = bids_helpers.find_participant_images(input_dataset, args.participant, bids_wd, validate=validate_bids,
+                                                          **bids_t1w_filter)
+    bids_wd = None
 
     if input_t1w_bids is None or len(input_t1w_bids) == 0:
-        logger.error(f"No T1w images found for participant {args.participant}, session {args.session}")
+        logger.error(f"No T1w images found for participant {args.participant}")
         return
 
     for t1w_bids in input_t1w_bids:
-
         with tempfile.TemporaryDirectory(
                 suffix=f"antsnetct_{system_helpers.get_nifti_file_prefix(t1w_bids.get_path())}.tmpdir") as working_dir:
             try:

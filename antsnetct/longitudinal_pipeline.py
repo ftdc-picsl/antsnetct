@@ -41,18 +41,19 @@ def longitudinal_analysis():
     required_parser.add_argument("--output-dataset", help="Output BIDS dataset dir", type=str, required=True)
     required_parser.add_argument("--participant", help="Participant to process", type=str)
 
-    subject_parser = parser.add_argument_group('General optional arguments')
-    subject_parser.add_argument("--participant-images", help="Text file containing a list of participant images to process "
-                                 "relative to the cross-sectional dataset. If not provided, all images for the participant "
-                                 "will be processed.", type=str, default=None)
-
-    optional_parser = parser.add_argument_group('optional_parser arguments')
+    optional_parser = parser.add_argument_group('General optional arguments')
     optional_parser.add_argument("-h", "--help", action="help", help="show this help message and exit")
     optional_parser.add_argument("--keep-workdir", help="Copy working directory to output, for debugging purposes. Either "
                                  "'never', 'on_error', or 'always'.", type=str, default='on_error')
     optional_parser.add_argument("--num-threads", help="Number of threads to use for ANTs commands. If 0, ANTs will use as "
                                  "many threads as there are virtual CPUs, up to a maximum of 8.", type=int, default=1)
     optional_parser.add_argument("--verbose", help="Verbose output", action='store_true')
+
+    subject_parser = parser.add_argument_group('Input filtering arguments')
+    subject_parser.add_argument("--bids-filter", help="BIDS filter to apply to the input dataset", type=str, default=None)
+    subject_parser.add_argument("--participant-images", help="Text file containing a list of participant images to process "
+                                 "relative to the cross-sectional dataset. If not provided, all images for the participant "
+                                 "will be processed.", type=str, default=None)
 
     sst_parser = parser.add_argument_group('Single Subject Template arguments')
     sst_parser.add_argument("--sst-transform", help="SST transform, rigid affine or syn", type=str, default='rigid')
@@ -186,7 +187,14 @@ def longitudinal_analysis():
                                                                                              'desc-brain_mask')))
         logger.info(f"Using selected participant images: {[im.get_uri() for im in cx_preproc_t1w_bids]}")
     else:
-        cx_preproc_t1w_bids = bids_helpers.find_participant_images(cx_dataset, args.participant, 'anat', 'desc-preproc_T1w')
+        bids_t1w_filter = bids_helpers.get_modality_filter_query('t1w', args.bids_filter)
+        bids_t1w_filter['description'] = 'preproc'
+        bids_wd = tempfile.TemporaryDirectory(suffix=f"antsnetct_bids_{args.participant}.tmpdir")
+        # Have to turn off validation for derivatives
+        cx_preproc_t1w_bids = bids_helpers.find_participant_images(cx_dataset, args.participant, bids_wd, validate=False,
+                                                                   **bids_t1w_filter)
+        bids_wd = None
+
         for idx in range(len(cx_preproc_t1w_bids)):
             relpath = cx_preproc_t1w_bids[idx].get_rel_path()
             cx_biascorr_t1w_bids.append(bids_helpers.BIDSImage(cx_dataset, relpath.replace('desc-preproc_T1w',
@@ -428,7 +436,8 @@ def longitudinal_analysis():
                 # Segment the session
                 logger.info(f"Segmenting session {idx + 1}")
                 seg_n4 = cross_sectional_pipeline.segment_and_bias_correct(
-                    long_preproc_t1w_bids[idx], brain_mask_bids, t1w_priors, working_dir, denoise=True, do_atropos_n4=True, atropos_n4_iterations=args.atropos_n4_iterations, atropos_prior_weight=args.atropos_prior_weight)
+                    long_preproc_t1w_bids[idx], brain_mask_bids, t1w_priors, working_dir, denoise=True, do_atropos_n4=True,
+                    atropos_n4_iterations=args.atropos_n4_iterations, atropos_prior_weight=args.atropos_prior_weight)
                 # Compute thickness
                 logger.info(f"Cortical thickness for session {idx + 1}")
                 thickness = cross_sectional_pipeline.cortical_thickness(seg_n4, working_dir,
