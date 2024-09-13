@@ -892,7 +892,7 @@ def find_participant_images(input_dataset_dir, participant_label, work_dir, vali
     # Make a temp directory and set up a virtual BIDS dir
     tmp_dataset_dir = _make_virtual_participant_dataset(input_dataset_dir, participant_label, work_dir)
 
-    bids_tree = run_command(['tree', '{tmp_dataset_dir}'])
+    bids_tree = run_command(['tree', 'tmp_dataset_dir'])
 
     print(bids_tree['stdout'])
 
