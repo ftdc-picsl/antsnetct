@@ -809,9 +809,9 @@ def _make_virtual_participant_dataset(dataset_dir, participant_label, work_dir):
 
     # Symlink all .json and .tsv files from the dataset directory to the temp dataset
     for file in os.listdir(dataset_dir):
-        if os.path.isfile(file):
+        source_file = os.path.join(dataset_dir, file)
+        if os.path.isfile(source_file):
             if file.endswith(".json") or file.endswith(".tsv"):
-                source_file = os.path.join(dataset_dir, file)
                 target_file = os.path.join(temp_dataset_dir, file)
                 os.symlink(source_file, target_file)
 
