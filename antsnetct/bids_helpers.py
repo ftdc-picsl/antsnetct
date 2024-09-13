@@ -893,7 +893,7 @@ def find_participant_images(input_dataset_dir, participant_label, work_dir, vali
     # Make a temp directory and set up a virtual BIDS dir
     tmp_dataset_dir = _make_virtual_participant_dataset(input_dataset_dir, participant_label, work_dir)
 
-    indexer = bids.BIDSLayoutIndexer(tmp_dataset_dir, validate=validate)
+    indexer = bids.BIDSLayoutIndexer(validate=validate)
     layout = bids.BIDSLayout(tmp_dataset_dir, indexer=indexer)
 
     # bids_matches are bids.BIDSFile objects
