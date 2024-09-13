@@ -272,10 +272,9 @@ def cross_sectional_analysis():
 
     logger.info("Searching for T1w images with filter: " + str(bids_t1w_filter))
 
-    bids_wd = tempfile.TemporaryDirectory(suffix=f"antsnetct_bids_{args.participant}.tmpdir")
-    input_t1w_bids = bids_helpers.find_participant_images(input_dataset, args.participant, bids_wd, validate=validate_bids,
-                                                          **bids_t1w_filter)
-    bids_wd = None
+    with tempfile.TemporaryDirectory(suffix=f"antsnetct_bids_{args.participant}.tmpdir") as bids_wd:
+        input_t1w_bids = bids_helpers.find_participant_images(input_dataset, args.participant, bids_wd, validate=validate_bids,
+                                                              **bids_t1w_filter)
 
     if input_t1w_bids is None or len(input_t1w_bids) == 0:
         logger.error(f"No T1w images found for participant {args.participant}")

@@ -189,11 +189,10 @@ def longitudinal_analysis():
     else:
         bids_t1w_filter = bids_helpers.get_modality_filter_query('t1w', args.bids_filter_file)
         bids_t1w_filter['description'] = 'preproc'
-        bids_wd = tempfile.TemporaryDirectory(suffix=f"antsnetct_bids_{args.participant}.tmpdir")
-        # Have to turn off validation for derivatives
-        cx_preproc_t1w_bids = bids_helpers.find_participant_images(cx_dataset, args.participant, bids_wd, validate=False,
-                                                                   **bids_t1w_filter)
-        bids_wd = None
+        with tempfile.TemporaryDirectory(suffix=f"antsnetct_bids_{args.participant}.tmpdir") as bids_wd:
+            # Have to turn off validation for derivatives
+            cx_preproc_t1w_bids = bids_helpers.find_participant_images(cx_dataset, args.participant, bids_wd, validate=False,
+                                                                       **bids_t1w_filter)
 
         for idx in range(len(cx_preproc_t1w_bids)):
             relpath = cx_preproc_t1w_bids[idx].get_rel_path()
