@@ -130,7 +130,7 @@ def cross_sectional_analysis():
 
     optional_parser = parser.add_argument_group("General optional arguments")
     optional_parser.add_argument("-h", "--help", action="help", help="show this help message and exit")
-    optional_parser.add_argument("--bids-filter", help="BIDS filter file", type=str, default=None)
+    optional_parser.add_argument("--bids-filter-file", help="BIDS filter file", type=str, default=None)
     optional_parser.add_argument("--keep-workdir", help="Copy working directory to output, for debugging purposes. Either "
                                  "'never', 'on_error', or 'always'.", type=str, default='on_error')
     optional_parser.add_argument("--num-threads", help="Number of threads to use for ANTs commands. If 0, ANTs will use as "
@@ -263,7 +263,7 @@ def cross_sectional_analysis():
     logger.info("Output dataset name: " + output_dataset_description['Name'])
 
     # get all the T1ws, optionally with a filter to select a subset
-    bids_t1w_filter = bids_helpers.get_modality_filter_query('t1w', args.bids_filter)
+    bids_t1w_filter = bids_helpers.get_modality_filter_query('t1w', args.bids_filter_file)
 
     if args.session is not None:
         # Add session to the filter

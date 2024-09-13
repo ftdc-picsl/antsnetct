@@ -50,7 +50,7 @@ def longitudinal_analysis():
     optional_parser.add_argument("--verbose", help="Verbose output", action='store_true')
 
     subject_parser = parser.add_argument_group('Input filtering arguments')
-    subject_parser.add_argument("--bids-filter", help="BIDS filter to apply to the input dataset", type=str, default=None)
+    subject_parser.add_argument("--bids-filter-file", help="BIDS filter to apply to the input dataset", type=str, default=None)
     subject_parser.add_argument("--participant-images", help="Text file containing a list of participant images to process "
                                  "relative to the cross-sectional dataset. If not provided, all images for the participant "
                                  "will be processed.", type=str, default=None)
@@ -187,7 +187,7 @@ def longitudinal_analysis():
                                                                                              'desc-brain_mask')))
         logger.info(f"Using selected participant images: {[im.get_uri() for im in cx_preproc_t1w_bids]}")
     else:
-        bids_t1w_filter = bids_helpers.get_modality_filter_query('t1w', args.bids_filter)
+        bids_t1w_filter = bids_helpers.get_modality_filter_query('t1w', args.bids_filter_file)
         bids_t1w_filter['description'] = 'preproc'
         bids_wd = tempfile.TemporaryDirectory(suffix=f"antsnetct_bids_{args.participant}.tmpdir")
         # Have to turn off validation for derivatives
