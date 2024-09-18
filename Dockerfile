@@ -22,7 +22,7 @@ ARG GIT_COMMIT="unknown"
 
 USER root
 
-RUN apt update && apt install -y bc tree
+RUN apt update && apt install -y bc
 
 # Get c3d
 COPY --from=pyushkevich/tk:2023b /tk/c3d/build/c3d /opt/bin/c3d

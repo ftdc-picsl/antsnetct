@@ -277,7 +277,8 @@ def cross_sectional_analysis():
                                                               **bids_t1w_filter)
 
     if input_t1w_bids is None or len(input_t1w_bids) == 0:
-        logger.error(f"No T1w images found for participant {args.participant}")
+        logger.error(f"No T1w images found for participant {args.participant}. If your input dataset is derivative, use "
+                     "--skip-bids-validation to disable BIDS validation.")
         return
 
     for t1w_bids in input_t1w_bids:
@@ -926,6 +927,7 @@ def _pairwise_brain_registration(fixed, moving, quick_reg, work_dir, fixed_mask=
                                                                      smoothing_sigmas='4x3x2x1x0vox', apply_transforms=False)
 
     return template_reg
+
 
 def template_space_derivatives(template, template_reg, seg_n4, thickness, work_dir):
     """Make template space derivatives: thickness, jacobian, GM probability

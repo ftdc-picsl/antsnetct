@@ -20,7 +20,7 @@ dependencies = [
     "antspynet",
     "antspyx",
     "filelock",
-    "pybids>=0.17"
+    "pybids==0.16.5"
 ]
 
 [project.urls]

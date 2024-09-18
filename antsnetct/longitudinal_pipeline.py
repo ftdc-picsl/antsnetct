@@ -31,7 +31,21 @@ def longitudinal_analysis():
                                      description='''Longitudinal cortical thickness analysis with ANTsPyNet.
 
     The analysis level for longitudinal data is the subject. By default, all T1w images for a participant will be
-    processed longitudinally. To process a specific subset of images for a participant, use the --participant-images option.
+    processed longitudinally. To process a specific subset of images for a participant, use the --participant-images option or
+    a BIDS filter file.
+
+    --- BIDS options ---
+
+    Users can select a subset of T1w images to process with a BIDS filter file. Following the *prep pipelines, the filters
+    should contain a dict "t1w" with keys and values to filter on. The default filter for t1w images is
+
+        "t1w": {
+            "datatype": "anat",
+            "desc": "preproc",
+            "suffix": "T1w"
+        }
+
+    User-defined filters override this, so they should include the default filter keys.
 
     ''')
 
@@ -54,7 +68,10 @@ def longitudinal_analysis():
     subject_parser.add_argument("--participant-images", help="Text file containing a list of participant images to process "
                                  "relative to the cross-sectional dataset. If not provided, all images for the participant "
                                  "will be processed.", type=str, default=None)
-
+    # longitudinal data checking - strict longitudinal processing is the default, which requires one image per session
+    # and the images must be the same acquisition
+    subject_parser.add_argument('--allow-mixed-t1w', action='store_true', help="If true, allow any T1w image to be processed "
+                                "longitudinally. By default, images are checked for consistency and balance across sessions.")
     sst_parser = parser.add_argument_group('Single Subject Template arguments')
     sst_parser.add_argument("--sst-transform", help="SST transform, rigid affine or syn", type=str, default='rigid')
     sst_parser.add_argument("--sst-iterations", help="Number of iterations for SST template building", type=int, default=4)
@@ -185,10 +202,16 @@ def longitudinal_analysis():
                                                                                           'desc-biascorr_T1w')))
                 cx_brain_mask_bids.append(bids_helpers.BIDSImage(cx_dataset, relpath.replace('desc-preproc_T1w',
                                                                                              'desc-brain_mask')))
-        logger.info(f"Using selected participant images: {[im.get_uri() for im in cx_preproc_t1w_bids]}")
     else:
-        bids_t1w_filter = bids_helpers.get_modality_filter_query('t1w', args.bids_filter_file)
-        bids_t1w_filter['description'] = 'preproc'
+        bids_t1w_filter = dict()
+
+        if args.bids_filter_file is not None:
+            bids_t1w_filter = bids_helpers.get_modality_filter_query('t1w', args.bids_filter_file)
+        else:
+            bids_t1w_filter = bids_helpers.get_modality_filter_query('t1w')
+            # Need to filter on desc-preproc in addition to the default t1w filter
+            bids_t1w_filter['desc'] = 'preproc'
+
         with tempfile.TemporaryDirectory(suffix=f"antsnetct_bids_{args.participant}.tmpdir") as bids_wd:
             # Have to turn off validation for derivatives
             cx_preproc_t1w_bids = bids_helpers.find_participant_images(cx_dataset, args.participant, bids_wd, validate=False,
@@ -200,11 +223,11 @@ def longitudinal_analysis():
                                                                                            'desc-biascorr_T1w')))
             cx_brain_mask_bids.append(bids_helpers.BIDSImage(cx_dataset, relpath.replace('desc-preproc_T1w',
                                                                                           'desc-brain_mask')))
-        logger.info(f"Using all available participant images: {cx_preproc_t1w_bids}")
 
     num_sessions = len(cx_preproc_t1w_bids)
 
-    logger.info(f"Found {num_sessions} sessions for participant {args.participant}")
+    logger.info(f"Using participant images: {[im.get_uri() for im in cx_preproc_t1w_bids]}")
+
 
     # Check that the output dataset exists, and if not, create
     # Update dataset_description.json if needed
