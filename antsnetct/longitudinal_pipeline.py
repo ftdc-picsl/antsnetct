@@ -68,10 +68,7 @@ def longitudinal_analysis():
     subject_parser.add_argument("--participant-images", help="Text file containing a list of participant images to process "
                                  "relative to the cross-sectional dataset. If not provided, all images for the participant "
                                  "will be processed.", type=str, default=None)
-    # longitudinal data checking - strict longitudinal processing is the default, which requires one image per session
-    # and the images must be the same acquisition
-    subject_parser.add_argument('--allow-mixed-t1w', action='store_true', help="If true, allow any T1w image to be processed "
-                                "longitudinally. By default, images are checked for consistency and balance across sessions.")
+
     sst_parser = parser.add_argument_group('Single Subject Template arguments')
     sst_parser.add_argument("--sst-transform", help="SST transform, rigid affine or syn", type=str, default='rigid')
     sst_parser.add_argument("--sst-iterations", help="Number of iterations for SST template building", type=int, default=4)
