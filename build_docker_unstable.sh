@@ -1,14 +1,21 @@
 #!/bin/bash
 
 # Get git information and build docker image
+forceBuild=0
 
 if [[ $# -gt 0 ]] ; then
-    echo "usage: $0 [-h]"
-    echo "Builds a docker image from source, and embeds git info. Run from source directory."
-    echo
-    echo "The git tag will be used if present, otherwise the docker image tage will be 'unstable'."
-    echo
-    exit 1
+    if [[ "$1" == "-h" ]] ; then
+        echo "usage: $0 [-h] [-f]"
+        echo "Builds a docker image from source, and embeds git info. Run from source directory."
+        echo
+        echo "The git tag will be used if present, otherwise the docker image tage will be 'unstable'."
+        echo
+        echo "By default, the script will not build if the git repository is not clean. Override with -f."
+        echo
+        exit 1
+    elif [[ "$1" == "-f" ]] ; then
+        forceBuild=1
+    fi
 fi
 
 # Get git information
@@ -16,8 +23,15 @@ status=$( git status -s )
 
 # status should be empty if the repository is clean
 if [[ ! -z "$status" ]] ; then
-    echo "Repository is not clean - see git status"
-    exit 1
+    echo "Repository is not clean - see git status:"
+    git status
+    echo
+    if [[ $forceBuild -eq 0 ]] ; then
+        echo "Use -f to force build"
+        exit 1
+    else
+        echo "Building from repository with local modifications"
+    fi
 fi
 
 gitRemote=$( git remote get-url origin )
