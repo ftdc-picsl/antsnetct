@@ -1,3 +1,4 @@
+import bids
 import copy
 import filelock
 import json
@@ -7,8 +8,7 @@ import templateflow
 
 from importlib import metadata
 
-from .system_helpers import copy_file
-
+from .system_helpers import copy_file, get_temp_dir, run_command
 
 class BIDSImage:
     """
@@ -706,7 +706,6 @@ def find_brain_mask(mask_dataset_directory, input_image):
     return None
 
 
-
 def find_segmentation_probability_images(seg_dataset_directory, input_image):
     """Search a segmentation dataset for a segmentation and posteriors produced from a particular input image.
 
@@ -780,77 +779,129 @@ def find_segmentation_probability_images(seg_dataset_directory, input_image):
     return output_posteriors
 
 
-def find_session_images(input_dataset_dir, participant_label, session_label, modality, bids_suffix):
-    """Find images from a session in a BIDS dataset directory.
+def _make_virtual_participant_dataset(dataset_dir, participant_label, work_dir):
+    """Create a virtual BIDS participant directory in the dataset directory.
+
+    This function symlinks a participant to a temp dir, copies dataset-level files, and returns the path to the virtual
+    directory. This allows easy use of BIDSLayout to traverse, which can take a long time on large datasets.
 
     Parameters:
     -----------
-
-    input_dataset_dir : str
-        Path to the input dataset directory.
+    dataset_dir : str
+        Path to the dataset directory.
     participant_label : str
         Participant label, eg '01'.
-    session_label : str
-        Session label, eg 'MR1'. Set to None if the dataset does not have sessions.
-    modality : str
-        Modality, eg 'anat', 'func'.
-    bids_suffix : str
-        BIDS image suffix, eg "T1w", with additional keys as needed eg "desc-preproc_T1w". Do not include
-        the file extension. This function will search for both .nii and .nii.gz files.
+    work_dir : str
+        Path to the working directory.
 
     Returns:
     --------
-    list of BIDSImage: A list of BIDSImage objects representing the images found.
+    str: Path to the virtual dataset
     """
+    # Create the temporary dataset directory in the work_dir
+    temp_dataset_dir = get_temp_dir(work_dir, prefix='tmpBIDS')
 
-    images = list()
+    # Symlink the participant's subdirectory to the temp dataset
+    source_participant_dir = os.path.join(dataset_dir, f"sub-{participant_label}")
+    target_participant_dir = os.path.join(temp_dataset_dir, f"sub-{participant_label}")
+    os.symlink(source_participant_dir, target_participant_dir)
 
-    # Path to the data directory to search, eg /data/ds/sub-01/ses-01/anat
-    if (session_label is None):
-        modality_dir = os.path.join(input_dataset_dir, 'sub-' + participant_label, modality)
+    # Symlink all .json and .tsv files from the dataset directory to the temp dataset
+    for file in os.listdir(dataset_dir):
+        source_file = os.path.join(dataset_dir, file)
+        if os.path.isfile(source_file):
+            if file.endswith(".json") or file.endswith(".tsv"):
+                target_file = os.path.join(temp_dataset_dir, file)
+                os.symlink(source_file, target_file)
+
+    return temp_dataset_dir
+
+
+def get_modality_filter_query(modality, filter_file=None):
+    """Get a filter query for a BIDSLayout search based on modality and additional filters.
+
+    If a filter_file is provided, it will be read into a filters dict and searched for keys that match the modality. For
+    example, if the modality is 't1w', items inside filters['t1w'] will be used.
+
+    If filter_file is None, then default filters are returned.
+
+    Parameters:
+    -----------
+    modality : str
+        Modality to search for.
+    filter_file : str, optional
+        Path to a JSON file containing filter queries.
+
+    Returns:
+    --------
+    dict : A filter query dictionary.
+
+    """
+    default_filters = {
+        "flair": {"datatype": "anat", "suffix": "FLAIR"},
+        "t2w": {"datatype": "anat", "suffix": "T2w"},
+        "t1w": {"datatype": "anat", "suffix": "T1w"},
+    }
+
+    modality_key = modality.lower()
+
+    filter_dict = None
+    if filter_file is not None:
+        with open(filter_file, 'r') as f:
+            filter_dict = json.load(f)
+
+    if filter_dict is None:
+        if modality_key in default_filters:
+            return default_filters[modality_key]
+        else:
+            raise ValueError(f"Modality {modality} not recognized")
     else:
-        modality_dir = os.path.join(input_dataset_dir, 'sub-' + participant_label, 'ses-' + session_label, modality)
-
-    if not os.path.exists(modality_dir):
-        return None
-
-    for image in os.listdir(modality_dir):
-        if image.endswith('_' + bids_suffix + '.nii') or image.endswith('_' + bids_suffix + '.nii.gz'):
-            images.append(BIDSImage(input_dataset_dir, os.path.relpath(os.path.join(modality_dir, image), input_dataset_dir)))
-
-    return images
+        if modality_key in filter_dict:
+            return filter_dict[modality_key]
+        elif modality_key in default_filters:
+            return default_filters[modality_key]
+        else:
+            raise ValueError(f"Modality {modality} not recognized")
 
 
-def find_participant_images(input_dataset_dir, participant_label, modality, bids_suffix):
-    """Find images for a participant in a BIDS dataset directory, across all sessions.
+
+def find_participant_images(input_dataset_dir, participant_label, work_dir, validate=True, **filters):
+    """Find images for a participant in a BIDS dataset directory.
+
+    The function will filter on participant=participant_label, extension=['.nii', '.nii.gz'], and any additional filters.
+
+    For example, to find all T1w images for participant 01, use:
+
+    find_participant_images(input_dataset_dir, '01', datatype='anat', suffix='T1w')
 
     Parameters:
     -----------
-
     input_dataset_dir : str
         Path to the input dataset directory.
     participant_label : str
         Participant label, eg '01'.
-    modality : str
-        Modality, eg 'anat', 'func'.
-    bids_suffix : str
-        BIDS image suffix, eg "T1w", with additional keys as needed eg "desc-preproc_T1w". Do not include
-        the file extension. This function will search for both .nii and .nii.gz files.
+    validate : bool, optional
+        If True, validate the dataset directory. This is only useful for raw datasets, and must be false for derivatives.
+    filter : dict, optional
+        A bids filter dictionary, eg {'modality': '01'}.
 
     Returns:
     --------
     list of BIDSImage: A list of BIDSImage objects representing the images found.
     """
+    # Make a temp directory and set up a virtual BIDS dir
+    tmp_dataset_dir = _make_virtual_participant_dataset(input_dataset_dir, participant_label, work_dir)
 
-    sessions = [d for d in os.listdir(os.path.join(input_dataset_dir, 'sub-' + participant_label)) if d.startswith('ses-')]
+    indexer = bids.BIDSLayoutIndexer(validate=validate)
+    layout = bids.BIDSLayout(tmp_dataset_dir, indexer=indexer)
 
-    if not sessions:
-        return find_session_images(input_dataset_dir, participant_label, None, modality, bids_suffix)
+    # bids_matches are bids.BIDSFile objects
+    bids_matches = layout.get(subject=participant_label, extension=['.nii', '.nii.gz'], **filters)
 
     images = list()
 
-    for sess in sessions:
-        images.extend(find_session_images(input_dataset_dir, participant_label, sess[4:], modality, bids_suffix))
+    for image in bids_matches:
+        images.append(BIDSImage(input_dataset_dir, image.relpath))
 
     return images
 

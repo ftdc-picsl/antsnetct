@@ -31,7 +31,21 @@ def longitudinal_analysis():
                                      description='''Longitudinal cortical thickness analysis with ANTsPyNet.
 
     The analysis level for longitudinal data is the subject. By default, all T1w images for a participant will be
-    processed longitudinally. To process a specific subset of images for a participant, use the --participant-images option.
+    processed longitudinally. To process a specific subset of images for a participant, use the --participant-images option or
+    a BIDS filter file.
+
+    --- BIDS options ---
+
+    Users can select a subset of T1w images to process with a BIDS filter file. Following the *prep pipelines, the filters
+    should contain a dict "t1w" with keys and values to filter on. The default filter for t1w images is
+
+        "t1w": {
+            "datatype": "anat",
+            "desc": "preproc",
+            "suffix": "T1w"
+        }
+
+    User-defined filters override this, so they should include the default filter keys.
 
     ''')
 
@@ -41,18 +55,19 @@ def longitudinal_analysis():
     required_parser.add_argument("--output-dataset", help="Output BIDS dataset dir", type=str, required=True)
     required_parser.add_argument("--participant", help="Participant to process", type=str)
 
-    subject_parser = parser.add_argument_group('General optional arguments')
-    subject_parser.add_argument("--participant-images", help="Text file containing a list of participant images to process "
-                                 "relative to the cross-sectional dataset. If not provided, all images for the participant "
-                                 "will be processed.", type=str, default=None)
-
-    optional_parser = parser.add_argument_group('optional_parser arguments')
+    optional_parser = parser.add_argument_group('General optional arguments')
     optional_parser.add_argument("-h", "--help", action="help", help="show this help message and exit")
     optional_parser.add_argument("--keep-workdir", help="Copy working directory to output, for debugging purposes. Either "
                                  "'never', 'on_error', or 'always'.", type=str, default='on_error')
     optional_parser.add_argument("--num-threads", help="Number of threads to use for ANTs commands. If 0, ANTs will use as "
                                  "many threads as there are virtual CPUs, up to a maximum of 8.", type=int, default=1)
     optional_parser.add_argument("--verbose", help="Verbose output", action='store_true')
+
+    subject_parser = parser.add_argument_group('Input filtering arguments')
+    subject_parser.add_argument("--bids-filter-file", help="BIDS filter to apply to the input dataset", type=str, default=None)
+    subject_parser.add_argument("--participant-images", help="Text file containing a list of participant images to process "
+                                 "relative to the cross-sectional dataset. If not provided, all images for the participant "
+                                 "will be processed.", type=str, default=None)
 
     sst_parser = parser.add_argument_group('Single Subject Template arguments')
     sst_parser.add_argument("--sst-transform", help="SST transform, rigid affine or syn", type=str, default='rigid')
@@ -184,20 +199,32 @@ def longitudinal_analysis():
                                                                                           'desc-biascorr_T1w')))
                 cx_brain_mask_bids.append(bids_helpers.BIDSImage(cx_dataset, relpath.replace('desc-preproc_T1w',
                                                                                              'desc-brain_mask')))
-        logger.info(f"Using selected participant images: {[im.get_uri() for im in cx_preproc_t1w_bids]}")
     else:
-        cx_preproc_t1w_bids = bids_helpers.find_participant_images(cx_dataset, args.participant, 'anat', 'desc-preproc_T1w')
+        bids_t1w_filter = dict()
+
+        if args.bids_filter_file is not None:
+            bids_t1w_filter = bids_helpers.get_modality_filter_query('t1w', args.bids_filter_file)
+        else:
+            bids_t1w_filter = bids_helpers.get_modality_filter_query('t1w')
+            # Need to filter on desc-preproc in addition to the default t1w filter
+            bids_t1w_filter['desc'] = 'preproc'
+
+        with tempfile.TemporaryDirectory(suffix=f"antsnetct_bids_{args.participant}.tmpdir") as bids_wd:
+            # Have to turn off validation for derivatives
+            cx_preproc_t1w_bids = bids_helpers.find_participant_images(cx_dataset, args.participant, bids_wd, validate=False,
+                                                                       **bids_t1w_filter)
+
         for idx in range(len(cx_preproc_t1w_bids)):
             relpath = cx_preproc_t1w_bids[idx].get_rel_path()
             cx_biascorr_t1w_bids.append(bids_helpers.BIDSImage(cx_dataset, relpath.replace('desc-preproc_T1w',
                                                                                            'desc-biascorr_T1w')))
             cx_brain_mask_bids.append(bids_helpers.BIDSImage(cx_dataset, relpath.replace('desc-preproc_T1w',
                                                                                           'desc-brain_mask')))
-        logger.info(f"Using all available participant images: {cx_preproc_t1w_bids}")
 
     num_sessions = len(cx_preproc_t1w_bids)
 
-    logger.info(f"Found {num_sessions} sessions for participant {args.participant}")
+    logger.info(f"Using participant images: {[im.get_uri() for im in cx_preproc_t1w_bids]}")
+
 
     # Check that the output dataset exists, and if not, create
     # Update dataset_description.json if needed
@@ -428,7 +455,8 @@ def longitudinal_analysis():
                 # Segment the session
                 logger.info(f"Segmenting session {idx + 1}")
                 seg_n4 = cross_sectional_pipeline.segment_and_bias_correct(
-                    long_preproc_t1w_bids[idx], brain_mask_bids, t1w_priors, working_dir, denoise=True, do_atropos_n4=True, atropos_n4_iterations=args.atropos_n4_iterations, atropos_prior_weight=args.atropos_prior_weight)
+                    long_preproc_t1w_bids[idx], brain_mask_bids, t1w_priors, working_dir, denoise=True, do_atropos_n4=True,
+                    atropos_n4_iterations=args.atropos_n4_iterations, atropos_prior_weight=args.atropos_prior_weight)
                 # Compute thickness
                 logger.info(f"Cortical thickness for session {idx + 1}")
                 thickness = cross_sectional_pipeline.cortical_thickness(seg_n4, working_dir,
