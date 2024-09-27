@@ -51,11 +51,11 @@ def longitudinal_analysis():
     --- Controlling multi-threading ---
 
     Set the environment variable ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS to control the number of threads used by ITK processes
-    and other general multi-threaded processes. If this variable is unset, the number of threads is set to the number of
-    available CPUs, or 8, whichever is smaller.
+    and other general multi-threaded processes. Set `ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=0` to allow automatic calculation,
+    in which case the number of threads is set to the number of available CPUs, or 8, whichever is smaller.
 
     For tensorflow, set the environment variables TF_NUM_INTEROP_THREADS and TF_NUM_INTRAOP_THREADS to control the number of
-    threads in deep_atropos. The default is 1 for both.
+    threads in ANTsPyNet. The default is 1 for both.
 
     ''')
 

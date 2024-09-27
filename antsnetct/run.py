@@ -43,7 +43,7 @@ def set_tf_threads():
     """Set the number of threads to use in TensorFlow. This can only be set before TensorFlow is initialized.
 
     The number of threads for tensorflow defaults to 1 but can be overridden by setting the environment variables
-    TF_NUM_INTRAOP_THREADS and TF_NUM_INTEROP_THREADS. This function sets the number of threads to 1, which is the default
+    TF_NUM_INTRAOP_THREADS and TF_NUM_INTEROP_THREADS.
 
     """
     intra_threads = int(os.getenv('TF_NUM_INTRAOP_THREADS', '1'))

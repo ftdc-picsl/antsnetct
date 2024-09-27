@@ -710,7 +710,7 @@ def find_segmentation_probability_images(seg_dataset_directory, input_image):
     """Search a segmentation dataset for a segmentation and posteriors produced from a particular input image.
 
     This function searches the segmentation dataset for segmentation posteriors matching the BIDS
-    "Common image-derived labels": CSF, CGM, WM, SCGM, BS, CBM.
+    "Common image-derived labels": CSF, CGM, WM, SGM, BS, CBM.
 
     The file names are expected to match the pattern
       '{source_entities}(?:_space-orig)?_(?:seg-[A-Za-z0-9]+)?(?:_res-01)?_label-{label}_probseg.nii.gz'
@@ -734,7 +734,9 @@ def find_segmentation_probability_images(seg_dataset_directory, input_image):
     """
     with open(os.path.join(seg_dataset_directory, 'dataset_description.json')) as f:
         dataset_description = json.load(f)
-        seg_dataset_name = dataset_description['Name']
+        if 'Name' not in dataset_description:
+            raise ValueError(f"Dataset name not found in dataset_description.json for {seg_dataset_directory}")
+
 
     # the list to be returned, with posteriors in order
     output_posteriors = [None] * 6
@@ -746,7 +748,7 @@ def find_segmentation_probability_images(seg_dataset_directory, input_image):
     search_prefix = input_image.get_derivative_rel_path_prefix()
     search_dir_relpath = os.path.dirname(search_prefix)
     search_pattern = \
-        re.compile(rf"{search_prefix}(?:_space-orig)?(?:_seg-[A-Za-z0-9]+)?(?:_res-01)?_label-([A-Z]+)_probseg.nii.gz")
+        re.compile(rf"{search_prefix}(?:_space-orig)?(?:_seg-[A-Za-z0-9]+)?_label-([A-Z]+)_probseg.nii.gz")
 
     for image_file in os.listdir(os.path.join(seg_dataset_directory, search_dir_relpath)):
         image_rel_path = os.path.join(search_dir_relpath, image_file)
