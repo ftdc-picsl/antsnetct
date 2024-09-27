@@ -22,6 +22,15 @@ def set_verbose(verbose):
     _verbose = verbose
 
 
+def get_verbose():
+    """ Get the verbosity level for system commands
+
+    Returns
+    -------
+    bool : The verbosity level for system commands
+    """
+    return _verbose
+
 # Catches pipeline errors from helper functions
 class PipelineError(Exception):
     """Exception raised when helper functions encounter an error"""
@@ -231,32 +240,6 @@ def get_temp_dir(work_dir, prefix=None):
 
     tmp_dir = tempfile.mkdtemp(prefix=formatted_prefix, dir=work_dir)
     return tmp_dir
-
-
-def set_num_threads(num_threads=0):
-    """Set the number of threads to use.
-
-    The number of threads to use in ANTs commands is set by the environment variable ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS.
-
-    The number of threads in ANTsPyNet is set to 1 because extra threads use much more memory, and these commands are already
-    relatively fast.
-
-    The number of threads can be set explicitly, or automatically. If num_threads is 0, the number of threads is set
-    automatically to min(system_cores, 8).
-
-    Parameters:
-    ----------
-    num_threads : int, optional
-        The number of threads to use. If 0, the number of threads is set automatically.
-    """
-    tf.config.threading.set_intra_op_parallelism_threads(1)
-    tf.config.threading.set_inter_op_parallelism_threads(1)
-
-    if num_threads > 0:
-        os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = str(num_threads)
-    else:
-        num_threads = min(os.cpu_count(), 8)
-        os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = str(num_threads)
 
 
 def get_num_threads():

@@ -119,6 +119,16 @@ def cross_sectional_analysis():
     The most time-consuming part of the pipeline is the cortical thickness estimation and the template registration. To get
     output faster for testing, use `--template-reg-quick` and `--thickness-iterations 10`.
 
+
+    --- Controlling multi-threading ---
+
+    Set the environment variable ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS to control the number of threads used by ITK processes
+    and other general multi-threaded processes. If this variable is unset, the number of threads is set to the number of
+    available CPUs, or 8, whichever is smaller.
+
+    For tensorflow, set the environment variables TF_NUM_INTEROP_THREADS and TF_NUM_INTRAOP_THREADS to control the number of
+    threads in deep_atropos. The default is 1 for both.
+
     ''')
 
     required_parser = parser.add_argument_group("Required arguments")
@@ -132,8 +142,6 @@ def cross_sectional_analysis():
     optional_parser.add_argument("--bids-filter-file", help="BIDS filter file", type=str, default=None)
     optional_parser.add_argument("--keep-workdir", help="Copy working directory to output, for debugging purposes. Either "
                                  "'never', 'on_error', or 'always'.", type=str, default='on_error')
-    optional_parser.add_argument("--num-threads", help="Number of threads to use for ANTs commands. If 0, ANTs will use as "
-                                 "many threads as there are virtual CPUs, up to a maximum of 8.", type=int, default=1)
     optional_parser.add_argument("--session", help="Session to process. Using this overrides any session filter in the BIDS "
                                  "filter file.", type=str, default=None)
     optional_parser.add_argument("--skip-bids-validation", help="Skip BIDS validation", action='store_true')
@@ -175,6 +183,8 @@ def cross_sectional_analysis():
     segmentation_parser.add_argument("--do-ants-atropos-n4", help="Run antsAtroposN4.sh. If this is specified, the "
                                      "segmentation defined by the segmentation dataset, atlas, or deep_atropos is used as a "
                                      "prior.", action='store_true')
+    segmentation_parser.add_argument("--legacy-deep-atropos", help="Use the legacy deep_atropos network. "
+                                     "Has no effect if deep_atropos is not called", action='store_true')
     segmentation_parser.add_argument("--atropos-n4-iterations", help="Number of iterations of atropos-n4",
                                      type=int, default=3)
     segmentation_parser.add_argument("--atropos-prior-weight", help="Prior weight for Atropos", type=float, default=0.25)
@@ -240,9 +250,6 @@ def cross_sectional_analysis():
     # Using a segmentation template implies we want to do antsAtroposN4
     if args.segmentation_template_name != None:
         args.do_ants_atropos_n4 = True
-
-    system_helpers.set_num_threads(args.num_threads)
-    logger.info(f"Using {system_helpers.get_num_threads()} threads for ITK processes")
 
     logger.info("Input dataset path: " + input_dataset)
     logger.info("Input dataset name: " + input_dataset_description['Name'])
@@ -331,7 +338,8 @@ def cross_sectional_analysis():
                 else:
                     # Uses the segmentation dataset to find segmentation priors, or generates them with deep_atropos
                     seg_priors = get_segmentation_priors(t1w_bids, preproc_t1w_bids, working_dir, args.segmentation_dataset,
-                                                            args.csf_prior_gamma, args.prior_smoothing_sigma)
+                                                            args.csf_prior_gamma, args.prior_smoothing_sigma,
+                                                            use_legacy_deep_atropos = args.legacy_deep_atropos)
 
                 seg_n4 = segment_and_bias_correct(preproc_t1w_bids, brain_mask_bids, seg_priors['prior_seg_probabilities'],
                                                   working_dir, prior_metadata=seg_priors['prior_metadata'],
@@ -574,7 +582,7 @@ def get_template_segmentation_priors(t1w_bids_preproc, t1w_brain_mask_bids, temp
 
 
 def get_segmentation_priors(t1w_bids, t1w_bids_preproc, work_dir, segmentation_dataset=None,
-                            antsnet_csf_prior_gamma=0, anstnet_prior_smoothing_sigma=0):
+                            antsnet_csf_prior_gamma=0, anstnet_prior_smoothing_sigma=0, use_legacy_deep_atropos=False):
     """Get segmentation priors for a T1w image
 
     If segmentatation_dataset is not None, it is searched for segmentation probabilities based on the T1w image. It is an error
@@ -600,6 +608,8 @@ def get_segmentation_priors(t1w_bids, t1w_bids_preproc, work_dir, segmentation_d
         Gamma correction for the antspynet CSF prior. Applied before smoothing. Default is 0, meaning no correction.
     anstnet_prior_smoothing_sigma : float, optional
         Sigma for smoothing the antspynet priors, in voxels. Default is 0, meaning no smoothing.
+    use_legacy_deep_atropos : bool, optional
+        If true, use the legacy deep_atropos network. Default is False.
 
     Returns:
     --------
@@ -640,7 +650,8 @@ def get_segmentation_priors(t1w_bids, t1w_bids_preproc, work_dir, segmentation_d
     else:
         # If no segmentation is found, generate one with antspynet
         logger.info("No segmentation priors found, generating with antspynet")
-        antsnet_seg = ants_helpers.deep_atropos(t1w_bids_preproc.get_path(), work_dir)
+        antsnet_seg = ants_helpers.deep_atropos(t1w_bids_preproc.get_path(), work_dir,
+                                                use_legacy_network=use_legacy_deep_atropos)
         prior_seg_probabilities = antsnet_seg['posteriors']
         # don't add sources because these priors are not saved
         prior_metadata['PriorGenerationMethod'] = 'deep_atropos'

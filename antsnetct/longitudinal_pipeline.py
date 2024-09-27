@@ -47,6 +47,16 @@ def longitudinal_analysis():
 
     User-defined filters override this, so they should include the default filter keys.
 
+
+    --- Controlling multi-threading ---
+
+    Set the environment variable ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS to control the number of threads used by ITK processes
+    and other general multi-threaded processes. If this variable is unset, the number of threads is set to the number of
+    available CPUs, or 8, whichever is smaller.
+
+    For tensorflow, set the environment variables TF_NUM_INTEROP_THREADS and TF_NUM_INTRAOP_THREADS to control the number of
+    threads in deep_atropos. The default is 1 for both.
+
     ''')
 
     required_parser = parser.add_argument_group('Required arguments')
@@ -59,8 +69,6 @@ def longitudinal_analysis():
     optional_parser.add_argument("-h", "--help", action="help", help="show this help message and exit")
     optional_parser.add_argument("--keep-workdir", help="Copy working directory to output, for debugging purposes. Either "
                                  "'never', 'on_error', or 'always'.", type=str, default='on_error')
-    optional_parser.add_argument("--num-threads", help="Number of threads to use for ANTs commands. If 0, ANTs will use as "
-                                 "many threads as there are virtual CPUs, up to a maximum of 8.", type=int, default=1)
     optional_parser.add_argument("--verbose", help="Verbose output", action='store_true')
 
     subject_parser = parser.add_argument_group('Input filtering arguments')
@@ -81,6 +89,8 @@ def longitudinal_analysis():
                             "'cx_atropos' (average cross-sectional priors, then atropos), or 'cx' "
                             "(average cross-sectional priors).", type=str, choices =
                                 ['antspynet_atropos', 'antspynet', 'cx_atropos', 'cx'], default='antspynet_atropos')
+    sst_parser.add_argument("--legacy-deep-atropos", help="Use the legacy deep_atropos network. Has no effect if deep_atropos "
+                            "is not called", action='store_true')
     sst_parser.add_argument("--sst-atropos-prior-weight", help="Prior weight in the SST segmenation. A higher value "
                             "gives more weight to the priors", type=float, default=0.25)
 
@@ -164,9 +174,6 @@ def longitudinal_analysis():
 
     logger.info("Cross-sectional dataset path: " + cx_dataset)
     logger.info("Cross-sectional dataset name: " + cx_dataset_description['Name'])
-
-    system_helpers.set_num_threads(args.num_threads)
-    logger.info(f"Using {system_helpers.get_num_threads()} threads for ITK processes")
 
     # Create the output dataset and add this container to the GeneratedBy, if needed
     bids_helpers.update_output_dataset(output_dataset, cx_dataset_description['Name'] + '_longitudinal', [cx_dataset])
@@ -401,7 +408,8 @@ def longitudinal_analysis():
                 logger.info("Segmenting SST with deep_atropos")
                 sst_prior_seg_probabilities = \
                     get_antsnet_sst_segmentation_priors(sst_bids, working_dir, prior_csf_gamma=args.prior_csf_gamma,
-                                                        prior_smoothing_sigma=args.prior_smoothing_sigma)
+                                                        prior_smoothing_sigma=args.prior_smoothing_sigma,
+                                                        use_legacy_deep_atropos=args.legacy_deep_atropos)
 
             else:
                 logger.info("Segmenting SST with cross-sectional priors")
@@ -543,7 +551,8 @@ def preprocess_sst_input(cx_biascorr_t1w_bids, work_dir):
 
     return sst_input_combined
 
-def get_antsnet_sst_segmentation_priors(sst_bids, work_dir, prior_smoothing_sigma=0, prior_csf_gamma=0):
+def get_antsnet_sst_segmentation_priors(sst_bids, work_dir, prior_smoothing_sigma=0, prior_csf_gamma=0,
+                                        use_legacy_deep_atropos=False):
     """Get segmentation priors for the SST from deep_atropos
 
     Parameters:
@@ -556,6 +565,8 @@ def get_antsnet_sst_segmentation_priors(sst_bids, work_dir, prior_smoothing_sigm
         Sigma for smoothing the priors, in voxels. Default is 0.
     prior_csf_gamma : float, optional
         Gamma value for the CSF prior. Default is 0 (no correction).
+    use_legacy_deep_atropos : bool, optional
+        Use the legacy deep_atropos network. Default is False.
 
     Returns:
     --------
@@ -563,7 +574,7 @@ def get_antsnet_sst_segmentation_priors(sst_bids, work_dir, prior_smoothing_sigm
         List of segmentation priors, in the order CSF, CGM, WM, SGM, BS, CBM
 
     """
-    deep_atropos = ants_helpers.deep_atropos(sst_bids.get_path(), work_dir)
+    deep_atropos = ants_helpers.deep_atropos(sst_bids.get_path(), work_dir, use_legacy_network=use_legacy_deep_atropos)
 
     posteriors = deep_atropos['posteriors']
 

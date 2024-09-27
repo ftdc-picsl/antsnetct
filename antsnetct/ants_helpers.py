@@ -155,7 +155,7 @@ def deep_brain_extraction(anatomical_image, work_dir, modality='t1'):
     return mask_image_file
 
 
-def deep_atropos(anatomical_image, work_dir):
+def deep_atropos(anatomical_image, work_dir, use_legacy_network=False):
     """Calls antspynet deep_atropos and returns the resulting segmentation and posteriors
 
     Parameters:
@@ -164,6 +164,8 @@ def deep_atropos(anatomical_image, work_dir):
         Anatomical image
     work_dir: str
         Path to working directory
+    use_legacy_network: bool
+        Use the legacy T1w-only network available in ANTsPyNet 0.2.8, instead of the current HCP-trained network.
 
     Returns:
     --------
@@ -174,7 +176,11 @@ def deep_atropos(anatomical_image, work_dir):
             List of paths to segmentation posteriors in order: CSF, GM, WM, deep GM, brainstem, cerebellum.
     """
     anat = ants.image_read(anatomical_image)
-    seg = antspynet.deep_atropos(anat)
+
+    if use_legacy_network:
+        seg = antspynet.deep_atropos(anat, do_preprocessing=True, verbose=True)
+    else:
+        seg = antspynet.deep_atropos([anat, None, None], do_preprocessing=True, verbose=True)
 
     tmp_file_prefix = get_temp_file(work_dir, prefix='deep_atropos')
 
