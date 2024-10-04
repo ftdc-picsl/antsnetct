@@ -74,16 +74,6 @@ See `antsnetct --help` for current usage.
 
 Output is prefixed with the source entities, which uniquely identifies each T1w input.
 
-<style>
-  table {
-    border: 1px solid black;
-    border-collapse: collapse;
-  }
-  th, td {
-    border: 1px solid black;
-    padding: 8px;
-  }
-</style>
 <table>
   <tr>
     <th>File</th>
