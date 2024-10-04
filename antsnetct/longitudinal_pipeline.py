@@ -783,7 +783,7 @@ def template_space_derivatives(sst, session_sst_transform, seg_n4, thickness, wo
                                                       work_dir)
 
     sst_space_bids['gmp'] = bids_helpers.image_to_bids(gm_prob_sst_space, session_ref_image_bids.get_ds_path(),
-                                                       sst_space_rel_output_prefix + '_label-GM_probseg.nii.gz')
+                                                       sst_space_rel_output_prefix + '_label-CGM_probseg.nii.gz')
 
     # Denoised / bias-corrected head image
     bias_corrected_head_sst_space = ants_helpers.apply_transforms(sst.get_path(), seg_n4['bias_corrected_t1w'].get_path(),
@@ -823,7 +823,7 @@ def template_space_derivatives(sst, session_sst_transform, seg_n4, thickness, wo
                                                             session_group_template_transforms, work_dir)
 
         group_space_bids['gmp'] = bids_helpers.image_to_bids(gm_prob_group_space, session_ref_image_bids.get_ds_path(),
-                                                             group_space_rel_output_prefix + '_label-GM_probseg.nii.gz')
+                                                             group_space_rel_output_prefix + '_label-CGM_probseg.nii.gz')
 
         # bias-corrected brain image
         bias_corrected_brain_group_space = ants_helpers.apply_transforms(group_template.get_path(),
