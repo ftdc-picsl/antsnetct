@@ -132,7 +132,6 @@ Output is prefixed with the source entities, which uniquely identifies each T1w 
     <td>space-ADNINormalAgingANTs_res-01_label-CGM_probseg.nii.gz</td>
     <td>Cortical gray matter probability in the template space, for VBM.</td>
   </tr>
-  <tr><td></td><td></td></tr>
 </table>
 
 
