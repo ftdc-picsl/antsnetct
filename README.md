@@ -73,6 +73,7 @@ See `antsnetct --help` for current usage.
 ## Cross-sectional output
 
 Output is prefixed with the source entities, which uniquely identifies each T1w input.
+Some files have metadate stored in a JSON sidecar.
 
 <table>
   <tr>
@@ -163,3 +164,64 @@ For each session image:
 * Warp derivatives to SST / group template space
 
 See `antsnetct --longitudinal --help` for current usage.
+
+
+## Longitudinal output
+
+### Subject-level output
+
+Under `sub-subjeclabel/anat`, subject-level output files are prefixed with `sub-JP01`. The
+T1w image in this folder is the single-subject template (SST).
+
+<table>
+  <tr>
+    <th>File</th>
+    <th>Description</th>
+  </tr>
+  <tr>
+    <td>desc-brain_mask.nii.gz</td>
+    <td>Brain mask for the SST.</td>
+  </tr>
+  <tr>
+    <th>File</th>
+    <th>Description</th>
+  </tr>
+  <tr>
+    <td>desc-brain_T1w.nii.gz</td>
+    <td>Brain-extracted SST.</td>
+  </tr>
+  <tr>
+    <td>from-{template}_to-T1w_mode-image_xfm.h5</td>
+    <td>Transform from the group template to the SST.</td>
+  </tr>
+  <tr>
+    <td>from-T1w_to-{template}_mode-image_xfm.h5</td>
+    <td>Transform from the SST to the group template.</td>
+  </tr>
+  <tr>
+    <td>seg-antsnetct_dseg.nii.gz</td>
+    <td>Segmentatation of the SST.</td>
+  </tr>
+  <tr>
+    <td>seg-antsnetct_label-{label}_probseg.nii.gz</td>
+    <td>Probability images from the segmentation. These are used as priors for session-level segmentation.</td>
+  </tr>
+  <tr>
+    <td>T1w.nii.gz</td>
+    <td>The SST image.</td>
+  </tr>
+</table>
+
+### Session-level output
+
+Session-level output is similar to the cross-sectional output, except that the transforms
+map to the SST space, not the group template space. To warp images to the group template,
+combine the warps, for example:
+```
+antsApplyTransforms \
+    -d 3 \
+    -i sub-01_ses-01_desc-biascorrbrain_T1w.nii.gz \
+    -r tpl-group_T1w.nii.gz \
+    -o sub-01_ses-01_space-group_desc-biascorrbrain_T1w.nii.gz \
+    -t sub-01_from-T1w_to-group_template_mode-image_xfm.h5  sub-01_ses-01_from-T1w_to-sst_mode-image_xfm.h5
+```
