@@ -202,7 +202,7 @@ def deep_atropos(anatomical_image, work_dir, use_legacy_network=False):
     return {'segmentation': segmentation_fn, 'posteriors': posteriors_fn}
 
 
-def segment_and_bias_correct(anatomical_images, brain_mask, priors, work_dir, denoise=True, **kwargs):
+def segment_and_bias_correct(anatomical_images, brain_mask, priors, work_dir, denoise=True, which_n4=None, **kwargs):
     """Segment anatomical images using Atropos and N4. This calls a Python implementation of the two-stage
     Atropos-N4 loop from antsCorticalThickness.sh.
 
@@ -216,6 +216,16 @@ def segment_and_bias_correct(anatomical_images, brain_mask, priors, work_dir, de
         List of priors in order 1-6 for CSF, GM, WM, deep GM, brainstem, cerebellum
     work_dir : str
         Path to working directory
+    denoise : bool, optional
+        Denoise input images. Default is True.
+    which_n4 : list of bool, optional
+        List of booleans to determine whether bias correction should be run on each anatomical image. Default is None, which
+        runs N4 on all images. If not None, should be a list of booleans with the same length as anatomical_images, where True
+        indicates that N4 should be run on that image. If this is False for an image, the bias correction will be skipped for
+        that image, as will preprocessing such as intensity winsorization and normalization. Denoising will still be applied if
+        denoise=True. A typical use case would be for images that have already been bias corrected, or quantitative images like
+        FA.
+
     **kwargs : dict
         Additional keyword arguments to pass to ants_atropos_n4
 
@@ -230,26 +240,47 @@ def segment_and_bias_correct(anatomical_images, brain_mask, priors, work_dir, de
             List of paths to segmentation posteriors in order: CSF, GM, WM, deep GM, brainstem, cerebellum
 
     """
+    if which_n4 is None:
+        which_n4 = [True] * len(anatomical_images)
 
     # Preprocess the images
     anat_preproc = list()
     for i, anat in enumerate(anatomical_images):
-        anat_preproc[i] = winsorize_intensity(anat, brain_mask, work_dir)
+        if which_n4[i]:
+            anat_preproc[i] = winsorize_intensity(anat, brain_mask, work_dir)
+            # Normalize intensity within the brain mask
+            anat_preproc[i] = normalize_intensity(anat_preproc[i], brain_mask, work_dir, label=1)
+        else:
+            anat_preproc[i] = anat
+
         if denoise:
             anat_preproc[i] = denoise_image(anat_preproc[i], work_dir)
 
-    round_1 = ants_atropos_n4(anat_preproc, brain_mask, priors, work_dir, **kwargs)
+    round_1 = ants_atropos_n4(anat_preproc, brain_mask, priors, work_dir, which_n4=which_n4, **kwargs)
 
-    round_2 = ants_atropos_n4(round_1['bias_corrected_anatomical_images'], brain_mask, priors, work_dir, denoise=False,
-                              **kwargs)
+    # round 2 always runs 2 iterations
+    kwargs['iterations'] = 2
 
-    return round_2
+    round_2 = ants_atropos_n4(round_1['bias_corrected_anatomical_images'], brain_mask, priors, work_dir,
+                              which_n4=which_n4, **kwargs)
+
+    normalized_anatomical = list()
+
+    for i, anat in enumerate(round_2['bias_corrected_anatomical_images']):
+        if which_n4[i]:
+            normalized_anatomical[i] = normalize_intensity(anat, round_2['segmentation'], work_dir)
+        else:
+            normalized_anatomical[i] = anat
+
+    normalized_output = {'bias_corrected_anatomical_images': normalized_anatomical, 'segmentation': round_2['segmentation'],
+                         'posteriors': round_2['posteriors']}
+
+    return normalized_output
 
 
-def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=3, atropos_iterations=15,
-                    atropos_prior_weight=0.25, atropos_mrf_weight=0.1, use_mixture_model_proportions=True,
-                    n4_prior_classes=[2,3,4,5,6], n4_spline_spacing=180, n4_convergence='[50x50x50x50,1e-7]',
-                    n4_shrink_factor=3):
+def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=2, atropos_iterations=15,
+                    likelihood_model='Gaussian', mrf_weight=0.1, prior_weight=0.25, use_mixture_model_proportions=True,
+                    n4_spline_spacing=180, n4_convergence='[50x50x50x50,1e-7]', n4_shrink_factor=3, which_n4=None):
     """Segment anatomical images using Atropos and N4.
 
     Parameters:
@@ -264,11 +295,13 @@ def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=
         Path to working directory
     iterations : int
         Number of iterations of the N4-Atropos loop
+    likelihood_model : str
+        Likelihood model for Atropos, with optional parameters. Default is 'Gaussian'.
     atropos_iterations : int
         Number of iterations for Atropos inside each N4-Atropos iterations
-    atropos_prior_weight: float
+    prior_weight: float
         Prior weight for Atropos
-    atropos_mrf_weight : float
+    mrf_weight : float
         MRF weight for Atropos
     use_mixture_model_proportions : bool
         Use mixture model proportions
@@ -280,6 +313,10 @@ def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=
         Convergence criteria for N4
     n4_shrink_factor : int
         Shrink factor for N4
+    which_n4 : list of bool
+        List of booleans to determine which images to run N4 on. Default is None, which runs N4 on all images. If not None,
+        should be a list of booleans with the same length as anatomical_images, where True indicates that N4 should be run
+        on that image.
 
     Returns:
     --------
@@ -296,6 +333,9 @@ def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=
     if isinstance(anatomical_images, str):
         anatomical_images = [anatomical_images]
 
+    if which_n4 is None:
+        which_n4 = [True] * len(anatomical_images)
+
     tmp_file_prefix = get_temp_file(work_dir, prefix='ants_atropos_n4')
 
     # Write list of priors to work_dir in c-style numeric format %02d
@@ -304,76 +344,54 @@ def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=
     for i, p in enumerate(priors):
         copy_file(p, prior_spec % (i+1))
 
-    anatomical_input_args = [arg for anat in anatomical_images for arg in ['-a', anat]]
-
-    n4_prior_classes_args = [arg for tissue_label in n4_prior_classes for arg in ['-y', str(tissue_label)]]
-
-    stage_1_output_prefix = f"{tmp_file_prefix}_stage1_"
+    output_prefix = f"{tmp_file_prefix}_atroposn4_"
 
     # copy priors to posteriors
 
     posteriors = priors
 
     for iteration in range(iterations):
-        n4_bias_correction() # n4 will make a tissue mask from the segmentation posteriors
-        # call atropos
-        cmd = ['Atropos', '-d', '3', '-x', brain_mask]
-        cmd.extend(anatomical_input_args)
-        run_command(cmd)
+
+        bias_corrected = list()
+
+        for anat, run_n4 in zip(anatomical_images, which_n4):
+            if run_n4:
+                corrected_anat = n4_bias_correction(anat, brain_mask, work_dir, posteriors, n4_convergence,
+                                                    n4_shrink_factor, n4_spline_spacing)
+            else:
+                corrected_anat = anat
+            bias_corrected.append(corrected_anat)
+
+        seg_output = atropos_segmentation(bias_corrected, brain_mask, work_dir, iterations=15,
+                                          likelihood_model=likelihood_model, mrf_weight=mrf_weight, prior_weight=prior_weight,
+                                          use_mixture_model_proportions=use_mixture_model_proportions)
+
+        # anatomical_input_args = [arg for anat in bias_corrected for arg in ['-a', anat]]
+
+        # # call atropos
+        # cmd = ['Atropos', '-d', '3', '-x', brain_mask, '-c', f"[{atropos_iterations},0.0]", '--verbose', '1', '-i',
+        #     f"PriorProbabilityImages[{len(priors)},{prior_spec},{prior_weight}]", '-k', likelihood_model,
+        #     '-m', f"[{mrf_weight},1x1x1]", '-r', '1', '-e', '0',
+        #     '-p', f"Socrates[{1 if use_mixture_model_proportions else 0}]",
+        #     '-o', f"[{output_prefix}Segmentation.nii.gz,{output_prefix}SegmentationPosteriors%02d.nii.gz]",]
+        # cmd.extend(anatomical_input_args)
+        # run_command(cmd)
+
+        # posteriors = [f"{output_prefix}SegmentationPosteriors%02d.nii.gz" % i for i in range(1,7)]
 
     # return segmentation and bias-corrected anatomical images
-    segmentation_n4_dict = {}
-
-    return segmentation_n4_dict
-
-
-    # example command:
-  # Atropos -d 3 -x /data/output_atropos/sub-JP01downsample/ses-SC3Tx20240605x1610/anat/sub-JP01downsample_ses-SC3Tx20240605x1610_acq-sag_rec-gradwarp_desc-brain_mask.nii.gz -c [ 15,0.0 ] -a /tmp/tmp8ku59bxjantsnetct_sub-JP01downsample_ses-SC3Tx20240605x1610_acq-sag_rec-gradwarp_T1w.tmpdir/ants_atropos_n4_mbha1es__stage1_Segmentation0N4.nii.gz --verbose 1 -i PriorProbabilityImages[ 6,/tmp/tmp8ku59bxjantsnetct_sub-JP01downsample_ses-SC3Tx20240605x1610_acq-sag_rec-gradwarp_T1w.tmpdir/ants_atropos_n4_mbha1es__prior_%02d.nii.gz,0.25] -k Gaussian -m [0.1, 1x1x1] -g 1 -o [ /tmp/tmp8ku59bxjantsnetct_sub-JP01downsample_ses-SC3Tx20240605x1610_acq-sag_rec-gradwarp_T1w.tmpdir/ants_atropos_n4_mbha1es__stage1_Segmentation.nii.gz,/tmp/tmp8ku59bxjantsnetct_sub-JP01downsample_ses-SC3Tx20240605x1610_acq-sag_rec-gradwarp_T1w.tmpdir/ants_atropos_n4_mbha1es__stage1_SegmentationPosteriors%02d.nii.gz ] -r 1 -e 0 -p Socrates[1]
-
-    command = ['antsAtroposN4.sh', '-d', '3']
-    command.extend(anatomical_input_args)
-    command.extend(n4_prior_classes_args)
-    command.extend(['-x', brain_mask, '-p', prior_spec, '-c', str(len(priors)), '-o', stage_1_output_prefix, '-m',
-                   str(iterations), '-n', str(atropos_iterations), '-r', f"[{atropos_mrf_weight}, 1x1x1]", '-g',
-                   '1' if denoise else '0', '-b', f"Socrates[{1 if use_mixture_model_proportions else 0}]",
-                   '-w', str(atropos_prior_weight), '-e', n4_convergence, '-f', str(n4_shrink_factor), '-q',
-                   f"[{n4_spline_spacing}]"])
-
-    run_command(command)
-
-    # Following the bash script, we run antsAtroposN4.sh again
-    # using the corrected image as input
-    stage_2_output_prefix = f"{tmp_file_prefix}_stage_2_"
-
-    anatomical_images = [f"{stage_1_output_prefix}Segmentation{i}N4.nii.gz" for i in range(len(anatomical_images))]
-    anatomical_input_args = [arg for anat in anatomical_images for arg in ['-a', anat]]
-
-    command = ['antsAtroposN4.sh', '-d', '3']
-    command.extend(anatomical_input_args)
-    command.extend(n4_prior_classes_args)
-    command.extend(['-x', brain_mask, '-p', prior_spec, '-c', str(len(priors)), '-o', stage_2_output_prefix, '-m', '2',
-                    '-n', str(atropos_iterations), '-r', f"[{atropos_mrf_weight}, 1x1x1]", '-g', '0', '-b',
-                    f"Socrates[{'1' if use_mixture_model_proportions else '0'}]", '-w', str(atropos_prior_weight), '-e',
-                    n4_convergence, '-f', str(n4_shrink_factor), '-q', f"[{n4_spline_spacing}]"])
-
-    run_command(command)
-
-    segmentation_n4_dict = {
-                            'bias_corrected_anatomical_images': [f"{stage_2_output_prefix}Segmentation{i}N4.nii.gz"
-                                               for i in range(len(anatomical_images))],
-                            'segmentation': f"{stage_2_output_prefix}Segmentation.nii.gz",
-                            'posteriors': [f"{stage_2_output_prefix}SegmentationPosteriors%02d.nii.gz" % i \
-                                for i in range(1,7)]
-                            }
+    segmentation_n4_dict = {'bias_corrected_anatomical_images': bias_corrected,
+                            'segmentation': seg_output['segmentation'],
+                            'posteriors': seg_output['posteriors']}
 
     return segmentation_n4_dict
 
 
 def base_ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=3, atropos_iterations=15,
-                    atropos_prior_weight=0.25, atropos_mrf_weight=0.1, denoise=True, use_mixture_model_proportions=True,
+                    prior_weight=0.25, mrf_weight=0.1, denoise=True, use_mixture_model_proportions=True,
                     n4_prior_classes=[2,3,4,5,6], n4_spline_spacing=180, n4_convergence='[50x50x50x50,1e-7]',
                     n4_shrink_factor=3):
-    """Segment anatomical images using Atropos and N4
+    """Segment anatomical images using Atropos and N4, via the antsAtroposN4.sh script in ANTs.
 
     Parameters:
     -----------
@@ -389,9 +407,9 @@ def base_ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterat
         Number of iterations of the N4-Atropos loop
     atropos_iterations : int
         Number of iterations for Atropos inside each N4-Atropos iterations
-    atropos_prior_weight: float
+    prior_weight: float
         Prior weight for Atropos
-    atropos_mrf_weight : float
+    mrf_weight : float
         MRF weight for Atropos
     denoise : bool
         Denoise input images
@@ -439,9 +457,9 @@ def base_ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterat
     command.extend(anatomical_input_args)
     command.extend(n4_prior_classes_args)
     command.extend(['-x', brain_mask, '-p', prior_spec, '-c', str(len(priors)), '-o', stage_1_output_prefix, '-m',
-                   str(iterations), '-n', str(atropos_iterations), '-r', f"[{atropos_mrf_weight}, 1x1x1]", '-g',
+                   str(iterations), '-n', str(atropos_iterations), '-r', f"[{mrf_weight}, 1x1x1]", '-g',
                    '1' if denoise else '0', '-b', f"Socrates[{1 if use_mixture_model_proportions else 0}]",
-                   '-w', str(atropos_prior_weight), '-e', n4_convergence, '-f', str(n4_shrink_factor), '-q',
+                   '-w', str(prior_weight), '-e', n4_convergence, '-f', str(n4_shrink_factor), '-q',
                    f"[{n4_spline_spacing}]"])
 
     run_command(command)
@@ -457,8 +475,8 @@ def base_ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterat
     command.extend(anatomical_input_args)
     command.extend(n4_prior_classes_args)
     command.extend(['-x', brain_mask, '-p', prior_spec, '-c', str(len(priors)), '-o', stage_2_output_prefix, '-m', '2',
-                    '-n', str(atropos_iterations), '-r', f"[{atropos_mrf_weight}, 1x1x1]", '-g', '0', '-b',
-                    f"Socrates[{'1' if use_mixture_model_proportions else '0'}]", '-w', str(atropos_prior_weight), '-e',
+                    '-n', str(atropos_iterations), '-r', f"[{mrf_weight}, 1x1x1]", '-g', '0', '-b',
+                    f"Socrates[{'1' if use_mixture_model_proportions else '0'}]", '-w', str(prior_weight), '-e',
                     n4_convergence, '-f', str(n4_shrink_factor), '-q', f"[{n4_spline_spacing}]"])
 
     run_command(command)
@@ -499,7 +517,7 @@ def denoise_image(anatomical_image, work_dir):
     return denoised
 
 
-def n4_bias_correction(anatomical_image, brain_mask, work_dir, segmentation_posteriors=None, iterations=2,
+def n4_bias_correction(anatomical_image, brain_mask, work_dir, segmentation_posteriors=None,
                        n4_convergence='[50x50x50x50,1e-7]', n4_shrink_factor=3, n4_spline_spacing=180):
     """Correct bias field in an anatomical image.
 
@@ -517,9 +535,6 @@ def n4_bias_correction(anatomical_image, brain_mask, work_dir, segmentation_post
     segmentation_posteriors : list of str, optional
         List of segmentation posteriors in order 1-6 for CSF, GM, WM, deep GM, brainstem, cerebellum. Posteriors
         2-6 are used to create a pure tissue mask for N4 bias correction.
-    iterations : int, optional
-        Number of iterations, this is how many times to run N4. Default is 2, to match how antsCorticalThickness.sh
-        processes images. The output from each iteration is used as the input for the next.
     n4_convergence : str, optional
         Convergence criteria for N4
     n4_shrink_factor : int, optional
@@ -547,17 +562,14 @@ def n4_bias_correction(anatomical_image, brain_mask, work_dir, segmentation_post
     bias_corrected_anatomical = f"{tmp_file_prefix}_bias_corrected.nii.gz"
     copy_file(anatomical_image, bias_corrected_anatomical)
 
-    # run iteratively as is done in antsCorticalThickness.sh
-    for iteration in range(iterations):
-        # bias correct
-        n4_cmd = ['N4BiasFieldCorrection', '-d', '3', '-i', bias_corrected_anatomical, '-o', bias_corrected_anatomical,
-                     '-c', n4_convergence, '-s', str(n4_shrink_factor), '-b', f"[{n4_spline_spacing}]", '-x', brain_mask,
-                     '-v', '1']
+    # bias correct
+    n4_cmd = ['N4BiasFieldCorrection', '-d', '3', '-i', bias_corrected_anatomical, '-o', bias_corrected_anatomical,
+              '-c', n4_convergence, '-s', str(n4_shrink_factor), '-b', f"[{n4_spline_spacing}]", '-x', brain_mask, '-v', '1']
 
-        if pure_tissue_mask is not None:
-            n4_cmd.extend(['-w', pure_tissue_mask])
+    if pure_tissue_mask is not None:
+        n4_cmd.extend(['-w', pure_tissue_mask])
 
-        run_command(n4_cmd)
+    run_command(n4_cmd)
 
     return bias_corrected_anatomical
 
