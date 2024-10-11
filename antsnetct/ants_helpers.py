@@ -351,12 +351,12 @@ def n4_bias_correction(anatomical_image, brain_mask, work_dir, segmentation_post
         Path to the brain mask
     work_dir : str
         Path to working directory
-        segmentation_posteriors : list of str, optional
+    segmentation_posteriors : list of str, optional
         List of segmentation posteriors in order 1-6 for CSF, GM, WM, deep GM, brainstem, cerebellum. Posteriors
         2-6 are used to create a pure tissue mask for N4 bias correction.
     iterations : int, optional
         Number of iterations, this is how many times to run N4. Default is 2, to match how antsCorticalThickness.sh
-        processes images.
+        processes images. The output from each iteration is used as the input for the next.
     normalize : bool, optional
         Normalize the whole image to the range 0-1000 after bias correction. Default is True, to match
         antsCorticalThickness.sh.
@@ -391,7 +391,7 @@ def n4_bias_correction(anatomical_image, brain_mask, work_dir, segmentation_post
                  '0.995', '256'])
 
     # run iteratively as is done in antsCorticalThickness.sh
-    for iteration in range(2):
+    for iteration in range(iterations):
         # bias correct
         n4_cmd = ['N4BiasFieldCorrection', '-d', '3', '-i', bias_corrected_anatomical, '-o', bias_corrected_anatomical,
                      '-c', n4_convergence, '-s', str(n4_shrink_factor), '-b', f"[{n4_spline_spacing}]", '-x', brain_mask,
