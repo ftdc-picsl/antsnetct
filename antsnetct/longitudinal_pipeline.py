@@ -410,7 +410,6 @@ def longitudinal_analysis():
                     get_antsnet_sst_segmentation_priors(sst_bids, working_dir, prior_csf_gamma=args.prior_csf_gamma,
                                                         prior_smoothing_sigma=args.prior_smoothing_sigma,
                                                         use_legacy_deep_atropos=args.legacy_deep_atropos)
-
             else:
                 logger.info("Segmenting SST with cross-sectional priors")
                 sst_prior_seg_probabilities = \
@@ -438,7 +437,7 @@ def longitudinal_analysis():
             sst_to_group_template_reg = None
 
             if group_template is not None:
-                logger.info("Registering SST to group template {group_template.get_name()}")
+                logger.info(f"Registering SST to group template {group_template.get_name()}")
                 sst_to_group_template_reg = cross_sectional_pipeline.template_brain_registration(
                     group_template, group_template_brain_mask, sst_brain_bids, args.template_reg_quick, working_dir
                     )
