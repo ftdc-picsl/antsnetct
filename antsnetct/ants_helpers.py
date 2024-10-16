@@ -235,11 +235,14 @@ def segment_and_bias_correct(anatomical_images, brain_mask, priors, work_dir, de
         'bias_corrected_anatomical_images' : list of str
             List of paths to bias corrected images for each input modality
         'segmentation' : str
-            Path to segmentation image
+            Path to segmentation image, containing labels 1-6 for CSF, GM, WM, deep GM, brainstem, cerebellum.
         'posteriors' : list of str
-            List of paths to segmentation posteriors in order: CSF, GM, WM, deep GM, brainstem, cerebellum
+            List of paths to segmentation posteriors in order: CSF, GM, WM, deep GM, brainstem, cerebellum.
 
     """
+    if type(anatomical_images) == str:
+        anatomical_images = [anatomical_images]
+
     if which_n4 is None:
         which_n4 = [True] * len(anatomical_images)
 
@@ -247,14 +250,14 @@ def segment_and_bias_correct(anatomical_images, brain_mask, priors, work_dir, de
     anat_preproc = list()
     for i, anat in enumerate(anatomical_images):
         if which_n4[i]:
-            anat_preproc[i] = winsorize_intensity(anat, brain_mask, work_dir)
+            anat = winsorize_intensity(anat, brain_mask, work_dir)
             # Normalize intensity within the brain mask
-            anat_preproc[i] = normalize_intensity(anat_preproc[i], brain_mask, work_dir, label=1)
-        else:
-            anat_preproc[i] = anat
+            anat = normalize_intensity(anat, brain_mask, work_dir, label=1)
 
         if denoise:
-            anat_preproc[i] = denoise_image(anat_preproc[i], work_dir)
+            anat_preproc.append(denoise_image(anat, work_dir))
+        else:
+            anat_preproc.append(anat)
 
     round_1 = ants_atropos_n4(anat_preproc, brain_mask, priors, work_dir, which_n4=which_n4, **kwargs)
 
@@ -268,9 +271,9 @@ def segment_and_bias_correct(anatomical_images, brain_mask, priors, work_dir, de
 
     for i, anat in enumerate(round_2['bias_corrected_anatomical_images']):
         if which_n4[i]:
-            normalized_anatomical[i] = normalize_intensity(anat, round_2['segmentation'], work_dir)
+            normalized_anatomical.append(normalize_intensity(anat, round_2['segmentation'], work_dir, label=3))
         else:
-            normalized_anatomical[i] = anat
+            normalized_anatomical.append(anat)
 
     normalized_output = {'bias_corrected_anatomical_images': normalized_anatomical, 'segmentation': round_2['segmentation'],
                          'posteriors': round_2['posteriors']}
@@ -362,22 +365,12 @@ def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=
                 corrected_anat = anat
             bias_corrected.append(corrected_anat)
 
-        seg_output = atropos_segmentation(bias_corrected, brain_mask, work_dir, iterations=15,
-                                          likelihood_model=likelihood_model, mrf_weight=mrf_weight, prior_weight=prior_weight,
+        seg_output = atropos_segmentation(bias_corrected, brain_mask, work_dir, iterations=atropos_iterations,
+                                          prior_probabilities=priors, likelihood_model=likelihood_model, mrf_weight=mrf_weight,
+                                          prior_weight=prior_weight,
                                           use_mixture_model_proportions=use_mixture_model_proportions)
 
-        # anatomical_input_args = [arg for anat in bias_corrected for arg in ['-a', anat]]
-
-        # # call atropos
-        # cmd = ['Atropos', '-d', '3', '-x', brain_mask, '-c', f"[{atropos_iterations},0.0]", '--verbose', '1', '-i',
-        #     f"PriorProbabilityImages[{len(priors)},{prior_spec},{prior_weight}]", '-k', likelihood_model,
-        #     '-m', f"[{mrf_weight},1x1x1]", '-r', '1', '-e', '0',
-        #     '-p', f"Socrates[{1 if use_mixture_model_proportions else 0}]",
-        #     '-o', f"[{output_prefix}Segmentation.nii.gz,{output_prefix}SegmentationPosteriors%02d.nii.gz]",]
-        # cmd.extend(anatomical_input_args)
-        # run_command(cmd)
-
-        # posteriors = [f"{output_prefix}SegmentationPosteriors%02d.nii.gz" % i for i in range(1,7)]
+        posteriors = seg_output['posteriors']
 
     # return segmentation and bias-corrected anatomical images
     segmentation_n4_dict = {'bias_corrected_anatomical_images': bias_corrected,
@@ -661,9 +654,13 @@ def atropos_segmentation(anatomical_images, brain_mask, work_dir, iterations=15,
 
     seg_out_prefix = tmp_file_prefix + 'output_'
 
+    seg_out_image = f"{seg_out_prefix}Segmentation.nii.gz"
+
+    seg_out_prior_spec = f"{seg_out_prefix}Posteriors%02d.nii.gz"
+
     atropos_cmd.extend(['-c', f"[{iterations},{convergence_threshold}]", '-k', likelihood_model, '-o',
-                       f"[{seg_out_prefix}seg.nii.gz,{seg_out_prefix}Posteriors%02d.nii.gz]", '-m',
-                       f"[{mrf_weight},{mrf_neighborhood}]", '-p', f"Socrates[{1 if use_mixture_model_proportions else 0}]",
+                       f"[{seg_out_image},{seg_out_prior_spec}]", '-m', f"[{mrf_weight},{mrf_neighborhood}]",
+                       '-p', f"Socrates[{1 if use_mixture_model_proportions else 0}]",
                        '-r', str(1) if use_random_seed else str(0), '-e', '0', '-g', '1'])
 
     if partial_volume_classes is not None:
@@ -673,10 +670,9 @@ def atropos_segmentation(anatomical_images, brain_mask, work_dir, iterations=15,
 
     run_command(atropos_cmd)
 
-    segmentation = f"{seg_out_prefix}Segmentation.nii.gz"
     posteriors = [f"{seg_out_prefix}Posteriors%02d.nii.gz" % i for i in range(1, num_classes + 1)]
 
-    return {'segmentation': segmentation, 'posteriors': posteriors}
+    return {'segmentation': seg_out_image, 'posteriors': posteriors}
 
 
 def cortical_thickness(segmentation, segmentation_posteriors, work_dir, kk_its=45, grad_update=0.025, grad_smooth=1.5,

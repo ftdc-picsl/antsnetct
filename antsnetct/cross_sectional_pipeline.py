@@ -721,7 +721,9 @@ def segment_and_bias_correct(t1w_bids_preproc, brain_mask_bids, segmentation_pri
         # Run antsAtroposN4.sh, using the priors for segmentation and bias correction
         seg_output = ants_helpers.segment_and_bias_correct(t1w_bids_preproc.get_path(), brain_mask_bids.get_path(),
                                                            segmentation_priors, work_dir, iterations=atropos_n4_iterations,
-                                                           prior_weight=atropos_prior_weight, denoise=denoise, n4_spline_spacing=n4_spline_spacing, n4_convergence=n4_convergence, n4_shrink_factor=n4_shrink_factor)
+                                                           prior_weight=atropos_prior_weight, denoise=denoise,
+                                                           n4_spline_spacing=n4_spline_spacing, n4_convergence=n4_convergence,
+                                                           n4_shrink_factor=n4_shrink_factor)
 
         # remap the segmentation posteriors to BIDS labels
         seg_output['segmentation_image'] = ants_helpers.posteriors_to_segmentation(seg_output['posteriors'], work_dir)
@@ -730,7 +732,7 @@ def segment_and_bias_correct(t1w_bids_preproc, brain_mask_bids, segmentation_pri
         posteriors_masked = [ants_helpers.apply_mask(posterior, brain_mask_bids.get_path(), work_dir)
                                 for posterior in segmentation_priors]
 
-        # Copy the prior segmentation
+        # remap the prior posteriors to BIDS labels
         seg_output['segmentation_image'] = ants_helpers.posteriors_to_segmentation(posteriors_masked, work_dir)
         seg_output['posteriors'] = posteriors_masked
 
