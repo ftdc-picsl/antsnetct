@@ -202,11 +202,190 @@ def deep_atropos(anatomical_image, work_dir, use_legacy_network=False):
     return {'segmentation': segmentation_fn, 'posteriors': posteriors_fn}
 
 
-def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=3, atropos_iterations=15,
-                    atropos_prior_weight=0.25, atropos_mrf_weight=0.1, denoise=True, use_mixture_model_proportions=True,
+def segment_and_bias_correct(anatomical_images, brain_mask, priors, work_dir, denoise=True, which_n4=None, **kwargs):
+    """Segment anatomical images using Atropos and N4. This calls a Python implementation of the two-stage
+    Atropos-N4 loop from antsCorticalThickness.sh.
+
+    Parameters:
+    -----------
+    anatomical_images : list of str
+        List of paths to coregistered anatomical images
+    brain_mask : str
+        Path to brain mask
+    priors: list of str
+        List of priors in order 1-6 for CSF, GM, WM, deep GM, brainstem, cerebellum
+    work_dir : str
+        Path to working directory
+    denoise : bool, optional
+        Denoise input images. Default is True.
+    which_n4 : list of bool, optional
+        List of booleans to determine whether bias correction should be run on each anatomical image. Default is None, which
+        runs N4 on all images. If not None, should be a list of booleans with the same length as anatomical_images, where True
+        indicates that N4 should be run on that image. If this is False for an image, the bias correction will be skipped for
+        that image, as will preprocessing such as intensity winsorization and normalization. Denoising will still be applied if
+        denoise=True. A typical use case would be for images that have already been bias corrected, or quantitative images like
+        FA.
+
+    **kwargs : dict
+        Additional keyword arguments to pass to ants_atropos_n4
+
+    Returns:
+    --------
+    dict with keys:
+        'bias_corrected_anatomical_images' : list of str
+            List of paths to bias corrected images for each input modality
+        'segmentation' : str
+            Path to segmentation image, containing labels 1-6 for CSF, GM, WM, deep GM, brainstem, cerebellum.
+        'posteriors' : list of str
+            List of paths to segmentation posteriors in order: CSF, GM, WM, deep GM, brainstem, cerebellum.
+
+    """
+    if type(anatomical_images) == str:
+        anatomical_images = [anatomical_images]
+
+    if which_n4 is None:
+        which_n4 = [True] * len(anatomical_images)
+
+    # Preprocess the images
+    anat_preproc = list()
+    for i, anat in enumerate(anatomical_images):
+        if which_n4[i]:
+            anat = winsorize_intensity(anat, brain_mask, work_dir)
+            # Normalize intensity within the brain mask
+            anat = normalize_intensity(anat, brain_mask, work_dir, label=1)
+
+        if denoise:
+            anat_preproc.append(denoise_image(anat, work_dir))
+        else:
+            anat_preproc.append(anat)
+
+    round_1 = ants_atropos_n4(anat_preproc, brain_mask, priors, work_dir, which_n4=which_n4, **kwargs)
+
+    # round 2 always runs 2 iterations
+    kwargs['iterations'] = 2
+
+    round_2 = ants_atropos_n4(round_1['bias_corrected_anatomical_images'], brain_mask, priors, work_dir,
+                              which_n4=which_n4, **kwargs)
+
+    normalized_anatomical = list()
+
+    for i, anat in enumerate(round_2['bias_corrected_anatomical_images']):
+        if which_n4[i]:
+            # Note we use label 3 here because these are still ANTs labels, 3=WM
+            normalized_anatomical.append(normalize_intensity(anat, round_2['segmentation'], work_dir, label=3))
+        else:
+            normalized_anatomical.append(anat)
+
+    normalized_output = {'bias_corrected_anatomical_images': normalized_anatomical, 'segmentation': round_2['segmentation'],
+                         'posteriors': round_2['posteriors']}
+
+    return normalized_output
+
+
+def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=2, atropos_iterations=15,
+                    likelihood_model='Gaussian', mrf_weight=0.1, prior_weight=0.25, use_mixture_model_proportions=True,
+                    n4_spline_spacing=180, n4_convergence='[50x50x50x50,1e-7]', n4_shrink_factor=3, which_n4=None):
+    """Segment anatomical images using Atropos and N4.
+
+    Parameters:
+    -----------
+    anatomical_images : list of str
+        List of paths to coregistered anatomical images
+    brain_mask : str
+        Path to brain mask
+    priors: list of str
+        List of priors in order 1-6 for CSF, GM, WM, deep GM, brainstem, cerebellum
+    work_dir : str
+        Path to working directory
+    iterations : int
+        Number of iterations of the N4-Atropos loop
+    likelihood_model : str
+        Likelihood model for Atropos, with optional parameters. Default is 'Gaussian'.
+    atropos_iterations : int
+        Number of iterations for Atropos inside each N4-Atropos iterations
+    prior_weight: float
+        Prior weight for Atropos
+    mrf_weight : float
+        MRF weight for Atropos
+    use_mixture_model_proportions : bool
+        Use mixture model proportions
+    n4_prior_classes : list of int
+        List of prior classes
+    n4_spline_spacing : int
+        Spline spacing for N4
+    n4_convergence : str
+        Convergence criteria for N4
+    n4_shrink_factor : int
+        Shrink factor for N4
+    which_n4 : list of bool
+        List of booleans to determine which images to run N4 on. Default is None, which runs N4 on all images. If not None,
+        should be a list of booleans with the same length as anatomical_images, where True indicates that N4 should be run
+        on that image.
+
+    Returns:
+    --------
+    dict with keys:
+        'bias_corrected_anatomical_images' : list of str
+            List of paths to bias corrected images for each input modality
+        'segmentation' : str
+            Path to segmentation image
+        'posteriors' : list of str
+            List of paths to segmentation posteriors in order: CSF, GM, WM, deep GM, brainstem, cerebellum
+
+    """
+    # Convert to list if only one image is provided
+    if isinstance(anatomical_images, str):
+        anatomical_images = [anatomical_images]
+
+    if which_n4 is None:
+        which_n4 = [True] * len(anatomical_images)
+
+    tmp_file_prefix = get_temp_file(work_dir, prefix='ants_atropos_n4')
+
+    # Write list of priors to work_dir in c-style numeric format %02d
+    prior_spec = f"{tmp_file_prefix}_prior_%02d.nii.gz"
+
+    for i, p in enumerate(priors):
+        copy_file(p, prior_spec % (i+1))
+
+    output_prefix = f"{tmp_file_prefix}_atroposn4_"
+
+    # copy priors to posteriors
+
+    posteriors = priors
+
+    for iteration in range(iterations):
+
+        bias_corrected = list()
+
+        for anat, run_n4 in zip(anatomical_images, which_n4):
+            if run_n4:
+                corrected_anat = n4_bias_correction(anat, brain_mask, work_dir, posteriors, n4_convergence,
+                                                    n4_shrink_factor, n4_spline_spacing)
+            else:
+                corrected_anat = anat
+            bias_corrected.append(corrected_anat)
+
+        seg_output = atropos_segmentation(bias_corrected, brain_mask, work_dir, iterations=atropos_iterations,
+                                          prior_probabilities=priors, likelihood_model=likelihood_model, mrf_weight=mrf_weight,
+                                          prior_weight=prior_weight,
+                                          use_mixture_model_proportions=use_mixture_model_proportions)
+
+        posteriors = seg_output['posteriors']
+
+    # return segmentation and bias-corrected anatomical images
+    segmentation_n4_dict = {'bias_corrected_anatomical_images': bias_corrected,
+                            'segmentation': seg_output['segmentation'],
+                            'posteriors': seg_output['posteriors']}
+
+    return segmentation_n4_dict
+
+
+def base_ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=3, atropos_iterations=15,
+                    prior_weight=0.25, mrf_weight=0.1, denoise=True, use_mixture_model_proportions=True,
                     n4_prior_classes=[2,3,4,5,6], n4_spline_spacing=180, n4_convergence='[50x50x50x50,1e-7]',
                     n4_shrink_factor=3):
-    """Segment anatomical images using Atropos and N4
+    """Segment anatomical images using Atropos and N4, via the antsAtroposN4.sh script in ANTs.
 
     Parameters:
     -----------
@@ -222,9 +401,9 @@ def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=
         Number of iterations of the N4-Atropos loop
     atropos_iterations : int
         Number of iterations for Atropos inside each N4-Atropos iterations
-    atropos_prior_weight: float
+    prior_weight: float
         Prior weight for Atropos
-    atropos_mrf_weight : float
+    mrf_weight : float
         MRF weight for Atropos
     denoise : bool
         Denoise input images
@@ -272,9 +451,9 @@ def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=
     command.extend(anatomical_input_args)
     command.extend(n4_prior_classes_args)
     command.extend(['-x', brain_mask, '-p', prior_spec, '-c', str(len(priors)), '-o', stage_1_output_prefix, '-m',
-                   str(iterations), '-n', str(atropos_iterations), '-r', f"[{atropos_mrf_weight}, 1x1x1]", '-g',
+                   str(iterations), '-n', str(atropos_iterations), '-r', f"[{mrf_weight}, 1x1x1]", '-g',
                    '1' if denoise else '0', '-b', f"Socrates[{1 if use_mixture_model_proportions else 0}]",
-                   '-w', str(atropos_prior_weight), '-e', n4_convergence, '-f', str(n4_shrink_factor), '-q',
+                   '-w', str(prior_weight), '-e', n4_convergence, '-f', str(n4_shrink_factor), '-q',
                    f"[{n4_spline_spacing}]"])
 
     run_command(command)
@@ -290,8 +469,8 @@ def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=
     command.extend(anatomical_input_args)
     command.extend(n4_prior_classes_args)
     command.extend(['-x', brain_mask, '-p', prior_spec, '-c', str(len(priors)), '-o', stage_2_output_prefix, '-m', '2',
-                    '-n', str(atropos_iterations), '-r', f"[{atropos_mrf_weight}, 1x1x1]", '-g', '0', '-b',
-                    f"Socrates[{'1' if use_mixture_model_proportions else '0'}]", '-w', str(atropos_prior_weight), '-e',
+                    '-n', str(atropos_iterations), '-r', f"[{mrf_weight}, 1x1x1]", '-g', '0', '-b',
+                    f"Socrates[{'1' if use_mixture_model_proportions else '0'}]", '-w', str(prior_weight), '-e',
                     n4_convergence, '-f', str(n4_shrink_factor), '-q', f"[{n4_spline_spacing}]"])
 
     run_command(command)
@@ -310,7 +489,7 @@ def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=
 def denoise_image(anatomical_image, work_dir):
     """Denoise an anatomical image.
 
-    Truncates outliers and denoises
+    Denoises an anatomical image using the DenoiseImage command from ANTs.
 
     Parameters:
     -----------
@@ -325,18 +504,14 @@ def denoise_image(anatomical_image, work_dir):
         Path to the denoised image.
     """
     tmp_file_prefix = get_temp_file(work_dir, prefix='denoise')
-    truncated = f"{tmp_file_prefix}_truncated.nii.gz"
-    command = ['ImageMath', '3', truncated, 'TruncateImageIntensity', anatomical_image, '0', '0.995', '256']
-    run_command(command)
-
     denoised = f"{tmp_file_prefix}_denoised.nii.gz"
-    command = ['DenoiseImage', '-d', '3', '-i', truncated, '-o', denoised]
+    command = ['DenoiseImage', '-d', '3', '-i', anatomical_image, '-o', denoised]
     run_command(command)
 
     return denoised
 
 
-def n4_bias_correction(anatomical_image, brain_mask, work_dir, segmentation_posteriors=None, iterations=2, normalize=True,
+def n4_bias_correction(anatomical_image, brain_mask, work_dir, segmentation_posteriors=None,
                        n4_convergence='[50x50x50x50,1e-7]', n4_shrink_factor=3, n4_spline_spacing=180):
     """Correct bias field in an anatomical image.
 
@@ -354,12 +529,6 @@ def n4_bias_correction(anatomical_image, brain_mask, work_dir, segmentation_post
     segmentation_posteriors : list of str, optional
         List of segmentation posteriors in order 1-6 for CSF, GM, WM, deep GM, brainstem, cerebellum. Posteriors
         2-6 are used to create a pure tissue mask for N4 bias correction.
-    iterations : int, optional
-        Number of iterations, this is how many times to run N4. Default is 2, to match how antsCorticalThickness.sh
-        processes images. The output from each iteration is used as the input for the next.
-    normalize : bool, optional
-        Normalize the whole image to the range 0-1000 after bias correction. Default is True, to match
-        antsCorticalThickness.sh.
     n4_convergence : str, optional
         Convergence criteria for N4
     n4_shrink_factor : int, optional
@@ -387,24 +556,14 @@ def n4_bias_correction(anatomical_image, brain_mask, work_dir, segmentation_post
     bias_corrected_anatomical = f"{tmp_file_prefix}_bias_corrected.nii.gz"
     copy_file(anatomical_image, bias_corrected_anatomical)
 
-    run_command(['ImageMath', '3', bias_corrected_anatomical, 'TruncateImageIntensity', bias_corrected_anatomical, '0.0',
-                 '0.995', '256'])
+    # bias correct
+    n4_cmd = ['N4BiasFieldCorrection', '-d', '3', '-i', bias_corrected_anatomical, '-o', bias_corrected_anatomical,
+              '-c', n4_convergence, '-s', str(n4_shrink_factor), '-b', f"[{n4_spline_spacing}]", '-x', brain_mask, '-v', '1']
 
-    # run iteratively as is done in antsCorticalThickness.sh
-    for iteration in range(iterations):
-        # bias correct
-        n4_cmd = ['N4BiasFieldCorrection', '-d', '3', '-i', bias_corrected_anatomical, '-o', bias_corrected_anatomical,
-                     '-c', n4_convergence, '-s', str(n4_shrink_factor), '-b', f"[{n4_spline_spacing}]", '-x', brain_mask,
-                     '-v', '1']
+    if pure_tissue_mask is not None:
+        n4_cmd.extend(['-w', pure_tissue_mask])
 
-        if pure_tissue_mask is not None:
-            n4_cmd.extend(['-w', pure_tissue_mask])
-
-        run_command(n4_cmd)
-        # Normalize and rescale
-        if normalize:
-            run_command(['ImageMath', '3', bias_corrected_anatomical, 'Normalize', bias_corrected_anatomical])
-            run_command(['ImageMath', '3', bias_corrected_anatomical, 'm', bias_corrected_anatomical, '1000'])
+    run_command(n4_cmd)
 
     return bias_corrected_anatomical
 
@@ -496,9 +655,13 @@ def atropos_segmentation(anatomical_images, brain_mask, work_dir, iterations=15,
 
     seg_out_prefix = tmp_file_prefix + 'output_'
 
+    seg_out_image = f"{seg_out_prefix}Segmentation.nii.gz"
+
+    seg_out_prior_spec = f"{seg_out_prefix}Posteriors%02d.nii.gz"
+
     atropos_cmd.extend(['-c', f"[{iterations},{convergence_threshold}]", '-k', likelihood_model, '-o',
-                       f"[{seg_out_prefix}seg.nii.gz,{seg_out_prefix}Posteriors%02d.nii.gz]", '-m',
-                       f"[{mrf_weight},{mrf_neighborhood}]", '-p', f"Socrates[{1 if use_mixture_model_proportions else 0}]",
+                       f"[{seg_out_image},{seg_out_prior_spec}]", '-m', f"[{mrf_weight},{mrf_neighborhood}]",
+                       '-p', f"Socrates[{1 if use_mixture_model_proportions else 0}]",
                        '-r', str(1) if use_random_seed else str(0), '-e', '0', '-g', '1'])
 
     if partial_volume_classes is not None:
@@ -508,10 +671,9 @@ def atropos_segmentation(anatomical_images, brain_mask, work_dir, iterations=15,
 
     run_command(atropos_cmd)
 
-    segmentation = f"{seg_out_prefix}Segmentation.nii.gz"
     posteriors = [f"{seg_out_prefix}Posteriors%02d.nii.gz" % i for i in range(1, num_classes + 1)]
 
-    return {'segmentation': segmentation, 'posteriors': posteriors}
+    return {'segmentation': seg_out_image, 'posteriors': posteriors}
 
 
 def cortical_thickness(segmentation, segmentation_posteriors, work_dir, kk_its=45, grad_update=0.025, grad_smooth=1.5,
@@ -1024,6 +1186,118 @@ def get_log_jacobian_determinant(reference_image, transform, work_dir, use_geom=
     run_command(cmd)
 
     return log_jacobian_file
+
+
+def winsorize_intensity(image, mask, work_dir, lower_percentile=0.5, upper_iqr_scale=3):
+    """Winsorize the intensity of an image, using a mask to calculate bounds.
+
+    The lower bound is the lower_percentile of the image within the mask, after removing any voxels with intensity <= 0.
+
+    The upper bound is set conservatively using the histogram and inter-quartile range of the image within the mask.
+
+    The aim of the winsorization is to remove outliers and improve the robustness of bias correction and denoising, without
+    removing contrast within brain tissue.
+
+    These parameters are a compromise designed to work well enough on different contrasts.
+
+    Parameters:
+    -----------
+    image : str
+        Path to image to truncate.
+    mask : str
+        Path to mask image.
+    work_dir : str
+        Path to working directory.
+    lower_percentile : float, optional
+        Lower percentile for winsorization. Default is 0.5. Set to 0 to include all positive values.
+    upper_iqr_scale : float, optional
+        Scale factor for upper bound, anything over (inter-quartile range) * upper_iqr_scale is winsorized.
+    Returns:
+    --------
+    winsorized_image : str
+        Path to winsorized image
+
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='winsorbymask')
+
+    img = ants.image_read(image)
+    mask = ants.image_read(mask)
+
+    brain = img[mask > 0]
+
+    # Remove anything <= 0
+    brain = brain[brain > 0.0]
+
+    low_threshold = np.percentile(brain, lower_percentile)
+
+    quantiles = np.quantile(brain, [0.0, 0.25, 0.5, 0.75, 1.0])
+
+    # Winsorize at median + 3 * IQR
+    high_threshold = quantiles[2] + upper_iqr_scale * (quantiles[3] - quantiles[1])
+
+    img_winsor = img.clone()
+    img_winsor[img_winsor < low_threshold] = low_threshold
+    img_winsor[img_winsor > high_threshold] = high_threshold
+
+    winsor_file = f"{tmp_file_prefix}_winsorized.nii.gz"
+
+    ants.image_write(img_winsor, winsor_file)
+
+    return winsor_file
+
+
+def winsorize_intensity_with_seg(image, segmentation, low_label, high_label, work_dir):
+    """Winsorize the intensity of an image, using a segmentation to calculate bounds.
+
+    The lower bound is taken from the lowest 0.1 percentile of the image, after removing any voxels with intensity <= 0, within
+    the segmentation of the low_label tissue class (CSF for T1w). The upper bound is set conservatively using the histogram and
+    inter-quartile range of the image within the high_label (WM for T1w). The aim of the winsorization is to remove outliers
+    and improve the robustness of bias correction and denoising, without removing contrast within brain tissue.
+
+    Parameters:
+    -----------
+    image : str
+        Path to image to truncate.
+    segmentation : str
+        Path to segmentation image.
+    low_label : int
+        Label for lower bound calculation.
+    high_label : int
+        Label for upper bound calculation.
+    work_dir : str
+        Path to working directory.
+    Returns:
+    --------
+    truncated_image : str
+        Path to truncated image
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='winsorbylabel')
+
+    img = ants.image_read(image)
+    seg = ants.image_read(segmentation)
+
+    low_voxels = img[seg == low_label]
+    high_voxels = img[seg == high_label]
+
+    # Remove anything <= 0
+    low_voxels = low_voxels[low_voxels > 0.0]
+    # Winsorize at 0.1% of the low tissue class
+    low_threshold = np.percentile(low_voxels, 0.1)
+
+    high_quantiles = np.quantile(high_voxels, [0.0, 0.25, 0.5, 0.75, 1.0])
+
+    # Winsorize at median + 5 * IQR
+    high_threshold = high_quantiles[2] + 5 * (high_quantiles[3] - high_quantiles[1])
+
+    img_winsor = img.clone()
+    img_winsor[img_winsor < low_threshold] = low_threshold
+    img_winsor[img_winsor > high_threshold] = high_threshold
+
+    winsor_file = f"{tmp_file_prefix}_winsorized.nii.gz"
+
+    ants.image_write(img_winsor, winsor_file)
+
+    return winsor_file
 
 
 def normalize_intensity(image, segmentation, work_dir, label=8, scaled_label_mean=1000):

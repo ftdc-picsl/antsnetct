@@ -96,7 +96,7 @@ def longitudinal_analysis():
 
     segmentation_parser = parser.add_argument_group('Segmentation arguments for session processing')
     segmentation_parser.add_argument("--atropos-n4-iterations", help="Number of iterations of atropos-n4",
-                                     type=int, default=3)
+                                     type=int, default=2)
     segmentation_parser.add_argument("--atropos-prior-weight", help="Prior weight for Atropos in the session space",
                                      type=float, default=0.5)
     segmentation_parser.add_argument("--prior-smoothing-sigma", help="Sigma for smoothing the priors before session "
@@ -427,6 +427,16 @@ def longitudinal_analysis():
                                   segmentation_method=sst_segmentation_method,
                                   atropos_prior_weight=args.sst_atropos_prior_weight)
 
+            # Normalize SST intensity to aid visual comparison
+            sst_winsorized = ants_helpers.winsorize_intensity(sst_bids.get_path(), unified_mask_sst, working_dir,
+                                                              lower_percentile=0, upper_iqr_scale=3)
+            sst_normalized = ants_helpers.normalize_intensity(sst_winsorized, sst_seg['segmentation_image'].get_path(),
+                                                              working_dir, label=2)
+            system_helpers.copy_file(sst_normalized, sst_bids.get_path())
+
+            sst_brain_normalized = ants_helpers.apply_mask(sst_bids.get_path(), unified_mask_sst, working_dir)
+            system_helpers.copy_file(sst_brain_normalized, sst_brain_bids.get_path())
+
             sst_seg_metadata['SegmentationMethod'] = args.sst_segmentation_method
             sst_seg['segmentation_image'].update_metadata(sst_seg_metadata)
             for post in sst_seg['posteriors']:
@@ -532,7 +542,7 @@ def preprocess_sst_input(cx_biascorr_t1w_bids, work_dir):
 
         seg = t1w.get_derivative_path_prefix() + '_seg-antsnetct_dseg.nii.gz'
 
-        normalized = ants_helpers.normalize_intensity(input_t1w_denoised_image, seg, work_dir)
+        normalized = ants_helpers.normalize_intensity(input_t1w_denoised_image, seg, work_dir, label=2)
 
         input_t1w_mask = t1w.get_derivative_path_prefix() + '_desc-brain_mask.nii.gz'
 

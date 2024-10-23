@@ -186,7 +186,7 @@ def cross_sectional_analysis():
     segmentation_parser.add_argument("--legacy-deep-atropos", help="Use the legacy deep_atropos network. "
                                      "Has no effect if deep_atropos is not called", action='store_true')
     segmentation_parser.add_argument("--atropos-n4-iterations", help="Number of iterations of atropos-n4",
-                                     type=int, default=3)
+                                     type=int, default=2)
     segmentation_parser.add_argument("--atropos-prior-weight", help="Prior weight for Atropos", type=float, default=0.25)
     segmentation_parser.add_argument("--prior-smoothing-sigma", help="Sigma for smoothing the priors, in voxels. Experimental",
                                      type=float, default=0)
@@ -674,7 +674,7 @@ def get_segmentation_priors(t1w_bids, t1w_bids_preproc, work_dir, segmentation_d
 
 
 def segment_and_bias_correct(t1w_bids_preproc, brain_mask_bids, segmentation_priors, work_dir, prior_metadata=None,
-                             do_atropos_n4=True, atropos_n4_iterations=3, atropos_prior_weight=0.25, denoise=True,
+                             do_atropos_n4=True, atropos_n4_iterations=2, atropos_prior_weight=0.25, denoise=True,
                              n4_spline_spacing=180, n4_convergence='[ 50x50x50x50,1e-7 ]', n4_shrink_factor=3):
     """Segment and bias correct a T1w image
 
@@ -699,10 +699,10 @@ def segment_and_bias_correct(t1w_bids_preproc, brain_mask_bids, segmentation_pri
         If true, use the ANTs antsAtroposN4.sh script to defined the segmentation and bias correction. If false, the priors
         are used as the posteriors for the segmentation, and the T1w image is bias-corrected using the priors.
     atropos_n4_iterations : int, optional
-        Number of iterations for antsAtroposN4.sh. Default is 3.
+        Number of iterations for antsAtroposN4.sh.
     atropos_prior_weight : float, optional
-        Prior weight for Atropos. Default is 0.25. Minimum useful value is 0.2, below this the priors are not very well
-        constrained and you will see priors that overlap in intensity (like SGM and CBM) appear in the wrong places.
+        Prior weight for Atropos. Minimum useful value is 0.2, below this the priors are not very well constrained and you will
+        see labels that overlap in intensity (like SGM and CBM) appear in the wrong places.
 
     Returns:
     --------
@@ -719,9 +719,12 @@ def segment_and_bias_correct(t1w_bids_preproc, brain_mask_bids, segmentation_pri
     if do_atropos_n4:
         logger.info("Running Atropos with N4 bias correction")
         # Run antsAtroposN4.sh, using the priors for segmentation and bias correction
-        seg_output = ants_helpers.ants_atropos_n4(t1w_bids_preproc.get_path(), brain_mask_bids.get_path(),
-                                                         segmentation_priors, work_dir, iterations=atropos_n4_iterations,
-                                                         atropos_prior_weight=atropos_prior_weight, denoise=denoise, n4_spline_spacing=n4_spline_spacing, n4_convergence=n4_convergence, n4_shrink_factor=n4_shrink_factor)
+        seg_output = ants_helpers.segment_and_bias_correct(t1w_bids_preproc.get_path(), brain_mask_bids.get_path(),
+                                                           segmentation_priors, work_dir, iterations=atropos_n4_iterations,
+                                                           prior_weight=atropos_prior_weight, denoise=denoise,
+                                                           n4_spline_spacing=n4_spline_spacing, n4_convergence=n4_convergence,
+                                                           n4_shrink_factor=n4_shrink_factor)
+
         # remap the segmentation posteriors to BIDS labels
         seg_output['segmentation_image'] = ants_helpers.posteriors_to_segmentation(seg_output['posteriors'], work_dir)
     else:
@@ -729,22 +732,30 @@ def segment_and_bias_correct(t1w_bids_preproc, brain_mask_bids, segmentation_pri
         posteriors_masked = [ants_helpers.apply_mask(posterior, brain_mask_bids.get_path(), work_dir)
                                 for posterior in segmentation_priors]
 
-        # Copy the prior segmentation
+        # remap the prior posteriors to BIDS labels
         seg_output['segmentation_image'] = ants_helpers.posteriors_to_segmentation(posteriors_masked, work_dir)
         seg_output['posteriors'] = posteriors_masked
+
+        # Remove outliers from the image
+        logger.info("Removing outliers from the T1w image")
+        t1w_winsorized = ants_helpers.winsorize_image(t1w_bids_preproc.get_path(), brain_mask_bids.get_path(), work_dir)
 
         # Denoise and then bias correct the T1w image
         if denoise:
             logger.info("Denoising T1w image")
-            denoised_t1w_image = ants_helpers.denoise_image(t1w_bids_preproc.get_path(), work_dir)
+            denoised_t1w_image = ants_helpers.denoise_image(t1w_winsorized, work_dir)
         else:
-            denoised_t1w_image = t1w_bids_preproc.get_path()
+            denoised_t1w_image = t1w_winsorized
 
         logger.info("Bias correcting T1w image")
-        seg_output['bias_corrected_anatomical_images'] = [
-            ants_helpers.n4_bias_correction(denoised_t1w_image, brain_mask_bids.get_path(), work_dir,
-                                            segmentation_posteriors=posteriors_masked, n4_spline_spacing=n4_spline_spacing,
-                                            n4_convergence=n4_convergence)]
+        denoised_n4_t1w = ants_helpers.n4_bias_correction(denoised_t1w_image, brain_mask_bids.get_path(), work_dir,
+                                                          segmentation_posteriors=posteriors_masked,
+                                                          n4_spline_spacing=n4_spline_spacing, n4_convergence=n4_convergence,
+                                                          n4_shrink_factor=n4_shrink_factor)
+        normalized_n4_t1w = ants_helpers.normalize_image(denoised_n4_t1w, seg_output['segmentation_image'], work_dir)
+
+        seg_output['bias_corrected_anatomical_images'] = [normalized_n4_t1w]
+
 
     # Copy the segmentation outputs to the output dataset
     seg_output_bids = {}
