@@ -271,6 +271,7 @@ def segment_and_bias_correct(anatomical_images, brain_mask, priors, work_dir, de
 
     for i, anat in enumerate(round_2['bias_corrected_anatomical_images']):
         if which_n4[i]:
+            # Note we use label 3 here because these are still ANTs labels, 3=WM
             normalized_anatomical.append(normalize_intensity(anat, round_2['segmentation'], work_dir, label=3))
         else:
             normalized_anatomical.append(anat)
@@ -1187,10 +1188,10 @@ def get_log_jacobian_determinant(reference_image, transform, work_dir, use_geom=
     return log_jacobian_file
 
 
-def winsorize_intensity(image, mask, work_dir):
+def winsorize_intensity(image, mask, work_dir, lower_percentile=0.5, upper_iqr_scale=3):
     """Winsorize the intensity of an image, using a mask to calculate bounds.
 
-    The lower bound is the 0.5th percentile of the image within the mask, after removing any voxels with intensity <= 0.
+    The lower bound is the lower_percentile of the image within the mask, after removing any voxels with intensity <= 0.
 
     The upper bound is set conservatively using the histogram and inter-quartile range of the image within the mask.
 
@@ -1207,7 +1208,10 @@ def winsorize_intensity(image, mask, work_dir):
         Path to mask image.
     work_dir : str
         Path to working directory.
-
+    lower_percentile : float, optional
+        Lower percentile for winsorization. Default is 0.5. Set to 0 to include all positive values.
+    upper_iqr_scale : float, optional
+        Scale factor for upper bound, anything over (inter-quartile range) * upper_iqr_scale is winsorized.
     Returns:
     --------
     winsorized_image : str
@@ -1224,12 +1228,12 @@ def winsorize_intensity(image, mask, work_dir):
     # Remove anything <= 0
     brain = brain[brain > 0.0]
 
-    low_threshold = np.percentile(brain, 0.5)
+    low_threshold = np.percentile(brain, lower_percentile)
 
     quantiles = np.quantile(brain, [0.0, 0.25, 0.5, 0.75, 1.0])
 
     # Winsorize at median + 3 * IQR
-    high_threshold = quantiles[2] + 3 * (quantiles[3] - quantiles[1])
+    high_threshold = quantiles[2] + upper_iqr_scale * (quantiles[3] - quantiles[1])
 
     img_winsor = img.clone()
     img_winsor[img_winsor < low_threshold] = low_threshold
