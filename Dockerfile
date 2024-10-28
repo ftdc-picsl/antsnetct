@@ -1,4 +1,4 @@
-FROM cookpa/antspynet:latest AS builder
+FROM cookpa/antspynet:9049dc47664c AS builder
 
 # Use a builder layer to get data and networks. These change infrequently, so can be downloaded
 # once and then cached.
@@ -12,7 +12,7 @@ RUN /opt/bin/get_antsxnet_data.py /home/antspyuser/.keras 1 \
         /opt/selected_antspynet_data.txt /opt/selected_antspynet_networks.txt \
     && chmod -R 0755 /home/antspyuser/.keras
 
-FROM cookpa/antspynet:latest AS runtime
+FROM cookpa/antspynet:9049dc47664c AS runtime
 
 ARG DOCKER_IMAGE_TAG="unknown"
 ARG DOCKER_IMAGE_VERSION="unknown"
