@@ -7,15 +7,23 @@ Cortical thickness with ANTsPyNet
 Install a complete runnable container from [Docker
 Hub](https://hub.docker.com/repository/docker/cookpa/antsnetct/general).
 
-For non-containerized installation (not recommended), first install the system
-requirements [ANTs](https://github.com/ANTsX/ANTs),
+Non-containerized installation is not recommended, but is available to advanced users.
+First install the system requirements [ANTs](https://github.com/ANTsX/ANTs),
 [c3d](https://github.com/pyushkevich/c3d), and
 [trim_neck.sh](https://github.com/ftdc-picsl/antsnetct/blob/main/scripts/trim_neck.sh).
+These need to be on the system path.
+
 Then install with pip
 ```
 git clone https://github.com/ftdc-picsl/antsnetct
 pip install antsnetct
 ```
+
+If you run into errors with the pip install, you may need to pre-install specific
+versions of ANTsPyNet and / or ANTsPy. Note also that cached ANTsPyNet data in `~/.keras`
+can get out of date and affect results. The docker containers manage the software and data
+dependencies for you, and are the recommended way to run antsnetct.
+
 
 ## Configuration
 
