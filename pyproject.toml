@@ -18,9 +18,10 @@ classifiers = [
 
 dependencies = [
     "antspynet",
-    "antspyx",
+    "antspyx>=0.5.4",
     "filelock",
-    "pybids==0.16.5"
+    "pybids==0.16.5",
+    "templateflow==24.2.0"
 ]
 
 [project.urls]

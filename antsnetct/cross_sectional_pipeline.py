@@ -738,7 +738,7 @@ def segment_and_bias_correct(t1w_bids_preproc, brain_mask_bids, segmentation_pri
 
         # Remove outliers from the image
         logger.info("Removing outliers from the T1w image")
-        t1w_winsorized = ants_helpers.winsorize_image(t1w_bids_preproc.get_path(), brain_mask_bids.get_path(), work_dir)
+        t1w_winsorized = ants_helpers.winsorize_intensity(t1w_bids_preproc.get_path(), brain_mask_bids.get_path(), work_dir)
 
         # Denoise and then bias correct the T1w image
         if denoise:
@@ -752,7 +752,7 @@ def segment_and_bias_correct(t1w_bids_preproc, brain_mask_bids, segmentation_pri
                                                           segmentation_posteriors=posteriors_masked,
                                                           n4_spline_spacing=n4_spline_spacing, n4_convergence=n4_convergence,
                                                           n4_shrink_factor=n4_shrink_factor)
-        normalized_n4_t1w = ants_helpers.normalize_image(denoised_n4_t1w, seg_output['segmentation_image'], work_dir)
+        normalized_n4_t1w = ants_helpers.normalize_intensity(denoised_n4_t1w, seg_output['segmentation_image'], work_dir)
 
         seg_output['bias_corrected_anatomical_images'] = [normalized_n4_t1w]
 

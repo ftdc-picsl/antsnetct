@@ -34,8 +34,8 @@ COPY scripts/trim_neck.sh /opt/bin/trim_neck.sh
 COPY --from=builder /home/antspyuser/.keras /home/antspyuser/.keras
 COPY . /opt/src/antsnetct
 
-# Install templateflow
-RUN pip install templateflow==24.2.0 /opt/src/antsnetct \
+# Install antsnetct
+RUN pip install /opt/src/antsnetct \
     && rm -rf /root/.cache/pip
 
 LABEL maintainer="Philip A Cook (https://github.com/cookpa)"
