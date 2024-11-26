@@ -381,7 +381,7 @@ def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=
     return segmentation_n4_dict
 
 
-def base_ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=3, atropos_iterations=15,
+def _base_ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=3, atropos_iterations=15,
                     prior_weight=0.25, mrf_weight=0.1, denoise=True, use_mixture_model_proportions=True,
                     n4_prior_classes=[2,3,4,5,6], n4_spline_spacing=180, n4_convergence='[50x50x50x50,1e-7]',
                     n4_shrink_factor=3):

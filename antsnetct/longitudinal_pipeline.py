@@ -273,7 +273,7 @@ def longitudinal_analysis():
             if args.sst_reg_quick:
                 # for antsMultivariateTemplateConstruction2.sh
                 sst_build_metric = 'MI'
-                sst_build_iterations = '20x20x20x40x0'
+                sst_build_iterations = '20x20x20x30x0'
                 sst_build_shrink_factors = '6x4x3x2x1'
                 sst_build_smoothing_sigmas = '4x2x1x1x0vox'
 
@@ -316,13 +316,13 @@ def longitudinal_analysis():
 
             sst_initial_templates = [sst_preproc_input['initial_sst_head'], sst_preproc_input['initial_sst_brain']]
 
-            # First do a rigid registration to produce an initial template
+            # One round of rigid registration to move the template to its average position
             sst_output_rigid = ants_helpers.build_sst(sst_preproc_images, working_dir, initial_templates=sst_initial_templates,
                                                       reg_transform='Rigid[0.1]', reg_iterations='40x60x40x0',
                                                       reg_metric='MI', reg_metric_weights=template_weights,
                                                       reg_shrink_factors='6x4x2x1',
                                                       reg_smoothing_sigmas='3x2x1x0vox',
-                                                      template_iterations=2)
+                                                      template_iterations=1)
 
             sst_output = ants_helpers.build_sst(sst_preproc_images, working_dir, initial_templates=sst_output_rigid,
                                                 reg_transform=sst_build_transform, reg_iterations=sst_build_iterations,
