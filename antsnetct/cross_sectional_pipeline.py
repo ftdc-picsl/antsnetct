@@ -752,7 +752,8 @@ def segment_and_bias_correct(t1w_bids_preproc, brain_mask_bids, segmentation_pri
                                                           segmentation_posteriors=posteriors_masked,
                                                           n4_spline_spacing=n4_spline_spacing, n4_convergence=n4_convergence,
                                                           n4_shrink_factor=n4_shrink_factor)
-        normalized_n4_t1w = ants_helpers.normalize_intensity(denoised_n4_t1w, seg_output['segmentation_image'], work_dir)
+        normalized_n4_t1w = ants_helpers.normalize_intensity(denoised_n4_t1w, seg_output['segmentation_image'], work_dir,
+                                                             label=2)
 
         seg_output['bias_corrected_anatomical_images'] = [normalized_n4_t1w]
 
@@ -935,14 +936,14 @@ def _pairwise_brain_registration(fixed, moving, quick_reg, work_dir, fixed_mask=
             'inverse_transform' - path to the inverse transform in the output dataset
     """
     if quick_reg:
-        template_reg = ants_helpers.univariate_pairwise_registration(fixed, moving, work_dir,
+        template_reg = ants_helpers.univariate_template_registration(fixed, moving, work_dir,
                                                                      metric='Mattes', metric_param_str='32',
                                                                      fixed_mask=fixed_mask, moving_mask=moving_mask,
-                                                                     transform='SyN[0.25,3,0]', iterations='40x40x70x30x5',
+                                                                     transform='SyN[0.25,3,0]', iterations='40x40x60x40x0',
                                                                      shrink_factors='6x5x4x2x1',
                                                                      smoothing_sigmas='4x3x2x1x0vox', apply_transforms=False)
     else:
-        template_reg = ants_helpers.univariate_pairwise_registration(fixed, moving, work_dir,
+        template_reg = ants_helpers.univariate_template_registration(fixed, moving, work_dir,
                                                                      metric='CC', metric_param_str='4', fixed_mask=fixed_mask,
                                                                      moving_mask=moving_mask, transform='SyN[0.2,3,0]',
                                                                      iterations='30x30x70x70x20', shrink_factors='8x6x4x2x1',

@@ -381,7 +381,7 @@ def ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=
     return segmentation_n4_dict
 
 
-def base_ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=3, atropos_iterations=15,
+def _base_ants_atropos_n4(anatomical_images, brain_mask, priors, work_dir, iterations=3, atropos_iterations=15,
                     prior_weight=0.25, mrf_weight=0.1, denoise=True, use_mixture_model_proportions=True,
                     n4_prior_classes=[2,3,4,5,6], n4_spline_spacing=180, n4_convergence='[50x50x50x50,1e-7]',
                     n4_shrink_factor=3):
@@ -758,11 +758,11 @@ def cortical_thickness(segmentation, segmentation_posteriors, work_dir, kk_its=4
     return thick_file
 
 
-def univariate_pairwise_registration(fixed_image, moving_image, work_dir, fixed_mask=None, moving_mask=None,
+def univariate_template_registration(fixed_image, moving_image, work_dir, fixed_mask=None, moving_mask=None,
                                      metric='CC', metric_param_str='4', transform='SyN[0.2,3,0]',
                                      iterations='20x40x60x70x70x10', shrink_factors='8x6x4x3x2x1',
                                      smoothing_sigmas='5x4x3x2x1x0vox', apply_transforms=True):
-    """Pairwise registration with defaults selected for population template registration.
+    """Pairwise registration with defaults selected for population template registration, similar to antsCorticalTHickness.sh.
 
     Does a linear and non-linear registration of the moving image to the fixed image with antsRegistration. Affine
     parameters are optimized for inter-subject registration.
@@ -1020,33 +1020,6 @@ def posteriors_to_segmentation(posteriors, work_dir, class_labels=[0, 3, 8, 2, 9
     return seg_file
 
 
-def binarize_brain_mask(segmentation, work_dir):
-    """Binarize brain mask
-
-    Parameters:
-    -----------
-    segmentation : str
-        Path to labeled segmentation image where all positive labels are part of the brain mask
-    work_dir : str
-        Path to working directory
-
-    Returns:
-    --------
-    brain_mask : str
-        Path to brain mask
-    """
-    mask = ants.image_read(segmentation)
-    # Binarize mask image
-    mask = ants.threshold_image(mask, 1, None, 1, 0)
-
-    tmp_file_prefix = get_temp_file(work_dir, prefix='binarize_mask')
-    mask_file = f"{tmp_file_prefix}_binarized.nii.gz"
-
-    ants.image_write(mask, mask_file)
-
-    return mask_file
-
-
 def threshold_image(image, work_dir, lower=None, upper=None, inside_value=1, outside_value=0):
     """Threshold an image.
 
@@ -1075,7 +1048,7 @@ def threshold_image(image, work_dir, lower=None, upper=None, inside_value=1, out
 
     mask_file = f"{tmp_file_prefix}_thresholded.nii.gz"
 
-    mask = ants.threshold_image(image, lower, upper, inside_value, outside_value)
+    mask = ants.threshold_image(ants.image_read(image), lower, upper, inside_value, outside_value)
 
     ants.image_write(mask, mask_file)
 
@@ -1300,7 +1273,7 @@ def winsorize_intensity_with_seg(image, segmentation, low_label, high_label, wor
     return winsor_file
 
 
-def normalize_intensity(image, segmentation, work_dir, label=8, scaled_label_mean=1000):
+def normalize_intensity(image, segmentation, work_dir, label=2, scaled_label_mean=1000):
     """Normalize intensity of an image so that the mean intensity of a tissue class is a specified value.
 
     Parameters:
@@ -1311,8 +1284,8 @@ def normalize_intensity(image, segmentation, work_dir, label=8, scaled_label_mea
         Path to segmentation image.
     work_dir : str
         Path to working directory.
-    label : int
-        Label of tissue class to normalize.
+    label : int, optional
+        Label of tissue class to normalize. Default is 2 (BIDS common derived label for white matter).
     scaled_label_mean : float
         Mean intensity of the tissue class after normalization.
 
@@ -1518,11 +1491,14 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
                                        apply_transforms=True):
     """Multivariate pairwise registration of images.
 
+    This is a simplified interface to multivariate_registration, with default parameters for pairwise registration. It will
+    also work with single-modality images.
+
     Parameters:
     -----------
-    fixed_images : list
+    fixed_images : list or str
         List of fixed images, in the same physical space.
-    moving_images : list
+    moving_images : list or str
         List of moving images, in the same physical space.
     work_dir : str
         Path to working directory.
@@ -1564,6 +1540,11 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
         'fixed_images_warped' : list of str
             List of warped fixed images
     """
+    if isinstance(fixed_images, str):
+        fixed_images = [fixed_images]
+    if isinstance(moving_images, str):
+        moving_images = [moving_images]
+
     num_modalities = len(fixed_images)
 
     if len(moving_images) != num_modalities:
@@ -1598,10 +1579,13 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
     affine_stage.extend(['--convergence', '[100x250x50x0, 1e-6, 10]', '--shrink-factors', '8x4x2x1', '--smoothing-sigmas',
                     '4x2x1x0vox'])
 
+    mask_arg = f"[{fixed_mask},{moving_mask}]"
+
     reg_command = ['antsRegistration', '--dimensionality', '3', '--float', '0', '--collapse-output-transforms', '1',
                     '--output', transform_prefix, '--interpolation', 'Linear', '--winsorize-image-intensities',
                     '[0.0,0.995]', '--use-histogram-matching', '0', '--initial-moving-transform',
-                    f"[{fixed_images[0]},{moving_images[0]},1]", '--write-composite-transform', '1', '--verbose']
+                    f"[{fixed_images[0]},{moving_images[0]},1]", '--write-composite-transform', '1', '--masks', mask_arg,
+                    '--verbose']
 
     if transform.startswith('Affine'):
         reg_command.extend(rigid_stage)
@@ -1717,4 +1701,67 @@ def combine_masks(masks, work_dir, thresh = 0.0001):
     ants.image_write(combined_mask, combined_mask_file)
 
     return combined_mask_file
+
+
+def get_image_spacing(image):
+    """Get the voxel spacing of an image
+
+    Parameters:
+    -----------
+    image : str
+        Path to image
+
+    Returns:
+    --------
+    list of float
+        Voxel spacing in mm
+    """
+    img = ants.image_read(image)
+    return img.spacing
+
+
+def resample_image_by_spacing(image, target_spacing, work_dir, interpolation='Linear'):
+    """Resample an image to a new voxel spacing.
+
+    Parameters:
+    -----------
+    image : str
+        Path to image
+    target_spacing : list of float
+        Target voxel spacing in mm
+    work_dir : str
+        Path to working directory
+    interpolation : str
+        Interpolation method. Default is 'Linear'.
+
+    Returns:
+    --------
+    resampled_image : str
+        Path to resampled image
+    """
+    img = ants.image_read(image)
+
+    interp_code = 0
+
+    # one of 0 (linear), 1 (nearest neighbor), 2 (gaussian), 3 (windowed sinc), 4 (bspline)
+    if interpolation.lower() == 'linear':
+        interp_code = 0
+    elif interpolation.lower() == 'nearestneighbor':
+        interp_code = 1
+    elif interpolation.lower() == 'gaussian':
+        interp_code = 2
+    elif interpolation.lower() == 'windowedsinc':
+        interp_code = 3
+    elif interpolation.lower() == 'bspline':
+        interp_code = 4
+    else:
+        raise ValueError(f"Interpolation method {interpolation} not recognized. Must be one of: 'Linear', 'NearestNeighbor', " +
+                        "'Gaussian', 'WindowedSinc', 'BSpline'")
+
+    resampled = ants.resample_image(img, target_spacing, use_voxels=False, interp_type=interp_code)
+
+    tmp_file_prefix = get_temp_file(work_dir, prefix='resample_by_spacing')
+    resampled_file = f"{tmp_file_prefix}_resampled.nii.gz"
+    ants.image_write(resampled, resampled_file)
+    return resampled_file
 
