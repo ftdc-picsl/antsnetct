@@ -322,7 +322,8 @@ def longitudinal_analysis():
                                                       reg_metric='MI', reg_metric_weights=template_weights,
                                                       reg_shrink_factors='6x4x2x1',
                                                       reg_smoothing_sigmas='3x2x1x0vox',
-                                                      template_iterations=1)
+                                                      template_iterations=1,
+                                                      template_sharpen='none')
 
             sst_output = ants_helpers.build_sst(sst_preproc_images, working_dir, initial_templates=sst_output_rigid,
                                                 reg_transform=sst_build_transform, reg_iterations=sst_build_iterations,

@@ -6,7 +6,7 @@ import logging
 import numpy as np
 import os
 
-from .system_helpers import run_command, get_nifti_file_prefix, copy_file, get_temp_file, get_temp_dir
+from .system_helpers import run_command, get_nifti_file_prefix, copy_file, get_temp_file, get_temp_dir, get_verbose
 
 
 def apply_mask(image, mask, work_dir):
@@ -123,7 +123,7 @@ def gamma_correction(image, gamma, work_dir):
     return corrected_image_file
 
 
-def deep_brain_extraction(anatomical_image, work_dir, modality='t1'):
+def deep_brain_extraction(anatomical_image, work_dir, modality='t1threetissue'):
     """Extract brain from an anatomical image
 
     Parameters:
@@ -144,7 +144,11 @@ def deep_brain_extraction(anatomical_image, work_dir, modality='t1'):
     """
     anat = ants.image_read(anatomical_image)
 
-    be_output = antspynet.brain_extraction(anat, modality=modality, verbose=True)
+    # Can be a single mask, or a dict containing a mask and probabilities
+    be_output = antspynet.brain_extraction(anat, modality=modality, verbose=get_verbose())
+
+    if isinstance(be_output, dict):
+        be_output = be_output['segmentation_image']
 
     brain_mask = ants.iMath_get_largest_component(ants.threshold_image(be_output, 0.5, 1.5))
 
@@ -178,9 +182,9 @@ def deep_atropos(anatomical_image, work_dir, use_legacy_network=False):
     anat = ants.image_read(anatomical_image)
 
     if use_legacy_network:
-        seg = antspynet.deep_atropos(anat, do_preprocessing=True, verbose=True)
+        seg = antspynet.deep_atropos(anat, do_preprocessing=True, verbose=get_verbose())
     else:
-        seg = antspynet.deep_atropos([anat, None, None], do_preprocessing=True, verbose=True)
+        seg = antspynet.deep_atropos([anat, None, None], do_preprocessing=True, verbose=get_verbose())
 
     tmp_file_prefix = get_temp_file(work_dir, prefix='deep_atropos')
 
@@ -733,7 +737,7 @@ def cortical_thickness(segmentation, segmentation_posteriors, work_dir, kk_its=4
     thick_file = f"{tmp_file_prefix}_cortical_thickness.nii.gz"
     # We'll do things on the command line so we can access all the options and check the exit code
     # kk = ants.kelly_kapowski(s=kk_seg, g=gm_posterior, w=kk_wm_posterior, its=kk_its, r=grad_update, x=grad_smooth,
-    #                         verbose=True, gm_label=gm_lab, wm_label=wm_lab)
+    #                         verbose=get_verbose(), gm_label=gm_lab, wm_label=wm_lab)
     # ants.image_write(kk, thick_file)
 
     # Encode additional defaults from antsCorticalThickness.sh

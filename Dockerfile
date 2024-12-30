@@ -1,4 +1,4 @@
-FROM cookpa/antspynet:9049dc47664c AS builder
+FROM cookpa/antspynet:latest AS builder
 
 # Use a builder layer to get data and networks. These change infrequently, so can be downloaded
 # once and then cached.
@@ -12,7 +12,7 @@ RUN /opt/bin/get_antsxnet_data.py /home/antspyuser/.keras 1 \
         /opt/selected_antspynet_data.txt /opt/selected_antspynet_networks.txt \
     && chmod -R 0755 /home/antspyuser/.keras
 
-FROM cookpa/antspynet:9049dc47664c AS runtime
+FROM cookpa/antspynet:latest AS runtime
 
 ARG DOCKER_IMAGE_TAG="unknown"
 ARG DOCKER_IMAGE_VERSION="unknown"
@@ -27,7 +27,7 @@ RUN apt update && apt install -y bc
 # Get c3d
 COPY --from=pyushkevich/tk:2023b /tk/c3d/build/c3d /opt/bin/c3d
 # Get ants
-COPY --from=antsx/ants:2.5.3 /opt/ants /opt/ants
+COPY --from=antsx/ants:2.5.4 /opt/ants /opt/ants
 
 COPY scripts/trim_neck.sh /opt/bin/trim_neck.sh
 # Copy data and code from builder

@@ -1,4 +1,5 @@
 brainExtraction
+brainExtractionBrainWeb20
 brainExtractionT1
 brainExtractionT1v1
 brainExtractionRobustT1
@@ -27,3 +28,4 @@ DeepAtroposHcpT1Weights
 DeepAtroposHcpT1T2Weights
 DeepAtroposHcpT1FAWeights
 DeepAtroposHcpT1T2FAWeights
+HarvardOxfordAtlasSubcortical
