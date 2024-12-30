@@ -166,8 +166,8 @@ def cross_sectional_analysis():
     brain_mask_parser.add_argument("--brain-mask-dataset", help="Dataset containing brain masks. Masks from here will be used "
                                    "in preference to those in the input dataset.", type=str, default=None)
     brain_mask_parser.add_argument("--brain-mask-modality", help="Brain masking modality option to use with antspynet. Only "
-                                   "used if no pre-existing mask is found. Options are 't1', 't1nobrainer', 't1combined'",
-                                   type=str, default='t1')
+                                   "used if no pre-existing mask is found. Options are 't1threetissue', 't1', 't1nobrainer', "
+                                   "'t1combined'", type=str, default='t1threetissue')
 
     segmentation_parser = parser.add_argument_group("Segmentation arguments. The default segmentation method is ANTsPyNet "
                                                     "deep_atropos. The output from deep_atropos or from external priors can "
