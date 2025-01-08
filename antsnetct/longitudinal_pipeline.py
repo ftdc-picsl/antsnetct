@@ -569,15 +569,23 @@ def preprocess_sst_input(cx_biascorr_t1w_bids, group_template, group_template_br
 
     smallest_input_spacing_scalar = 1.0e6
 
+    largest_input_physical_size = [0, 0, 0]
+
     for t1w in cx_biascorr_t1w_bids:
         # get the T1w image and mask, and reset their origins to the mask centroid
         input_t1w_denoised_image = t1w.get_path()
 
         spacing = ants_helpers.get_image_spacing(input_t1w_denoised_image)
 
+        size = ants_helpers.get_image_size(input_t1w_denoised_image)
+
         for idx in range(len(spacing)):
             if spacing[idx] < smallest_input_spacing_scalar:
                 smallest_input_spacing_scalar = spacing[idx]
+
+            physical_size = spacing[idx] * size[idx]
+            if physical_size > largest_input_physical_size[idx]:
+                largest_input_physical_size[idx] = physical_size
 
         input_t1w_mask = t1w.get_derivative_path_prefix() + '_desc-brain_mask.nii.gz'
 
@@ -622,10 +630,16 @@ def preprocess_sst_input(cx_biascorr_t1w_bids, group_template, group_template_br
 
     sst_spacing = [sst_isotropic_res] * 3
 
+    sst_size = [round(largest_input_physical_size[i] / sst_spacing[i]) for i in range(3)]
+
     initial_sst_head = ants_helpers.resample_image_by_spacing(initial_sst_head, sst_spacing, work_dir,
-                                                              interpolation="Gaussian")
+                                                              interpolation='Gaussian')
     initial_sst_brain = ants_helpers.resample_image_by_spacing(initial_sst_brain, sst_spacing, work_dir,
-                                                               interpolation="Gaussian")
+                                                               interpolation='Gaussian')
+
+    # Pad the SST to the largest input size (includes padding added in structural preproc)
+    initial_sst_head = ants_helpers.pad_image(initial_sst_head, sst_size, work_dir, pad_to_shape=True)
+    initial_sst_brain = ants_helpers.pad_image(initial_sst_brain, sst_size, work_dir, pad_to_shape=True)
 
     initial_sst_mask = ants_helpers.threshold_image(initial_sst_brain, work_dir, lower=0.01)
 
