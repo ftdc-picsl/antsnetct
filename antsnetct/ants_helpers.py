@@ -8,6 +8,7 @@ import os
 
 from .system_helpers import run_command, get_nifti_file_prefix, copy_file, get_temp_file, get_temp_dir, get_verbose
 
+logger = logging.getLogger(__name__)
 
 def apply_mask(image, mask, work_dir):
     """Multiply an image by a mask
@@ -40,6 +41,9 @@ def apply_mask(image, mask, work_dir):
 
     ants.image_write(masked_img, masked_image_file)
 
+    if get_verbose():
+        logger.info(f"Masked image written to {masked_image_file}")
+
     return masked_image_file
 
 def smooth_image(image, sigma, work_dir):
@@ -66,6 +70,9 @@ def smooth_image(image, sigma, work_dir):
     smoothed_image_file = get_temp_file(work_dir, prefix='smooth_image') + '_smoothed.nii.gz'
 
     ants.image_write(smoothed_img, smoothed_image_file)
+
+    if get_verbose():
+        logger.info(f"Smoothed by {sigma} vox, output written to {smoothed_image_file}")
 
     return smoothed_image_file
 
@@ -119,6 +126,9 @@ def gamma_correction(image, gamma, work_dir):
     corrected_image_file = get_temp_file(work_dir, prefix='gamma_correction') + '_corrected.nii.gz'
 
     ants.image_write(corrected_img, corrected_image_file)
+
+    if get_verbose():
+        logger.info(f"Gamma corrected image written to {corrected_image_file}")
 
     return corrected_image_file
 
@@ -1705,6 +1715,10 @@ def combine_masks(masks, work_dir, thresh = 0.0001):
 
     ants.image_write(combined_mask, combined_mask_file)
 
+    if get_verbose():
+        logger.info(f"Combined {len(masks)} masks")
+        logger.info(f"Combined mask saved to {combined_mask_file}")
+
     return combined_mask_file
 
 
@@ -1784,6 +1798,11 @@ def resample_image_by_spacing(image, target_spacing, work_dir, interpolation='Li
     tmp_file_prefix = get_temp_file(work_dir, prefix='resample_by_spacing')
     resampled_file = f"{tmp_file_prefix}_resampled.nii.gz"
     ants.image_write(resampled, resampled_file)
+
+    if get_verbose():
+        logger.info(f"Image resampled to {target_spacing}")
+        logger.info(f"Resampled image saved to {resampled_file}")
+
     return resampled_file
 
 
@@ -1822,5 +1841,12 @@ def pad_image(image, pad_spec, work_dir, pad_to_shape=False):
     padded_file = f"{tmp_file_prefix}_padded.nii.gz"
 
     ants.image_write(padded, padded_file)
+
+    if get_verbose():
+        if pad_to_shape:
+            logger.info(f"Image padded to shape {padded.shape}")
+        else:
+            logger.info(f"Image padded by {pad_spec} voxels")
+        logger.info(f"Padded image saved to {padded_file}")
 
     return padded_file
