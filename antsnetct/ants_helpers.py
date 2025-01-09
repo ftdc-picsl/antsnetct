@@ -8,6 +8,7 @@ import os
 
 from .system_helpers import run_command, get_nifti_file_prefix, copy_file, get_temp_file, get_temp_dir, get_verbose
 
+logger = logging.getLogger(__name__)
 
 def apply_mask(image, mask, work_dir):
     """Multiply an image by a mask
@@ -40,6 +41,9 @@ def apply_mask(image, mask, work_dir):
 
     ants.image_write(masked_img, masked_image_file)
 
+    if get_verbose():
+        logger.info(f"Masked image written to {masked_image_file}")
+
     return masked_image_file
 
 def smooth_image(image, sigma, work_dir):
@@ -66,6 +70,9 @@ def smooth_image(image, sigma, work_dir):
     smoothed_image_file = get_temp_file(work_dir, prefix='smooth_image') + '_smoothed.nii.gz'
 
     ants.image_write(smoothed_img, smoothed_image_file)
+
+    if get_verbose():
+        logger.info(f"Smoothed by {sigma} vox, output written to {smoothed_image_file}")
 
     return smoothed_image_file
 
@@ -119,6 +126,9 @@ def gamma_correction(image, gamma, work_dir):
     corrected_image_file = get_temp_file(work_dir, prefix='gamma_correction') + '_corrected.nii.gz'
 
     ants.image_write(corrected_img, corrected_image_file)
+
+    if get_verbose():
+        logger.info(f"Gamma corrected image written to {corrected_image_file}")
 
     return corrected_image_file
 
@@ -244,7 +254,7 @@ def segment_and_bias_correct(anatomical_images, brain_mask, priors, work_dir, de
             List of paths to segmentation posteriors in order: CSF, GM, WM, deep GM, brainstem, cerebellum.
 
     """
-    if type(anatomical_images) == str:
+    if isinstance(anatomical_images, str):
         anatomical_images = [anatomical_images]
 
     if which_n4 is None:
@@ -627,7 +637,7 @@ def atropos_segmentation(anatomical_images, brain_mask, work_dir, iterations=15,
     """
     tmp_file_prefix = get_temp_file(work_dir, prefix='atropos')
 
-    if type(anatomical_images) == str:
+    if isinstance(anatomical_images, str):
         anatomical_images = [anatomical_images]
 
     atropos_cmd = ['Atropos', '-d', '3', '--verbose', '-x', brain_mask]
@@ -922,8 +932,7 @@ def apply_transforms(fixed_image, moving_image, transforms, work_dir, interpolat
     """
     tmp_file_prefix = get_temp_file(work_dir, prefix="aat")
 
-    moving_image_warped = f"{tmp_file_prefix}_{get_nifti_file_prefix(moving_image)}_to_" + \
-                                f"{get_nifti_file_prefix(fixed_image)}_warped.nii.gz"
+    moving_image_warped = f"{tmp_file_prefix}_warped.nii.gz"
 
     apply_cmd = [
         'antsApplyTransforms',
@@ -935,10 +944,12 @@ def apply_transforms(fixed_image, moving_image, transforms, work_dir, interpolat
         '--verbose', '1'
     ]
 
-    if type(transforms) == str:
+    if isinstance(transforms, str):
         apply_cmd.extend(['--transform', transforms])
     else:
         apply_cmd.extend([item for t in transforms for item in ('--transform', t)])
+
+
 
     run_command(apply_cmd)
 
@@ -1421,7 +1432,7 @@ def build_template(images, work_dir, initial_templates=None, reg_transform='SyN[
     num_modalities = 1
     num_images = len(images)
 
-    if type(images[0]) is list:
+    if isinstance(images[0], list):
         num_modalities = len(images)
         num_images = len(images[0])
         for mod_images in images:
@@ -1432,7 +1443,7 @@ def build_template(images, work_dir, initial_templates=None, reg_transform='SyN[
         images = [images]
 
     if initial_templates is not None:
-        if type(initial_templates) is not list:
+        if isinstance(initial_templates, str):
             initial_templates = [initial_templates]
 
         if len(initial_templates) != num_modalities:
@@ -1704,6 +1715,10 @@ def combine_masks(masks, work_dir, thresh = 0.0001):
 
     ants.image_write(combined_mask, combined_mask_file)
 
+    if get_verbose():
+        logger.info(f"Combined {len(masks)} masks")
+        logger.info(f"Combined mask saved to {combined_mask_file}")
+
     return combined_mask_file
 
 
@@ -1722,6 +1737,22 @@ def get_image_spacing(image):
     """
     img = ants.image_read(image)
     return img.spacing
+
+def get_image_size(image):
+    """Get the size of an image
+
+    Parameters:
+    -----------
+    image : str
+        Path to image
+
+    Returns:
+    --------
+    list of int
+        Image size in voxels
+    """
+    img = ants.image_read(image)
+    return img.shape
 
 
 def resample_image_by_spacing(image, target_spacing, work_dir, interpolation='Linear'):
@@ -1767,5 +1798,55 @@ def resample_image_by_spacing(image, target_spacing, work_dir, interpolation='Li
     tmp_file_prefix = get_temp_file(work_dir, prefix='resample_by_spacing')
     resampled_file = f"{tmp_file_prefix}_resampled.nii.gz"
     ants.image_write(resampled, resampled_file)
+
+    if get_verbose():
+        logger.info(f"Image resampled to {target_spacing}")
+        logger.info(f"Resampled image saved to {resampled_file}")
+
     return resampled_file
 
+
+def pad_image(image, pad_spec, work_dir, pad_to_shape=False):
+    """Pad an image with zeros
+
+    Parameters:
+    -----------
+    image : str
+        Path to image
+    pad_spec : list of int
+        Padding in voxels, e.g. [10, 10, 10] pads by 10 voxels on each side in x, y, z.
+
+        If pad_to_shape=True, the image will be padded until it reaches the specified size. If it is already larger, it will
+        not be altered.
+
+        If pad_to_shape=False, this can also be a list of list, e.g. [[0, 10], [10, 10], [5, 0]] to pad different amounts in
+        each dimension.
+    work_dir : str
+        Path to working directory
+
+    Returns:
+    --------
+    padded_image : str
+        Path to padded image
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='pad_image')
+
+    img = ants.image_read(image)
+
+    if pad_to_shape:
+        padded = ants.pad_image(img, shape=pad_spec)
+    else:
+        padded = ants.pad_image(img, pad_width=pad_spec)
+
+    padded_file = f"{tmp_file_prefix}_padded.nii.gz"
+
+    ants.image_write(padded, padded_file)
+
+    if get_verbose():
+        if pad_to_shape:
+            logger.info(f"Image padded to shape {padded.shape}")
+        else:
+            logger.info(f"Image padded by {pad_spec} voxels")
+        logger.info(f"Padded image saved to {padded_file}")
+
+    return padded_file

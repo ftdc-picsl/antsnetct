@@ -110,6 +110,9 @@ def cross_sectional_analysis():
 
     5. Atlas registration. If an atlas is defined, the T1w image is registered to the atlas.
 
+    If the '--longitudinal-preproc' option is used, steps 4 and 5 are skipped. This avoids having to compute thickness and
+    template registration twice for longitudinal data.
+
 
     --- Debugging / development / testing options ---
 
@@ -140,6 +143,8 @@ def cross_sectional_analysis():
     optional_parser = parser.add_argument_group("General optional arguments")
     optional_parser.add_argument("-h", "--help", action="help", help="show this help message and exit")
     optional_parser.add_argument("--bids-filter-file", help="BIDS filter file", type=str, default=None)
+    optional_parser.add_argument("--longitudinal-preproc", help="Skip thickness and template registration steps. Use this for "
+                                 "data that is only analyzed longitudinally", action='store_true')
     optional_parser.add_argument("--keep-workdir", help="Copy working directory to output, for debugging purposes. Either "
                                  "'never', 'on_error', or 'always'.", type=str, default='on_error')
     optional_parser.add_argument("--session", help="Session to process. Using this overrides any session filter in the BIDS "
@@ -347,6 +352,10 @@ def cross_sectional_analysis():
                                                   atropos_n4_iterations=args.atropos_n4_iterations,
                                                   atropos_prior_weight=args.atropos_prior_weight)
 
+                if args.longitudinal_preproc:
+                    logger.info("Skipping thickness and template registration steps")
+                    logger.info(f"Finished processing {t1w_bids.get_uri(relative=False)}")
+                    continue
                 logger.info("Computing cortical thickness")
                 thickness = cortical_thickness(seg_n4, working_dir, args.thickness_iterations)
 
