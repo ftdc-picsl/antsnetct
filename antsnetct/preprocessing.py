@@ -119,3 +119,30 @@ def reset_origin_by_centroid(input_image, centroid_image, work_dir, output_data_
     result = run_command(['c3d', input_image, '-origin-voxel', centroid_str, '-type', output_data_type, '-o', output_image])
 
     return output_image
+
+def center_fov_on_head(input_image, head_mask, work_dir, padding=32):
+    """Center the field of view of an image on the head.
+
+    Parameters:
+    ----------
+    input_image : str
+        Input image filename.
+    head_mask : str
+        Head mask filename. This should be a binary mask of the head.
+    work_dir : str
+        Working directory
+    padding : int, optional
+        Padding in voxels to add around the head mask
+
+    Returns:
+    -------
+    centered_image : str
+        Output image filename
+    """
+    output_file_prefix = get_temp_file(work_dir, prefix='center_fov')
+    centered_image = f"{output_file_prefix}_centered.nii.gz"
+
+    # Center the field of view on the head
+    run_command(['ExtractRegionFromImageByMask', '3', input_image, centered_image, head_mask, '1', str(padding)])
+
+    return centered_image

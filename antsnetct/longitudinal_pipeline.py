@@ -316,16 +316,7 @@ def longitudinal_analysis():
 
             sst_initial_templates = [sst_preproc_input['initial_sst_head'], sst_preproc_input['initial_sst_brain']]
 
-            # One round of rigid registration to move the template to its average position
-            sst_output_rigid = ants_helpers.build_sst(sst_preproc_images, working_dir, initial_templates=sst_initial_templates,
-                                                      reg_transform='Rigid[0.1]', reg_iterations='40x60x40x0',
-                                                      reg_metric='MI', reg_metric_weights=template_weights,
-                                                      reg_shrink_factors='6x4x2x1',
-                                                      reg_smoothing_sigmas='3x2x1x0vox',
-                                                      template_iterations=1,
-                                                      template_sharpen='none')
-
-            sst_output = ants_helpers.build_sst(sst_preproc_images, working_dir, initial_templates=sst_output_rigid,
+            sst_output = ants_helpers.build_sst(sst_preproc_images, working_dir, initial_templates=sst_initial_templates,
                                                 reg_transform=sst_build_transform, reg_iterations=sst_build_iterations,
                                                 reg_metric=sst_build_metric, reg_metric_weights=template_weights,
                                                 reg_shrink_factors=sst_build_shrink_factors,
@@ -519,33 +510,33 @@ def longitudinal_analysis():
                 shutil.copytree(working_dir, debug_workdir)
 
 
-def preprocess_sst_input(cx_biascorr_t1w_bids, group_template, group_template_brain_mask, work_dir, sst_isotropic_res=None):
+def preprocess_sst_input(cx_biascorr_t1w_bids, group_template, group_template_mask, work_dir, sst_isotropic_res=None):
     """Preprocess the input images for SST construction.
 
     This function preprocesses the input images for SST construction and provides an initial unbiased SST. The SST is
-    initialized as the mean of the input images after rigid alignment to the group template.
+    initialized using rigid registration only.
 
     The spacing of the SST is isotropic, following the smallest voxel spacing in the input. So if you have images with spacing
-    1x1x1.2 and 0.9x0.9x1 mm, the SST will have spacing 0.9x0.9x0.9 mm.
+    1x1x1.2 and 0.9x0.9x1 mm, the SST will have spacing 0.9x0.9x0.9 mm. This can be overridden by the sst_isotropic_res option.
 
-    The preprocessing steps are:
-        1. Normalize intensity such that the mean WM intensity is the same across images
-        2. Reset the origin of the images to the centroid of the brain mask. This prevents unwanted shifts
-           in the SST position.
-        3. Rigidly align the images to the group template.
-        4. Average and resample the images to create the initial SST.
-        5. Reset the origin of the SST to the centroid of the approximate SST brain mask (a final SST brain mask is defined
-        later).
+    The bounding box of the SST is defined such that the whole head is included, with padding. This is done to prevent edge
+    effects in registration or cropping of the images during SST construction.
+
+    It is assumed that the input images have been pre-processed through the cross-sectional pipeline, with bias correction and
+    normalization of intensities.
+
+    The returned values include an initial SST, and pre-processed anatomical images. The FOV and origin of the images are set
+    using the brain mask centroids, to minimize drift of the SST during later steps.
 
     Parameters:
     ----------
     cx_biascorr_t1w_bids : list of BIDSImage
         List of BIDSImage objects for the input images. These should be the bias-corrected T1w images from cross-sectional
-        processing. This function will look for brain masks in the same directory with the suffix 'desc-brain_mask.nii.gz'.
+        processing.
     group_template : TemplateImage
-        Group template image, used for initial rigid alignment of images to make the SST.
-    group_template_brain_mask : TemplateImage
-        Brain mask for the group template.
+        Template image for registration
+    group_template_mask : TemplateImage
+        Template brain mask
     work_dir : str
         Working directory
     sst_isotropic_res : float, optional
@@ -564,16 +555,17 @@ def preprocess_sst_input(cx_biascorr_t1w_bids, group_template, group_template_br
 
     The head and brain images are paired for use in multi-metric registration.
     """
-    sst_input_t1w_denoised_normalized_heads = list()
-    sst_input_t1w_denoised_normalized_brains = list()
+    sst_input_t1w_heads = list()
+    sst_input_t1w_brains = list()
+    sst_input_t1w_head_masks = list()
 
     smallest_input_spacing_scalar = 1.0e6
 
     largest_input_physical_size = [0, 0, 0]
 
-    for t1w in cx_biascorr_t1w_bids:
+    for t1w_bids in cx_biascorr_t1w_bids:
         # get the T1w image and mask, and reset their origins to the mask centroid
-        input_t1w_denoised_image = t1w.get_path()
+        input_t1w_denoised_image = t1w_bids.get_path()
 
         spacing = ants_helpers.get_image_spacing(input_t1w_denoised_image)
 
@@ -587,42 +579,74 @@ def preprocess_sst_input(cx_biascorr_t1w_bids, group_template, group_template_br
             if physical_size > largest_input_physical_size[idx]:
                 largest_input_physical_size[idx] = physical_size
 
-        input_t1w_mask = t1w.get_derivative_path_prefix() + '_desc-brain_mask.nii.gz'
+        input_t1w_head_seg = ants_helpers.head_segmentation(input_t1w_denoised_image, work_dir)
 
-        origin_fix = preprocessing.reset_origin_by_centroid(input_t1w_denoised_image, input_t1w_mask, work_dir)
+        # Note: We define the SST input brains using the cross-sectional brain masks, which might not have been computed with
+        # ants.
+        input_t1w_brain_mask = t1w_bids.get_derivative_path_prefix() + '_desc-brain_mask.nii.gz'
 
-        sst_input_t1w_denoised_normalized_heads.append(origin_fix)
+        sst_input_head_origin_fix = preprocessing.reset_origin_by_centroid(input_t1w_denoised_image, input_t1w_brain_mask,
+                                                                           work_dir)
+        sst_input_mask_origin_fix = preprocessing.reset_origin_by_centroid(input_t1w_brain_mask, input_t1w_brain_mask, work_dir)
 
-        mask_origin_fix = preprocessing.reset_origin_by_centroid(input_t1w_mask, input_t1w_mask, work_dir)
+        sst_input_t1w_heads.append(sst_input_head_origin_fix)
 
-        brain_origin_fix = ants_helpers.apply_mask(origin_fix, mask_origin_fix, work_dir)
+        sst_input_brain_origin_fix = ants_helpers.apply_mask(sst_input_head_origin_fix, sst_input_mask_origin_fix, work_dir)
 
-        sst_input_t1w_denoised_normalized_brains.append(brain_origin_fix)
+        sst_input_t1w_brains.append(sst_input_brain_origin_fix)
 
-    sst_input_dict = {'head_images': sst_input_t1w_denoised_normalized_heads,
-                      'brain_images': sst_input_t1w_denoised_normalized_brains}
+        sst_input_head_mask_origin_fix = preprocessing.reset_origin_by_centroid(input_t1w_head_seg['mask_image'],
+                                                                                input_t1w_brain_mask, work_dir)
+        sst_input_t1w_head_masks.append(sst_input_head_mask_origin_fix)
 
-    # Now rigidly align the brain images to the group template to make an initial SST
-    initial_sst_input_heads = list()
-    initial_sst_input_brains = list()
+    # These will be used to build the final SST with whatever transform the user has chosen
+    sst_input_dict = {'head_images': sst_input_t1w_heads, 'brain_images': sst_input_t1w_brains}
 
-    group_template_brain = ants_helpers.apply_mask(group_template.get_path(), group_template_brain_mask.get_path(), work_dir)
+    # Initialize the SST with low-res rigid registration
+
+    group_template_brain = ants_helpers.apply_mask(group_template.get_path(), group_template_mask.get_path(), work_dir)
+
+    # reset origin by centroid just in case the template has an unusual origin, which would lead to large translations
+    group_template_brain = preprocessing.reset_origin_by_centroid(group_template_brain, group_template_mask.get_path(),
+                                                                  work_dir)
+
+    initial_sst_transforms = list()
 
     for idx, brain_native in enumerate(sst_input_dict['brain_images']):
         reg = ants_helpers.multivariate_pairwise_registration(group_template_brain, brain_native, work_dir,
                                                               metric='Mattes', metric_param_str='32', transform='Rigid[0.1]',
                                                               iterations='20x40x20x0', shrink_factors='6x4x3x1',
                                                               smoothing_sigmas='4x3x2x0vox', apply_transforms=False)
+        initial_sst_transforms.append(reg['forward_transform'])
 
-        # apply the transform to the head and brain images
-        initial_sst_input_heads.append(ants_helpers.apply_transforms(group_template_brain, sst_input_dict['head_images'][idx],
-                                                                     reg['forward_transform'], work_dir))
-        initial_sst_input_brains.append(ants_helpers.apply_transforms(group_template_brain, brain_native,
-                                                                      reg['forward_transform'], work_dir))
+    avg_inv_affine = ants_helpers.average_affine_transforms(initial_sst_transforms, work_dir, invert_avg=True)
 
-    # Average the images to create the initial SST
-    initial_sst_head = ants_helpers.average_images(initial_sst_input_heads, work_dir)
-    initial_sst_brain = ants_helpers.average_images(initial_sst_input_brains, work_dir)
+    initial_sst_heads_warped = list()
+    initial_sst_brains_warped = list()
+    initial_sst_head_masks_warped = list()
+
+    # Pad the group template brain generously, we will crop later
+    initial_sst_ref_space = ants_helpers.pad_image(group_template_brain, [128, 128, 128], work_dir)
+
+    # apply the template update to the SST input, so that we hopefully get the full FOV of the input in the result
+    for idx, brain_native in enumerate(sst_input_dict['brain_images']):
+        initial_sst_heads_warped.append(ants_helpers.apply_transforms(initial_sst_ref_space, sst_input_t1w_heads[idx],
+                                                                      [avg_inv_affine, initial_sst_transforms[idx]], work_dir,
+                                                                      single_precision=True))
+        initial_sst_brains_warped.append(ants_helpers.apply_transforms(initial_sst_ref_space, brain_native,
+                                                                       [avg_inv_affine, initial_sst_transforms[idx]], work_dir,
+                                                                       single_precision=True))
+        initial_sst_head_masks_warped.append(ants_helpers.apply_transforms(initial_sst_ref_space, sst_input_t1w_head_masks[idx],
+                                                                           [avg_inv_affine, initial_sst_transforms[idx]],
+                                                                           work_dir, interpolation='NearestNeighbor',
+                                                                           single_precision=True))
+
+    initial_sst_head = ants_helpers.average_images(initial_sst_heads_warped, work_dir)
+    initial_sst_brain = ants_helpers.average_images(initial_sst_brains_warped, work_dir)
+    initial_sst_head_mask = ants_helpers.combine_masks(initial_sst_head_masks_warped, work_dir, thresh=0.5)
+
+    initial_sst_head = preprocessing.center_fov_on_head(initial_sst_head, initial_sst_head_mask, work_dir, padding=24)
+    initial_sst_brain = preprocessing.center_fov_on_head(initial_sst_brain, initial_sst_head_mask, work_dir, padding=24)
 
     # Resample the SST to isotropic spacing
     if sst_isotropic_res is None:
@@ -630,22 +654,16 @@ def preprocess_sst_input(cx_biascorr_t1w_bids, group_template, group_template_br
 
     sst_spacing = [sst_isotropic_res] * 3
 
-    sst_size = [round(largest_input_physical_size[i] / sst_spacing[i]) for i in range(3)]
-
     initial_sst_head = ants_helpers.resample_image_by_spacing(initial_sst_head, sst_spacing, work_dir,
                                                               interpolation='Gaussian')
     initial_sst_brain = ants_helpers.resample_image_by_spacing(initial_sst_brain, sst_spacing, work_dir,
                                                                interpolation='Gaussian')
 
-    # Pad the SST to the largest input size (includes padding added in structural preproc)
-    initial_sst_head = ants_helpers.pad_image(initial_sst_head, sst_size, work_dir, pad_to_shape=True)
-    initial_sst_brain = ants_helpers.pad_image(initial_sst_brain, sst_size, work_dir, pad_to_shape=True)
-
-    initial_sst_mask = ants_helpers.threshold_image(initial_sst_brain, work_dir, lower=0.01)
+    initial_sst_brain_mask = ants_helpers.threshold_image(initial_sst_brain, work_dir, lower=0.01)
 
     # Reset the origin of the SST to the centroid of the brain mask
-    initial_sst_head = preprocessing.reset_origin_by_centroid(initial_sst_head, initial_sst_mask, work_dir)
-    initial_sst_brain = preprocessing.reset_origin_by_centroid(initial_sst_brain, initial_sst_mask, work_dir)
+    initial_sst_head = preprocessing.reset_origin_by_centroid(initial_sst_head, initial_sst_brain_mask, work_dir)
+    initial_sst_brain = preprocessing.reset_origin_by_centroid(initial_sst_brain, initial_sst_brain_mask, work_dir)
 
     sst_input_dict['initial_sst_head'] = initial_sst_head
     sst_input_dict['initial_sst_brain'] = initial_sst_brain
