@@ -147,9 +147,11 @@ Some files have metadate stored in a JSON sidecar.
 
 ## Longitudinal thickness
 
-First run the cross-sectional (cx) pipeline on all time points.
+First run the cross-sectional (cx) pipeline on all time points. To make this faster, you can use
+the `--longitudinal-preproc` option, which will skip thickness and group template normalization.
 
-Defaults to running all session T1w images, but user can input a custom list.
+The longitudinal pipeline defaults to running all session T1w images, but user can input a custom
+list.
 
 The SST is built from the *processed* T1w images (ie, `desc-biascorr`) but the longitudinal
 segmentation is done with the *preprocessed* T1w images (ie, `desc-preproc`), which is oriented
