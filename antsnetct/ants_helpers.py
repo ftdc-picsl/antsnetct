@@ -169,6 +169,53 @@ def deep_brain_extraction(anatomical_image, work_dir, modality='t1threetissue'):
     return mask_image_file
 
 
+def head_segmentation(anatomical_image, work_dir, modality='t1threetissue'):
+    """Segment head from an anatomical image
+
+    Parameters:
+    -----------
+    anatomical_image: str
+        Anatomical image
+
+    work_dir: str
+        Path to working directory
+
+    modality: str
+        Head segmentation modality, see antspynet.utilities.brain_extraction for a complete list. Currently, only
+        't1threetissue' is supported.
+
+    Returns:
+    --------
+    dict with keys:
+        'segmentation_image': str
+            Path to head segmentation. For the 't1threetissue' modality, the labels are 1=intra-cranial cavity,
+            2=skull and sinuses, 3=scalp, face, and other structures.
+        'mask_image': str
+            Binary mask of the head.
+
+    """
+    anat = ants.image_read(anatomical_image)
+
+    # Currently only t1threetissue is supported, but this may change
+    if not modality in ['t1threetissue']:
+        raise ValueError(f"Unsupported head segmentation modality: {modality}")
+
+    be_output = antspynet.brain_extraction(anat, modality=modality, verbose=get_verbose())
+
+    be_output = be_output['segmentation_image']
+
+    seg_image_file = get_temp_file(work_dir, prefix='head_segmentation', suffix="_seg.nii.gz")
+
+    mask_image_file = get_temp_file(work_dir, prefix='head_segmentation', suffix="_mask.nii.gz")
+
+    mask = ants.threshold_image(be_output, 0.5, 100000)
+
+    ants.image_write(be_output, seg_image_file)
+    ants.image_write(mask, mask_image_file)
+
+    return {'segmentation_image': seg_image_file, 'mask_image': mask_image_file}
+
+
 def deep_atropos(anatomical_image, work_dir, use_legacy_network=False):
     """Calls antspynet deep_atropos and returns the resulting segmentation and posteriors
 
@@ -909,7 +956,7 @@ def univariate_template_registration(fixed_image, moving_image, work_dir, fixed_
     return {'forward_transform': composite_fwd_transform, 'inverse_transform': composite_inv_transform}
 
 
-def apply_transforms(fixed_image, moving_image, transforms, work_dir, interpolation='Linear'):
+def apply_transforms(fixed_image, moving_image, transforms, work_dir, interpolation='Linear', single_precision=False):
     """Apply transforms, resampling moving image into fixed image space.
 
     Parameters:
@@ -922,8 +969,10 @@ def apply_transforms(fixed_image, moving_image, transforms, work_dir, interpolat
         Path to transform file, a list of files, or 'Identity' for an identity transform
     work_dir : str
         Path to working directory
-    interpolation : str
+    interpolation : str, optional
         Interpolation method, e.g. 'Linear', 'NearestNeighbor'
+    single_precision : bool, optional
+        Use single precision for computations. Default is False.
 
     Returns:
     --------
@@ -949,11 +998,60 @@ def apply_transforms(fixed_image, moving_image, transforms, work_dir, interpolat
     else:
         apply_cmd.extend([item for t in transforms for item in ('--transform', t)])
 
-
+    if single_precision:
+        apply_cmd.append('--float')
 
     run_command(apply_cmd)
 
     return moving_image_warped
+
+
+def average_affine_transforms(transforms, work_dir, invert_avg=False):
+    """Average a list of affine transforms.
+
+    Parameters:
+    -----------
+    transforms : list of str
+        List of paths to affine transforms. These will be converted to .mat files if necessary.
+    work_dir : str
+        Path to working directory
+    invert_avg : bool
+        Invert the average transform. Default is False.
+
+    Returns:
+    --------
+    avg_transform : str
+        Path to average transform
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='avg_transform')
+
+    mat_transforms = list()
+
+    for idx, t in enumerate(transforms):
+        if t.endswith('.mat'):
+            mat_transforms.append(t)
+        else:
+            mat_transform = f"{tmp_file_prefix}_{idx}_GenericAffine.mat"
+            cmd = ['antsApplyTransforms', '-d', '3', '-t', t, '-o', f"Linear[{mat_transform},0]", '--verbose']
+            run_command(cmd)
+            mat_transforms.append(mat_transform)
+
+    avg_transform = f"{tmp_file_prefix}_avg_GenericAffine.mat"
+
+    avg_cmd = ['AverageAffineTransform', '3', avg_transform]
+
+    avg_cmd.extend(mat_transforms)
+
+    run_command(avg_cmd)
+
+    output_transform = avg_transform
+
+    if invert_avg:
+        output_transform = f"{tmp_file_prefix}_invavg_GenericAffine.mat"
+        inv_cmd = ['antsApplyTransforms', '-d', '3', '-t', avg_transform, '-o', f"Linear[{output_transform},1]", '--verbose']
+        run_command(inv_cmd)
+
+    return output_transform
 
 
 def reslice_to_reference(reference_image, source_image, work_dir):
@@ -1432,7 +1530,7 @@ def build_template(images, work_dir, initial_templates=None, reg_transform='SyN[
     num_modalities = 1
     num_images = len(images)
 
-    if isinstance(images[0], list):
+    if isinstance(images[0], (list, tuple)):
         num_modalities = len(images)
         num_images = len(images[0])
         for mod_images in images:
@@ -1509,6 +1607,11 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
     This is a simplified interface to multivariate_registration, with default parameters for pairwise registration. It will
     also work with single-modality images.
 
+    All registrations are initialized by alignment of the moving and fixed center of mass.smooth_image
+
+    If the transform is deformable, rigid and affine stages will be prepended. If the transform is Affine, a rigid stage will
+    be preprended. If the transform is Rigid, only the center of mass initialization is prepended.
+
     Parameters:
     -----------
     fixed_images : list or str
@@ -1525,7 +1628,7 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
         Image metric to use for registration with parameters. Default is 'CC' for cross-correlation.
     metric_param_str : str
         Parameters for the image metric, appended to the metric argument such that we use
-        "{metric_name}[{fixed},{moving},{modality_weight}",{metric_param_str}]. Default is '4' for cross-correlation with a
+        "{metric_name}[{fixed},{moving},{modality_weight},{metric_param_str}]". Default is '4' for cross-correlation with a
         radius of 4 voxels.
     metric_weights : list
         Weights for the registration metric. Default is None, for equal weights. If not None, must be a list of the same
@@ -1684,9 +1787,9 @@ def multivariate_sst_registration(fixed_images, moving_images, work_dir, **kwarg
 
 
 def combine_masks(masks, work_dir, thresh = 0.0001):
-    """Combine a list of binary masks in the same space into a single mask. Masks are added together and thresholded.
-    A very small threshold is approximately a union of the masks, while thresh=(number of masks) is approximately the
-    intersection.
+    """Combine a list of binary masks or probability images in the same space into a single mask.
+    Masks are added together and thresholded. Smaller thresholds tend towards a union of the masks,
+    while thresh=(number of masks) is the intersection.
 
     Parameters:
     ----------
@@ -1702,13 +1805,13 @@ def combine_masks(masks, work_dir, thresh = 0.0001):
     str: Path to the combined mask
     """
     # Load the first mask
-    combined_mask = ants.image_read(masks[0], pixeltype='unsigned char')
+    combined_mask = ants.image_read(masks[0], pixeltype='float')
 
     # Add the rest
     for mask in masks[1:]:
         combined_mask = combined_mask + ants.image_read(mask)
 
-    combined_mask = combined_mask > thresh
+    combined_mask = combined_mask >= thresh
 
     tmp_file_prefix = get_temp_file(work_dir, prefix='combine_mask')
     combined_mask_file = f"{tmp_file_prefix}_combined_mask.nii.gz"
