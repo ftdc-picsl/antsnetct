@@ -820,7 +820,7 @@ def cortical_thickness(segmentation, segmentation_posteriors, work_dir, kk_its=4
 
 
 def univariate_template_registration(fixed_image, moving_image, work_dir, fixed_mask=None, moving_mask=None,
-                                     metric='CC', metric_param_str='4', transform='SyN[0.2,3,0]',
+                                     metric='CC', metric_param_str='2', transform='SyN[0.2,3,0]',
                                      iterations='20x40x60x70x70x10', shrink_factors='8x6x4x3x2x1',
                                      smoothing_sigmas='5x4x3x2x1x0vox', apply_transforms=True):
     """Pairwise registration with defaults selected for population template registration, similar to antsCorticalTHickness.sh.
@@ -1456,7 +1456,7 @@ def build_sst(images, work_dir, **kwargs):
     kwargs.setdefault('reg_smoothing_sigmas', '3x2x1x0vox')
     kwargs.setdefault('reg_transform', 'SyN[0.2, 3, 0.5]')
     kwargs.setdefault('reg_metric', 'CC[3]')
-    kwargs.setdefault('template_iterations', '5')
+    kwargs.setdefault('template_iterations', '4')
     kwargs.setdefault('template_norm', 'mean')
     kwargs.setdefault('template_sharpen', 'unsharp_mask')
 
@@ -1599,7 +1599,7 @@ def build_template(images, work_dir, initial_templates=None, reg_transform='SyN[
 
 
 def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fixed_mask=None, moving_mask=None,
-                                       metric='CC', metric_param_str='4', metric_weights=None, transform='SyN[0.2,3,0]',
+                                       metric='CC', metric_param_str='2', metric_weights=None, transform='SyN[0.2,3,0]',
                                        iterations='20x30x70x70x10', shrink_factors='8x6x4x2x1', smoothing_sigmas='4x3x2x1x0vox',
                                        apply_transforms=True):
     """Multivariate pairwise registration of images.
@@ -1953,3 +1953,131 @@ def pad_image(image, pad_spec, work_dir, pad_to_shape=False):
         logger.info(f"Padded image saved to {padded_file}")
 
     return padded_file
+
+
+def convert_scalar_image_to_rgb(scalar_image, work_dir, mask=None, colormap='hot', min_value=None, max_value=None):
+    """Convert a scalar image to an RGB image using a colormap.
+
+    Parameters:
+    -----------
+    scalar_image : str
+        Path to scalar image
+    work_dir : str
+        Path to working directory
+    mask : str
+        Path to mask image. If provided, the colormap is only applied to voxels within the mask.
+    colormap : str or list
+        Colormap to use. Default is 'hot'. If a list, the colormap is specified as a list of RGB triplets. Each triplet should
+        be a list of 3 floats in the range 0-1 for R, G, B. For example, [[1, 0, 0], [0, 1, 0], [0, 0, 1]] is a red-green-blue
+        colormap, such that the min_value is red, the max_value is blue, and halfway between is green. Intermediate values
+        are interpolated.
+    min_value : float
+        Minimum value for the colormap. If None, the minimum value in the image is used.
+    max_value : float
+        Maximum value for the colormap. If None, the maximum value in the image is used.
+
+    Returns:
+    --------
+    rgb_image : str
+        Path to RGB image
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='scalar_to_rgb')
+
+    img = ants.image_read(scalar_image)
+
+    if mask is None:
+        mask = 'none'
+
+    if min_value is None:
+        min_value = img.min()
+
+    if max_value is None:
+        max_value = img.max()
+
+    colormap_name = colormap.lower()
+    colormap_file = 'none'
+
+    if isinstance(colormap, (list,tuple)):
+        # Custom colormap
+        colormap_name = 'custom'
+        colormap_file = f"{tmp_file_prefix}_custom_colormap.txt"
+
+        # Need to make a 3xN matrix of RGB triplets
+        colormap = np.array(colormap).T
+
+        with open(colormap_file, 'w') as f:
+            # each channel is one row
+            for channel in colormap:
+                f.write(' '.join([str(c) for c in channel]) + '\n')
+
+
+    rgb_file = f"{tmp_file_prefix}_rgb.nii.gz"
+
+    # ConvertScalarImageToRGB imageDimension inputImage outputImage mask colormap [customColormapFile] [minimumInput] [maximumInput] [minimumRGBOutput=0] [maximumRGBOutput=255] <vtkLookupTable>
+    run_command(['ConvertScalarImageToRGB', '3', scalar_image, rgb_file, mask, colormap_name, colormap_file, str(min_value),
+                 str(max_value)])
+
+    if get_verbose():
+        logger.info(f"Scalar image converted to RGB using colormap {colormap}")
+        logger.info(f"RGB image saved to {rgb_file}")
+
+    return rgb_file
+
+
+def create_tiled_mosaic(scalar_image, mask, work_dir, overlay=None, tile_shape=(-1, -1), overlay_alpha=0.25, axis=2,
+                        pad=('mask+4'), slice_spec=(3,'mask+8','mask-8'), flip_spec=None):
+    """Create a tiled mosaic of a scalar image using a colormap.
+
+    Parameters:
+    -----------
+    scalar_image : str
+        Path to scalar image.
+    mask : str
+        Path to mask image. Required to properly set the bounds of the mosaic images.
+    work_dir : str
+        Path to working directory.
+    overlay : str, optional
+        Path to overlay image.
+    tile_shape : list, optional
+        Shape of the mosaic. Default is (-1,-1), which attempts to tile in a square shape.
+    overlay_alpha : float, optional
+        Alpha value for the overlay. Default is 0.25.
+    axis : int, optional
+        Axis to slice along, one of (0,1,2) for (x,y,z) respectively. Default is 2 = z.
+    pad : str, optional
+        Padding for the mosaic tiles. Default is 'mask+4', which puts 4 pixels of space around the bounding box of the mask.
+    slice_spec : list, optional
+        Slice specification in the form (interval, min, max). By default, the interval is 3, and the min and max are set to
+        'mask+8' and 'mask-8' respectively. This starts at an offset of +8 from the first slice within the mask, and ends
+        at an offset of -8 from the last slice within the mask. Set to (interval,mask,mask), to set the boundaries to the full
+        extent of the mask.
+    flip_spec : list, optional
+        Flip specification in the form (x,y). Default is None, in which case the flip is decided based on the axis - y is
+        flipped for axial slices only.
+
+    Returns:
+    --------
+    mosaic_image : str
+        Path to mosaic image
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='mosaic')
+
+    if flip_spec is None:
+        flip_spec = [0, 1] if axis == 2 else [0, 0]
+
+    mosaic_file = f"{tmp_file_prefix}_mosaic.nii.gz"
+
+    cmd = ['CreateTiledMosaic', '-i', scalar_image,  '-x', mask, '-o', mosaic_file, '-t',
+           f"{tile_shape[0]}x{tile_shape[1]}", '-a', str(axis), '-p', pad, '-a', str(overlay_alpha), '-s',
+           f"[{slice_spec[0]},{slice_spec[1]},{slice_spec[2]}]", '-d', str(axis), '-p', pad,
+           -f f"[{flip_spec[0]}x{flip_spec[1]}]"]
+
+    if overlay is not None:
+        cmd.extend(['-r', overlay])
+
+    run_command(cmd)
+
+    if get_verbose():
+        logger.info(f"Mosaic image saved to {mosaic_file}")
+
+    return mosaic_file

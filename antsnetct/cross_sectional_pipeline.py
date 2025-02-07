@@ -953,7 +953,7 @@ def _pairwise_brain_registration(fixed, moving, quick_reg, work_dir, fixed_mask=
                                                                      smoothing_sigmas='4x3x2x1x0vox', apply_transforms=False)
     else:
         template_reg = ants_helpers.univariate_template_registration(fixed, moving, work_dir,
-                                                                     metric='CC', metric_param_str='4', fixed_mask=fixed_mask,
+                                                                     metric='CC', metric_param_str='2', fixed_mask=fixed_mask,
                                                                      moving_mask=moving_mask, transform='SyN[0.2,3,0]',
                                                                      iterations='30x30x70x70x20', shrink_factors='8x6x4x2x1',
                                                                      smoothing_sigmas='4x3x2x1x0vox', apply_transforms=False)
