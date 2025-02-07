@@ -76,6 +76,7 @@ def smooth_image(image, sigma, work_dir):
 
     return smoothed_image_file
 
+
 def average_images(images, work_dir):
     """Average a list of 3D images.
 
@@ -100,6 +101,7 @@ def average_images(images, work_dir):
     run_command(cmd)
 
     return avg_image_file
+
 
 def gamma_correction(image, gamma, work_dir):
     """Apply gamma correction to an image
@@ -1967,10 +1969,11 @@ def convert_scalar_image_to_rgb(scalar_image, work_dir, mask=None, colormap='hot
     mask : str
         Path to mask image. If provided, the colormap is only applied to voxels within the mask.
     colormap : str or list
-        Colormap to use. Default is 'hot'. If a list, the colormap is specified as a list of RGB triplets. Each triplet should
-        be a list of 3 floats in the range 0-1 for R, G, B. For example, [[1, 0, 0], [0, 1, 0], [0, 0, 1]] is a red-green-blue
-        colormap, such that the min_value is red, the max_value is blue, and halfway between is green. Intermediate values
-        are interpolated.
+        Colormap to use. Strings reference pre-defined color maps. Default is 'hot'.
+        Other useful pre-defined options are 'antsct' (BIDS segmentation labels for Atropos six-class segmentnation).
+        If a list, the colormap is specified as a list of RGB triplets. Each triplet should be a list of 3 floats in the
+        range 0-1 for R, G, B. For example, [[1, 0, 0], [0, 1, 0], [0, 0, 1]] is a red-green-blue colormap, such that the
+        min_value is red, the max_value is blue, and halfway between is green. Intermediate values are interpolated.
     min_value : float
         Minimum value for the colormap. If None, the minimum value in the image is used.
     max_value : float
@@ -1983,10 +1986,14 @@ def convert_scalar_image_to_rgb(scalar_image, work_dir, mask=None, colormap='hot
     """
     tmp_file_prefix = get_temp_file(work_dir, prefix='scalar_to_rgb')
 
-    img = ants.image_read(scalar_image)
+    builtin_colormaps = {'antsct': [[0,0,0], [0,1,0], [0,0,1], [1,0,0], [1,0,0], [1,0,0], [1,0,0], [1,0,0], [0,1,0], [1,1,0],
+                                    [0,1,1], [1,0,1]]
+    }
 
     if mask is None:
         mask = 'none'
+
+    img = ants.image_read(scalar_image)
 
     if min_value is None:
         min_value = img.min()
@@ -1994,15 +2001,20 @@ def convert_scalar_image_to_rgb(scalar_image, work_dir, mask=None, colormap='hot
     if max_value is None:
         max_value = img.max()
 
-    colormap_name = colormap.lower()
-    colormap_file = 'none'
-
     if isinstance(colormap, (list,tuple)):
         # Custom colormap
         colormap_name = 'custom'
+    elif colormap.lower() in builtin_colormaps:
+        colormap_name = 'custom'
+        colormap = builtin_colormaps[colormap.lower()]
+    else:
+        colormap_name = colormap.lower()
+        colormap_file = 'none'
+
+    if colormap_name == 'custom':
         colormap_file = f"{tmp_file_prefix}_custom_colormap.txt"
 
-        # Need to make a 3xN matrix of RGB triplets
+        # Make a 3xN matrix of RGB triplets
         colormap = np.array(colormap).T
 
         with open(colormap_file, 'w') as f:
@@ -2010,15 +2022,13 @@ def convert_scalar_image_to_rgb(scalar_image, work_dir, mask=None, colormap='hot
             for channel in colormap:
                 f.write(' '.join([str(c) for c in channel]) + '\n')
 
-
     rgb_file = f"{tmp_file_prefix}_rgb.nii.gz"
 
-    # ConvertScalarImageToRGB imageDimension inputImage outputImage mask colormap [customColormapFile] [minimumInput] [maximumInput] [minimumRGBOutput=0] [maximumRGBOutput=255] <vtkLookupTable>
     run_command(['ConvertScalarImageToRGB', '3', scalar_image, rgb_file, mask, colormap_name, colormap_file, str(min_value),
                  str(max_value)])
 
     if get_verbose():
-        logger.info(f"Scalar image converted to RGB using colormap {colormap}")
+        logger.info(f"Scalar image converted to RGB using colormap\n{colormap}")
         logger.info(f"RGB image saved to {rgb_file}")
 
     return rgb_file
@@ -2052,8 +2062,8 @@ def create_tiled_mosaic(scalar_image, mask, work_dir, overlay=None, tile_shape=(
         at an offset of -8 from the last slice within the mask. Set to (interval,mask,mask), to set the boundaries to the full
         extent of the mask.
     flip_spec : list, optional
-        Flip specification in the form (x,y). Default is None, in which case the flip is decided based on the axis - y is
-        flipped for axial slices only.
+        Flip specification in the form (x,y). Default is None, in which case the flip is decided based on the slice axis,
+        assuming LPI input.
 
     Returns:
     --------
@@ -2063,14 +2073,17 @@ def create_tiled_mosaic(scalar_image, mask, work_dir, overlay=None, tile_shape=(
     tmp_file_prefix = get_temp_file(work_dir, prefix='mosaic')
 
     if flip_spec is None:
-        flip_spec = [0, 1] if axis == 2 else [0, 0]
+        if axis == 2:
+            flip_spec = [0, 1]
+        else:
+            flip_spec = [1, 1]
 
-    mosaic_file = f"{tmp_file_prefix}_mosaic.nii.gz"
+    mosaic_file = f"{tmp_file_prefix}_mosaic.png"
 
     cmd = ['CreateTiledMosaic', '-i', scalar_image,  '-x', mask, '-o', mosaic_file, '-t',
-           f"{tile_shape[0]}x{tile_shape[1]}", '-a', str(axis), '-p', pad, '-a', str(overlay_alpha), '-s',
+           f"{tile_shape[0]}x{tile_shape[1]}", '-p', pad, '-a', str(overlay_alpha), '-s',
            f"[{slice_spec[0]},{slice_spec[1]},{slice_spec[2]}]", '-d', str(axis), '-p', pad,
-           -f f"[{flip_spec[0]}x{flip_spec[1]}]"]
+           "-f", f"{flip_spec[0]}x{flip_spec[1]}"]
 
     if overlay is not None:
         cmd.extend(['-r', overlay])

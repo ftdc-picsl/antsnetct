@@ -369,6 +369,11 @@ def cross_sectional_analysis():
                     logger.info("Creating template space derivatives")
                     template_space_derivatives(template, template_reg, seg_n4, thickness, working_dir)
 
+                # Make QC plots
+                logger.info("Creating QC plots")
+                make_qc_plots(seg_n4['bias_corrected_t1w'], brain_mask_bids, seg_n4['segmentation_image'], thickness,
+                              working_dir)
+
                 if args.keep_workdir.lower() == 'always':
                     logger.info("Keeping working directory: " + working_dir)
                     shutil.copytree(working_dir, os.path.join(output_dataset, preproc_t1w_bids.get_derivative_rel_path_prefix()
@@ -1027,3 +1032,101 @@ def template_space_derivatives(template, template_reg, seg_n4, thickness, work_d
                                                                   '_desc-biascorrbrain_T1w.nii.gz')
 
     return template_space_bids
+
+
+def make_qc_plots(t1w_bids, mask_bids, seg_bids, thick_bids, work_dir):
+    """Generate tiled QC plots for a T1w image with segmentation and cortical thickness overlays
+
+    Output is written as a derivative of the t1w_bids image.
+
+    Parameters:
+    -----------
+    t1w_bids : BIDSImage
+        T1w image object, should be the preprocessed T1w image in the output dataset.
+    mask_bids : BIDSImage
+        Brain mask for the preprocessed T1w image.
+    seg_bids : BIDSImage
+        Segmentation image in the output dataset.
+    thick_bids : BIDSImage
+        Cortical thickness image in the output dataset.
+    work_dir : str
+        Path to the working directory.
+    """
+    # Resample everything to 1mm so the PNG plots have a roughly consistent number of slices
+    scalar_image = ants_helpers.resample_image_by_spacing(t1w_bids.get_path(), [1, 1, 1], work_dir)
+
+    mask_image = ants_helpers.resample_image_by_spacing(mask_bids.get_path(), [1, 1, 1], work_dir,
+                                                       interpolation='NearestNeighbor')
+    seg_image = ants_helpers.resample_image_by_spacing(seg_bids.get_path(), [1, 1, 1], work_dir,
+                                                       interpolation='NearestNeighbor')
+    thick_image = ants_helpers.resample_image_by_spacing(thick_bids.get_path(), [1, 1, 1], work_dir)
+
+    # winsorize a bit more aggressively to boost brightness of the brain
+    scalar_image = ants_helpers.winsorize_intensity(scalar_image, mask_image, work_dir, lower_percentile=0.0,
+                                                    upper_iqr_scale=1.5)
+
+    seg_rgb = ants_helpers.convert_scalar_image_to_rgb(seg_image, work_dir, colormap='antsct')
+
+    thick_rgb = ants_helpers.convert_scalar_image_to_rgb(thick_image, work_dir, colormap='hot', min_value=0, max_value=8)
+
+    # Make a tiled image with the T1w, mask, segmentation, and cortical thickness
+    tiled_seg_ax = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=seg_rgb, overlay_alpha=0.25,
+                                                    axis=2, pad=('mask+5'), slice_spec=(3,'mask','mask'))
+    tiled_seg_cor = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=seg_rgb, overlay_alpha=0.25,
+                                                    axis=1, pad=('mask+5'), slice_spec=(3,'mask','mask'))
+    system_helpers.copy_file(tiled_seg_ax, t1w_bids.get_derivative_path_prefix() + '_desc-segax_qc.png')
+    system_helpers.copy_file(tiled_seg_cor, t1w_bids.get_derivative_path_prefix() + '_desc-segcor_qc.png')
+
+    tiled_thick_ax = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=thick_rgb,
+                                                      overlay_alpha=0.25, axis=2, pad=('mask+5'), slice_spec=(3,'mask','mask'))
+    tiled_thick_cor = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=thick_rgb,
+                                                       overlay_alpha=0.25, axis=1, pad=('mask+5'), slice_spec=(3,'mask','mask'))
+
+    system_helpers.copy_file(tiled_thick_ax, t1w_bids.get_derivative_path_prefix() + '_desc-thickax_qc.png')
+    system_helpers.copy_file(tiled_thick_cor, t1w_bids.get_derivative_path_prefix() + '_desc-thickcor_qc.png')
+
+
+def compute_qc_stats(t1w_bids, mask_bids, seg_bids, thick_bids, work_dir):
+    """Compute QC statistics for a T1w image, with segmentation and cortical thickness data
+
+    Makes TSV file with some QC statistics for the T1w image, segmentation, and cortical thickness.
+
+    Parameters:
+    -----------
+    t1w_bids : BIDSImage
+        T1w image object, should be the preprocessed T1w image in the output dataset.
+    mask_bids : BIDSImage
+        Brain mask for the preprocessed T1w image.
+    seg_bids : BIDSImage
+        Segmentation image in the output dataset.
+    thick_bids : BIDSImage
+        Cortical thickness image in the output dataset.
+    work_dir : str
+        Path to the working directory.
+    """
+    # Read in the images
+    t1w_image = ants_helpers.read_image(t1w_bids.get_path())
+    mask_image = ants_helpers.read_image(mask_bids.get_path())
+    seg_image = ants_helpers.read_image(seg_bids.get_path())
+    thick_image = ants_helpers.read_image(thick_bids.get_path())
+
+    # Compute some basic stats
+    t1w_mean = t1w_image.mean()
+    t1w_std = t1w_image.std()
+    mask_vol = mask_image.sum() * np.prod(mask_image.spacing)
+    seg_vols = [seg_image[seg_image == i].sum() * np.prod(seg_image.spacing) for i in range(1, 7)]
+    thick_mean = thick_image.mean()
+    thick_std = thick_image.std()
+
+    # Write the stats to a TSV file
+    with open(t1w_bids.get_derivative_path_prefix() + '_desc-qc.tsv', 'w') as f:
+        f.write('metric\tvalue\n')
+        f.write(f't1w_mean\t{t1w_mean}\n')
+        f.write(f't1w_std\t{t1w_std}\n')
+        f.write(f'brain_volume\t{mask_vol}\n')
+        for i, vol in enumerate(seg_vols):
+            f.write(f'segmentation_volume_{i+1}\t{vol}\n')
+        f.write(f'thickness_mean\t{thick_mean}\n')
+        f.write(f'thickness_std\t{thick_std}\n')
+
+
