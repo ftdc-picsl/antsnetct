@@ -2094,3 +2094,37 @@ def create_tiled_mosaic(scalar_image, mask, work_dir, overlay=None, tile_shape=(
         logger.info(f"Mosaic image saved to {mosaic_file}")
 
     return mosaic_file
+
+
+def image_correlation(image1, image2, work_dir, exclude_background=True):
+    """Calculate the Pearson correlation between two images.
+
+    Parameters:
+    -----------
+    image1 : str
+        Path to first image.
+    image2 : str
+        Path to second image.
+    work_dir : str
+        Path to working directory.
+    exclude_background : bool, optional
+        If True, exclude background voxels, where intensity == 0 in both images, from the correlation calculation.
+
+    Returns:
+    --------
+    float
+        Correlation between the two images.
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='image_correlation')
+
+    img1 = ants.image_read(image1).flatten()
+    img2 = ants.image_read(image2).flatten()
+
+    if exclude_background:
+        fg_mask = np.array((img1 != 0) | (img2 != 0))
+        img1 = img1[fg_mask]
+        img2 = img2[fg_mask]
+
+    corr = np.corrcoef(img1, img2)
+
+    return float(corr[0,1])
