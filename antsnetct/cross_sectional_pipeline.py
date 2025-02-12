@@ -864,7 +864,7 @@ def cortical_thickness(seg_n4, work_dir, thickness_iterations=45):
                                                 kk_its=thickness_iterations)
 
     thick_sources = [seg_n4['segmentation_image'].get_uri()]
-    thick_sources.extend([posterior.get_uri() for posterior in seg_n4['posteriors']])
+    thick_sources.extend([seg_n4['posteriors'][i].get_uri() for i in (1,2,3)])
 
     thickness_metadata = {'Sources': thick_sources}
 
@@ -1116,12 +1116,14 @@ def make_thickness_qc_plots(t1w_bids, mask_bids, thick_bids, work_dir):
     scalar_image = ants_helpers.winsorize_intensity(scalar_image, mask_image, work_dir, lower_percentile=0.0,
                                                     upper_iqr_scale=1.5)
 
-    thick_rgb = ants_helpers.convert_scalar_image_to_rgb(thick_image, work_dir, colormap='hot', min_value=0, max_value=7)
+    thick_rgb = ants_helpers.convert_scalar_image_to_rgb(thick_image, work_dir, colormap='hot', min_value=0, max_value=6)
 
-    tiled_thick_ax = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=thick_rgb,
-                                                      overlay_alpha=0.25, axis=2, pad=('mask+5'), slice_spec=(3,'mask','mask'))
-    tiled_thick_cor = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=thick_rgb,
-                                                       overlay_alpha=0.25, axis=1, pad=('mask+5'), slice_spec=(3,'mask','mask'))
+    thick_mask = ants_helpers.threshold_image(thick_image, work_dir, lower=0.001, upper=1000)
+
+    tiled_thick_ax = ants_helpers.create_tiled_mosaic(scalar_image, thick_mask, work_dir, overlay=thick_rgb,
+                                                      overlay_alpha=1, axis=2, pad=('mask+5'), slice_spec=(3,'mask','mask'))
+    tiled_thick_cor = ants_helpers.create_tiled_mosaic(scalar_image, thick_mask, work_dir, overlay=thick_rgb,
+                                                       overlay_alpha=1, axis=1, pad=('mask+5'), slice_spec=(3,'mask','mask'))
 
     system_helpers.copy_file(tiled_thick_ax, t1w_bids.get_derivative_path_prefix() + '_desc-thickaxqc.png')
     system_helpers.copy_file(tiled_thick_cor, t1w_bids.get_derivative_path_prefix() + '_desc-thickcorqc.png')
@@ -1158,8 +1160,8 @@ def compute_qc_stats(t1w_bids, mask_bids, seg_bids, work_dir, thick_bids=None, t
     mask_image = ants_image_read(mask_bids.get_path())
     seg_image = ants_image_read(seg_bids.get_path())
 
-    mask_vol = mask_image.sum() * np.prod(mask_image.spacing) / 1000.0 # volume in ml
-    seg_vols = [seg_image[seg_image == i].sum() * np.prod(seg_image.spacing) / 1000.0 for i in (2, 3, 8, 9, 10, 11)]
+    mask_vol = mask_image[mask_image > 0].shape[0] * np.prod(mask_image.spacing) / 1000.0 # volume in ml
+    seg_vols = [seg_image[seg_image == i].shape[0] * np.prod(seg_image.spacing) / 1000.0 for i in (2, 3, 8, 9, 10, 11)]
 
     cgm_mask = seg_image == 8
 

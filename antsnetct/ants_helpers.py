@@ -1957,7 +1957,7 @@ def pad_image(image, pad_spec, work_dir, pad_to_shape=False):
     return padded_file
 
 
-def convert_scalar_image_to_rgb(scalar_image, work_dir, mask=None, colormap='hot', min_value=None, max_value=None):
+def convert_scalar_image_to_rgb(scalar_image, work_dir, mask=None, colormap='hot', min_value='min', max_value='max'):
     """Convert a scalar image to an RGB image using a colormap.
 
     Parameters:
@@ -1974,10 +1974,10 @@ def convert_scalar_image_to_rgb(scalar_image, work_dir, mask=None, colormap='hot
         If a list, the colormap is specified as a list of RGB triplets. Each triplet should be a list of 3 floats in the
         range 0-1 for R, G, B. For example, [[1, 0, 0], [0, 1, 0], [0, 0, 1]] is a red-green-blue colormap, such that the
         min_value is red, the max_value is blue, and halfway between is green. Intermediate values are interpolated.
-    min_value : float
-        Minimum value for the colormap. If None, the minimum value in the image is used.
-    max_value : float
-        Maximum value for the colormap. If None, the maximum value in the image is used.
+    min_value : float or str
+        Minimum value for the colormap. Default is 'min', which uses the minimum value in the image.
+    max_value : float or str
+        Maximum value for the colormap. Default is 'max', which uses the maximum value in the image.
 
     Returns:
     --------
@@ -1992,14 +1992,6 @@ def convert_scalar_image_to_rgb(scalar_image, work_dir, mask=None, colormap='hot
 
     if mask is None:
         mask = 'none'
-
-    img = ants.image_read(scalar_image)
-
-    if min_value is None:
-        min_value = img.min()
-
-    if max_value is None:
-        max_value = img.max()
 
     if isinstance(colormap, (list,tuple)):
         # Custom colormap
