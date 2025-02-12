@@ -6,9 +6,12 @@ from . import system_helpers
 
 from .system_helpers import PipelineError
 
+from ants import image_read as ants_image_read
+
 import argparse
 import json
 import logging
+import numpy as np
 import os
 import shutil
 import sys
@@ -483,13 +486,26 @@ def longitudinal_analysis():
                 sst_derivatives = None
 
                 if group_template is not None:
-                    sst_derivatives = template_space_derivatives(
+                    template_derivatives = template_space_derivatives(
                         sst_bids, session_sst_transforms[idx]['forward_transform'],
                         seg_n4, thickness, working_dir, group_template=group_template,
                         sst_group_template_transform=sst_to_group_template_reg['forward_transform'])
                 else:
-                    sst_derivatives = template_space_derivatives(sst_bids, session_sst_transforms[idx]['forward_transform'],
-                                                                 seg_n4, thickness, working_dir)
+                    template_derivatives = template_space_derivatives(sst_bids,
+                                                                      session_sst_transforms[idx]['forward_transform'],
+                                                                      seg_n4, thickness, working_dir)
+
+                # QC
+                logger.info(f"QC for session {idx + 1}")
+                cross_sectional_pipeline.make_segmentation_qc_plots(seg_n4['bias_corrected_t1w'], brain_mask_bids,
+                                                                    seg_n4['segmentation_image'], working_dir)
+                cross_sectional_pipeline.make_thickness_qc_plots(seg_n4['bias_corrected_t1w'], brain_mask_bids, thickness,
+                                                                 working_dir)
+
+                compute_qc_stats(seg_n4['bias_corrected_t1w'], brain_mask_bids, seg_n4['segmentation_image'],
+                                 thickness, sst_brain_bids, template_derivatives['sst']['t1w_brain'],
+                                 working_dir, group_template=group_template, group_template_mask=group_template_brain_mask,
+                                 t1w_brain_group_template_space_bids=template_derivatives['group_template']['t1w_brain'])
 
                 logger.info(f"Finished processing session {idx + 1} of {num_sessions}")
 
@@ -876,7 +892,9 @@ def template_space_derivatives(sst, session_sst_transform, seg_n4, thickness, wo
     Returns:
     -------
     dict:
-        Dictionary containing the warped images, for the SST and optionally group template spaces.
+        Dictionary containing two dictionaries:
+          'sst' - derivatives in SST space
+          'group_template' - derivatives group template spaces. This is empty if group_template is None.
     """
     session_ref_image_bids = seg_n4['bias_corrected_t1w_brain']
 
@@ -954,8 +972,92 @@ def template_space_derivatives(sst, session_sst_transform, seg_n4, thickness, wo
                                                                    session_ref_image_bids.get_ds_path(),
                                                                    group_space_rel_output_prefix + \
                                                                        '_desc-biascorrbrain_T1w.nii.gz')
+    else:
+        group_space_bids = {'thickness': None, 'gmp': None, 't1w_brain': None}
 
     template_space_bids = { 'sst': sst_space_bids, 'group_template': group_space_bids }
 
     return template_space_bids
 
+
+def compute_qc_stats(t1w_bids, mask_bids, seg_bids, thick_bids, sst_brain_bids, t1w_brain_sst_space_bids, work_dir,
+                     group_template=None, group_template_mask=None, t1w_brain_group_template_space_bids=None):
+    """Compute QC statistics for a T1w image, with segmentation and cortical thickness data
+
+    Makes TSV file with some QC statistics for the T1w image, segmentation, and cortical thickness.
+
+    Parameters:
+    -----------
+    t1w_bids : BIDSImage
+        T1w image object, should be the preprocessed T1w image in the output dataset.
+    mask_bids : BIDSImage
+        Brain mask for the preprocessed T1w image.
+    seg_bids : BIDSImage
+        Segmentation image in the output dataset.
+    thick_bids : BIDSImage
+        Cortical thickness image in the output dataset.
+    sst_brain_bids : BIDSImage
+        SST brain image.
+    t1w_brain_sst_space_bids : BIDSImage
+        Session T1w brain image in SST space.
+    work_dir : str
+        Path to the working directory.
+    group_template : TemplateImage, optional
+        Group template brain image.
+    group_template_mask : TemplateImage, optional
+        Group template brain mask image.
+    t1w_brain_group_template_space_bids : BIDSImage, optional
+        Session T1w brain image in group template space.
+    """
+    # Read in the images
+    t1w_image = ants_image_read(t1w_bids.get_path())
+    mask_image = ants_image_read(mask_bids.get_path())
+    seg_image = ants_image_read(seg_bids.get_path())
+
+    # Compute some basic stats
+    mask_vol = mask_image[mask_image > 0].shape[0] * np.prod(mask_image.spacing) / 1000.0 # volume in ml
+    seg_vols = [seg_image[seg_image == i].shape[0] * np.prod(seg_image.spacing) / 1000.0 for i in (2, 3, 8, 9, 10, 11)]
+
+    gm_mean_intensity = t1w_image[cgm_mask].mean()
+    wm_mean_intensity = t1w_image[seg_image == 2].mean()
+    wm_gm_contrast = wm_mean_intensity / gm_mean_intensity
+
+    thick_image = ants_image_read(thick_bids.get_path())
+    cgm_mask = seg_image == 8
+    gm_thickness = thick_image[cgm_mask]
+    thick_mean = gm_thickness.mean()
+    thick_std = gm_thickness.std()
+
+    sst_corr = ants_helpers.image_correlation(sst_brain_bids.get_path(), t1w_brain_sst_space_bids.get_path(), work_dir)
+
+    if group_template is not None:
+        group_template_brain = ants_helpers.apply_mask(group_template.get_path(), group_template_mask.get_path(), work_dir)
+        t1w_template_corr = ants_helpers.image_correlation(t1w_brain_group_template_space_bids.get_path(),
+                                                           group_template_brain, work_dir)
+
+    csf_vol = seg_vols[1]
+
+    non_csf_fraction = 1.0 - csf_vol / mask_vol
+
+    # Write the stats to a TSV file
+    with open(t1w_bids.get_derivative_path_prefix() + '_desc-qcstats.tsv', 'w') as f:
+        f.write("metric\tvalue\n")
+        f.write(f"gm_mean_intensity\t{gm_mean_intensity:.4f}\n")
+        f.write(f"wm_mean_intensity\t{wm_mean_intensity:.4f}\n")
+        f.write(f"wm_gm_contrast\t{wm_gm_contrast:.4f}\n")
+        f.write(f"brain_volume_ml\t{mask_vol:.4f}\n")
+        f.write(f"parenchymal_fraction\t{non_csf_fraction:.4f}\n")
+        f.write(f"csf_volume_ml\t{seg_vols[1]:.4f}\n")
+        f.write(f"gm_volume_ml\t{seg_vols[2]:.4f}\n")
+        f.write(f"wm_volume_ml\t{seg_vols[0]:.4f}\n")
+        f.write(f"sgm_volume_ml\t{seg_vols[3]:.4f}\n")
+        f.write(f"bs_volume_ml\t{seg_vols[4]:.4f}\n")
+        f.write(f"cbm_volume_ml\t{seg_vols[5]:.4f}\n")
+
+        f.write(f"thickness_mean\t{thick_mean:.4f}\n")
+        f.write(f"thickness_std\t{thick_std:.4f}\n")
+
+        f.write(f"t1w_sst_corr\t{sst_corr:.4f}\n")
+
+        if group_template is not None:
+            f.write(f"t1w_group_template_corr\t{t1w_template_corr:.4f}\n")

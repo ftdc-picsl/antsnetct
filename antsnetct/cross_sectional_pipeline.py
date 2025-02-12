@@ -5,11 +5,14 @@ from . import system_helpers
 
 from .system_helpers import PipelineError
 
+from ants import image_read as ants_image_read
+
 import argparse
 import copy
 import glob
 import json
 import logging
+import numpy as np
 import os
 import shutil
 import sys
@@ -354,8 +357,13 @@ def cross_sectional_analysis():
 
                 if args.longitudinal_preproc:
                     logger.info("Skipping thickness and template registration steps")
+                    make_segmentation_qc_plots(seg_n4['bias_corrected_t1w'], brain_mask_bids, seg_n4['segmentation_image'],
+                                               working_dir)
+                    compute_qc_stats(seg_n4['bias_corrected_t1w'], brain_mask_bids, seg_n4['segmentation_image'],
+                                     working_dir)
                     logger.info(f"Finished processing {t1w_bids.get_uri(relative=False)}")
                     continue
+
                 logger.info("Computing cortical thickness")
                 thickness = cortical_thickness(seg_n4, working_dir, args.thickness_iterations)
 
@@ -367,7 +375,18 @@ def cross_sectional_analysis():
                                                                working_dir)
                     # Make template space derivatives: thickness, jacobian, GM probability, t1w brain
                     logger.info("Creating template space derivatives")
-                    template_space_derivatives(template, template_reg, seg_n4, thickness, working_dir)
+                    template_derivs = template_space_derivatives(template, template_reg, seg_n4, thickness, working_dir)
+                    t1w_brain_template_space = template_derivs['t1w_brain']
+
+                # Make QC plots
+                logger.info("Creating QC plots")
+                make_segmentation_qc_plots(seg_n4['bias_corrected_t1w'], brain_mask_bids, seg_n4['segmentation_image'],
+                                           working_dir)
+
+                make_thickness_qc_plots(seg_n4['bias_corrected_t1w'], brain_mask_bids, thickness, working_dir)
+
+                compute_qc_stats(seg_n4['bias_corrected_t1w'], brain_mask_bids, seg_n4['segmentation_image'], working_dir,
+                                 thickness, template, template_brain_mask, t1w_brain_template_space)
 
                 if args.keep_workdir.lower() == 'always':
                     logger.info("Keeping working directory: " + working_dir)
@@ -845,7 +864,7 @@ def cortical_thickness(seg_n4, work_dir, thickness_iterations=45):
                                                 kk_its=thickness_iterations)
 
     thick_sources = [seg_n4['segmentation_image'].get_uri()]
-    thick_sources.extend([posterior.get_uri() for posterior in seg_n4['posteriors']])
+    thick_sources.extend([seg_n4['posteriors'][i].get_uri() for i in (1,2,3)])
 
     thickness_metadata = {'Sources': thick_sources}
 
@@ -953,7 +972,7 @@ def _pairwise_brain_registration(fixed, moving, quick_reg, work_dir, fixed_mask=
                                                                      smoothing_sigmas='4x3x2x1x0vox', apply_transforms=False)
     else:
         template_reg = ants_helpers.univariate_template_registration(fixed, moving, work_dir,
-                                                                     metric='CC', metric_param_str='4', fixed_mask=fixed_mask,
+                                                                     metric='CC', metric_param_str='2', fixed_mask=fixed_mask,
                                                                      moving_mask=moving_mask, transform='SyN[0.2,3,0]',
                                                                      iterations='30x30x70x70x20', shrink_factors='8x6x4x2x1',
                                                                      smoothing_sigmas='4x3x2x1x0vox', apply_transforms=False)
@@ -1027,3 +1046,164 @@ def template_space_derivatives(template, template_reg, seg_n4, thickness, work_d
                                                                   '_desc-biascorrbrain_T1w.nii.gz')
 
     return template_space_bids
+
+
+def make_segmentation_qc_plots(t1w_bids, mask_bids, seg_bids, work_dir):
+    """Generate tiled QC plots for a T1w image with segmentation overlay
+
+    Output is written as a derivative of the t1w_bids image.
+
+    Parameters:
+    -----------
+    t1w_bids : BIDSImage
+        T1w image object, should be the preprocessed T1w image in the output dataset.
+    mask_bids : BIDSImage
+        Brain mask for the preprocessed T1w image.
+    seg_bids : BIDSImage
+        Segmentation image in the output dataset.
+    work_dir : str
+        Path to the working directory.
+    """
+    # Resample everything to 1mm so the PNG plots have a roughly consistent number of slices
+    scalar_image = ants_helpers.resample_image_by_spacing(t1w_bids.get_path(), [1, 1, 1], work_dir)
+
+    mask_image = ants_helpers.resample_image_by_spacing(mask_bids.get_path(), [1, 1, 1], work_dir,
+                                                        interpolation='NearestNeighbor')
+    seg_image = ants_helpers.resample_image_by_spacing(seg_bids.get_path(), [1, 1, 1], work_dir,
+                                                       interpolation='NearestNeighbor')
+
+    # winsorize a bit more aggressively to boost brightness of the brain
+    scalar_image = ants_helpers.winsorize_intensity(scalar_image, mask_image, work_dir, lower_percentile=0.0,
+                                                    upper_iqr_scale=1.5)
+
+    seg_rgb = ants_helpers.convert_scalar_image_to_rgb(seg_image, work_dir, colormap='antsct')
+
+    tiled_seg_ax = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=seg_rgb, overlay_alpha=0.25,
+                                                    axis=2, pad=('mask+5'), slice_spec=(3,'mask','mask'))
+    tiled_seg_cor = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=seg_rgb, overlay_alpha=0.25,
+                                                    axis=1, pad=('mask+5'), slice_spec=(3,'mask','mask'))
+    system_helpers.copy_file(tiled_seg_ax, t1w_bids.get_derivative_path_prefix() + '_desc-segaxqc.png')
+    system_helpers.copy_file(tiled_seg_cor, t1w_bids.get_derivative_path_prefix() + '_desc-segcorqc.png')
+
+
+def make_thickness_qc_plots(t1w_bids, mask_bids, thick_bids, work_dir):
+    """Generate tiled QC plots for a T1w image with cortical thickness overlay
+
+    Output is written as a derivative of the t1w_bids image.
+
+    Parameters:
+    -----------
+    t1w_bids : BIDSImage
+        T1w image object, should be the preprocessed T1w image in the output dataset.
+    mask_bids : BIDSImage
+        Brain mask for the preprocessed T1w image.
+    seg_bids : BIDSImage
+        Segmentation image in the output dataset.
+    thick_bids : BIDSImage
+        Cortical thickness image in the output dataset.
+    work_dir : str
+        Path to the working directory.
+    """
+    # Resample everything to 1mm so the PNG plots have a roughly consistent number of slices
+    scalar_image = ants_helpers.resample_image_by_spacing(t1w_bids.get_path(), [1, 1, 1], work_dir)
+
+    mask_image = ants_helpers.resample_image_by_spacing(mask_bids.get_path(), [1, 1, 1], work_dir,
+                                                       interpolation='NearestNeighbor')
+
+    thick_image = ants_helpers.resample_image_by_spacing(thick_bids.get_path(), [1, 1, 1], work_dir)
+
+    # winsorize a bit more aggressively to boost brightness of the brain
+    scalar_image = ants_helpers.winsorize_intensity(scalar_image, mask_image, work_dir, lower_percentile=0.0,
+                                                    upper_iqr_scale=1.5)
+
+    thick_rgb = ants_helpers.convert_scalar_image_to_rgb(thick_image, work_dir, colormap='hot', min_value=0, max_value=6)
+
+    thick_mask = ants_helpers.threshold_image(thick_image, work_dir, lower=0.001, upper=1000)
+
+    tiled_thick_ax = ants_helpers.create_tiled_mosaic(scalar_image, thick_mask, work_dir, overlay=thick_rgb,
+                                                      overlay_alpha=1, axis=2, pad=('mask+5'), slice_spec=(3,'mask','mask'))
+    tiled_thick_cor = ants_helpers.create_tiled_mosaic(scalar_image, thick_mask, work_dir, overlay=thick_rgb,
+                                                       overlay_alpha=1, axis=1, pad=('mask+5'), slice_spec=(3,'mask','mask'))
+
+    system_helpers.copy_file(tiled_thick_ax, t1w_bids.get_derivative_path_prefix() + '_desc-thickaxqc.png')
+    system_helpers.copy_file(tiled_thick_cor, t1w_bids.get_derivative_path_prefix() + '_desc-thickcorqc.png')
+
+
+def compute_qc_stats(t1w_bids, mask_bids, seg_bids, work_dir, thick_bids=None, template=None, template_brain_mask=None,
+                     t1w_brain_template_space_bids=None):
+    """Compute QC statistics for a T1w image, with segmentation and cortical thickness data
+
+    Makes TSV file with some QC statistics for the T1w image, segmentation, and cortical thickness.
+
+    Parameters:
+    -----------
+    t1w_bids : BIDSImage
+        T1w image object, should be the preprocessed T1w image in the output dataset.
+    mask_bids : BIDSImage
+        Brain mask for the preprocessed T1w image.
+    seg_bids : BIDSImage
+        Segmentation image in the output dataset.
+    work_dir : str
+        Path to the working directory.
+    thick_bids : BIDSImage, optional
+        Cortical thickness image in the output dataset.
+    template : TemplateImage, optional
+        Path to the template image. If provided, this is used to compute the correlation between the T1w brain and the
+        template.
+    template_brain_mask: TemplateImage, optional
+        Brain mask for the template. Required if template is provided.
+    t1w_brain_template_space : BIDSImage, optional
+        Path to the T1w brain image in the template space. Required if template is provided.
+    """
+    # Read in the images to compute stats
+    t1w_image = ants_image_read(t1w_bids.get_path())
+    mask_image = ants_image_read(mask_bids.get_path())
+    seg_image = ants_image_read(seg_bids.get_path())
+
+    mask_vol = mask_image[mask_image > 0].shape[0] * np.prod(mask_image.spacing) / 1000.0 # volume in ml
+    seg_vols = [seg_image[seg_image == i].shape[0] * np.prod(seg_image.spacing) / 1000.0 for i in (2, 3, 8, 9, 10, 11)]
+
+    cgm_mask = seg_image == 8
+
+    gm_mean_intensity = t1w_image[cgm_mask].mean()
+    wm_mean_intensity = t1w_image[seg_image == 2].mean()
+    wm_gm_contrast = wm_mean_intensity / gm_mean_intensity
+
+    if thick_bids is not None:
+        thick_image = ants_image_read(thick_bids.get_path())
+        gm_thickness = thick_image[cgm_mask]
+        thick_mean = gm_thickness.mean()
+        thick_std = gm_thickness.std()
+
+    if template is not None:
+        template_brain_image = ants_helpers.apply_mask(template.get_path(), template_brain_mask.get_path(), work_dir)
+        t1w_template_corr = ants_helpers.image_correlation(t1w_brain_template_space_bids.get_path(), template_brain_image,
+                                                           work_dir)
+
+    csf_vol = seg_vols[1]
+
+    non_csf_fraction = 1.0 - csf_vol / mask_vol
+
+    # Write the stats to a TSV file
+    with open(t1w_bids.get_derivative_path_prefix() + '_desc-qcstats.tsv', 'w') as f:
+        f.write("metric\tvalue\n")
+        f.write(f"gm_mean_intensity\t{gm_mean_intensity:.4f}\n")
+        f.write(f"wm_mean_intensity\t{wm_mean_intensity:.4f}\n")
+        f.write(f"wm_gm_contrast\t{wm_gm_contrast:.4f}\n")
+        f.write(f"brain_volume_ml\t{mask_vol:.4f}\n")
+        f.write(f"parenchymal_fraction\t{non_csf_fraction:.4f}\n")
+        f.write(f"csf_volume_ml\t{csf_vol:.4f}\n")
+        f.write(f"gm_volume_ml\t{seg_vols[2]:.4f}\n")
+        f.write(f"wm_volume_ml\t{seg_vols[0]:.4f}\n")
+        f.write(f"sgm_volume_ml\t{seg_vols[3]:.4f}\n")
+        f.write(f"bs_volume_ml\t{seg_vols[4]:.4f}\n")
+        f.write(f"cbm_volume_ml\t{seg_vols[5]:.4f}\n")
+
+        if thick_bids is not None:
+            f.write(f"thickness_mean\t{thick_mean:.4f}\n")
+            f.write(f"thickness_std\t{thick_std:.4f}\n")
+
+        if template is not None:
+            f.write(f"t1w_template_corr\t{t1w_template_corr:.4f}\n")
+
+
