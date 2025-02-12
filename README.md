@@ -144,6 +144,16 @@ Some files have metadate stored in a JSON sidecar.
 </table>
 
 
+## QC output
+
+Tiled images are generated for each subject, showing the T1w, segmentation, and thickness.
+Both axial and coronal views are generated, eg the thickness axial image has suffix
+`_desc-thickaxqc.png`.
+
+A TSV file with the suffix `desc-qcstats.tsv` is generated, containing statistics on the
+t1w contrast, segmentation volumes, and thickness values. If a template is used, the
+pearson correlation of the deformed t1w image to the template is also reported.
+
 
 ## Longitudinal thickness
 
