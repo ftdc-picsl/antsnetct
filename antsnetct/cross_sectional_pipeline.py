@@ -7,9 +7,12 @@ from .system_helpers import PipelineError
 
 from ants import image_read as ants_image_read
 
+from PIL import Image, ImageDraw, ImageFont
+
 import argparse
 import copy
 import glob
+import imageio
 import json
 import logging
 import numpy as np
@@ -377,8 +380,10 @@ def cross_sectional_analysis():
                     logger.info("Creating template space derivatives")
                     template_derivs = template_space_derivatives(template, template_reg, seg_n4, thickness, working_dir)
                     t1w_brain_template_space = template_derivs['t1w_brain']
+                    # QC plot in template space
+                    make_registration_qc_plots(template, template_brain_mask, t1w_brain_template_space, working_dir)
 
-                # Make QC plots
+                # Make T1w space QC plots
                 logger.info("Creating QC plots")
                 make_segmentation_qc_plots(seg_n4['bias_corrected_t1w'], brain_mask_bids, seg_n4['segmentation_image'],
                                            working_dir)
@@ -1129,6 +1134,44 @@ def make_thickness_qc_plots(t1w_bids, mask_bids, thick_bids, work_dir):
     system_helpers.copy_file(tiled_thick_cor, t1w_bids.get_derivative_path_prefix() + '_desc-thickcorqc.png')
 
 
+def make_registration_qc_plots(template, template_brain_mask, t1w_brain_template_space_bids, work_dir):
+    """Generate animated QC plots for a T1w image in template space
+
+    Output is written as a derivative of the t1w_brain_template_space_bids image.
+
+    Parameters:
+    -----------
+    template : bids_helpers.TemplateImage
+        Template image. This will be brain-masked and used as the fixed image.
+    template_brain_mask : bids_helpers.TemplateImage
+        Brain mask for the template. This will be used to mask the template image.
+    t1w_brain_template_space_bids : BIDSImage
+        Moving T1w brain image to register to the template.
+    work_dir : str
+        Path to the working directory.
+    """
+    # Leave things in template native resolution
+    # Also assume template image is winsorized appropriately
+    fixed_image = ants_helpers.apply_mask(template.get_path(), template_brain_mask.get_path(), work_dir)
+
+    # winsorize a bit more aggressively to boost brightness of the brain
+    moving_image = ants_helpers.winsorize_intensity(t1w_brain_template_space_bids.get_path(), template_brain_mask.get_path(),
+                                                    work_dir, lower_percentile=0.0, upper_iqr_scale=1.5)
+
+    tiled_fixed_ax = ants_helpers.create_tiled_mosaic(fixed_image, template_brain_mask.get_path(), work_dir, axis=2,
+                                                      pad=('mask+5'), slice_spec=(3,'mask','mask'))
+
+    tiled_moving_ax = ants_helpers.create_tiled_mosaic(moving_image, template_brain_mask.get_path(), work_dir, axis=2,
+                                                       pad=('mask+5'), slice_spec=(3,'mask','mask'))
+
+
+    slice_gif = _create_registration_gif(tiled_fixed_ax, tiled_moving_ax, work_dir, fixed_text=template.get_name(),
+                                        moving_text="T1w")
+
+    system_helpers.copy_file(slice_gif, t1w_brain_template_space_bids.get_derivative_path_prefix() + '_desc-registrationqc.gif')
+
+
+
 def compute_qc_stats(t1w_bids, mask_bids, seg_bids, work_dir, thick_bids=None, template=None, template_brain_mask=None,
                      t1w_brain_template_space_bids=None):
     """Compute QC statistics for a T1w image, with segmentation and cortical thickness data
@@ -1205,5 +1248,126 @@ def compute_qc_stats(t1w_bids, mask_bids, seg_bids, work_dir, thick_bids=None, t
 
         if template is not None:
             f.write(f"t1w_template_corr\t{t1w_template_corr:.4f}\n")
+
+
+
+def _create_registration_gif(fixed_slice_image, moving_slice_image, work_dir, fixed_text="Fixed Image",
+                            moving_text="Moving Image", num_frames=20, pause_frames=10, font_size=40):
+    """
+    Creates an animated GIF that fades between two images, with a title bar at the top containing text.
+
+    Parameters:
+    -----------
+    fixed_slice_image : str
+        Path to the fixed image.
+    moving_slice_image : str
+        Path to the moving image.
+    work_dir : str
+        Path to the working directory.
+    fixed_text : str, optional
+        Text to display on the fixed image. Default is "Fixed Image".
+    moving_text : str, optional
+        Text to display on the moving image. Default is "Moving Image".
+    num_frames : int, optional
+        Number of frames for the fade transition. Default is 20.
+    pause_frames : int, optional
+        Number of frames to pause on each image. Default is 10.
+    font_size : int, optional
+        Font size for the text. Default is 40.
+    title_bar_height : int, optional
+        Height of the title bar. Default is 60.
+
+    Returns
+    --------
+        str: Path to the saved GIF.
+    """
+    # Load images
+    img1 = Image.open(fixed_slice_image).convert("RGBA")
+    img2 = Image.open(moving_slice_image).convert("RGBA")
+
+    # Ensure same size
+    if img1.size != img2.size:
+        img2 = img2.resize(img1.size)
+
+    # Apply text
+    img1 = _add_text_to_slice(img1, fixed_text, font_size=font_size)
+    img2 = _add_text_to_slice(img2, moving_text, font_size=font_size)
+
+    # Create transition frames
+    frames = []
+
+    # Fade from img1 → img2
+    for alpha in np.linspace(0, 1, num_frames):
+        blended = Image.blend(img1, img2, alpha)
+        frames.append(blended)
+
+    # Pause on img2
+    frames.extend([img2] * pause_frames)
+
+    # Fade from img2 to img1
+    for alpha in np.linspace(1, 0, num_frames):
+        blended = Image.blend(img1, img2, alpha)
+        frames.append(blended)
+
+    # Pause on img1
+    frames.extend([img1] * pause_frames)
+
+    # Save as animated GIF
+    output_path = system_helpers.get_temp_filename(work_dir, 'registrationqc.gif')
+
+    frames[0].save(output_path, save_all=True, append_images=frames[1:], duration=50, loop=1)
+
+    return output_path
+
+
+
+def _add_text_to_slice(image, text, font_size=40):
+    """
+    Expands a 2D image at the top to add a black rectangle with text.
+
+    Args:
+        image (PIL.Image): The original image.
+        text (str): Text to overlay.
+        font_size (int): Font size for the text.
+
+    Returns:
+        PIL.Image: New image with the added text bar.
+    """
+    width, height = image.size
+
+    title_bar_height = font_size + 20
+
+    new_height = height + title_bar_height
+
+    # Load font - try different font families to try to get the right font on all platforms
+    def _load_font(size=40):
+        """
+        Loads Arial for cross-platform consistency.
+        Falls back to system default fonts if unavailable.
+        """
+        fallback_fonts = ["Arial", "Liberation Sans", "DejaVu Sans"]
+
+        for font_family in fallback_fonts:
+            try:
+                return ImageFont.truetype(font_family, size)
+            except IOError:
+                continue
+
+        return ImageFont.load_default()
+
+    # Draw text
+    # Create a new blank image (black at top, image below)
+    new_img = Image.new("RGBA", (width, new_height), "black")
+    new_img.paste(image, (0, title_bar_height))  # Paste original image below
+    font = _load_font(font_size)
+    draw = ImageDraw.Draw(new_img)
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+    text_x = (width - text_width) // 2
+    text_y = (title_bar_height - text_height) // 2
+    draw.text((text_x, text_y), text, font=font, fill="white")
+
+    return new_img
 
 

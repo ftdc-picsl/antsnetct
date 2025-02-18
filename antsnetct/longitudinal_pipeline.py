@@ -501,6 +501,11 @@ def longitudinal_analysis():
                                                                     seg_n4['segmentation_image'], working_dir)
                 cross_sectional_pipeline.make_thickness_qc_plots(seg_n4['bias_corrected_t1w'], brain_mask_bids, thickness,
                                                                  working_dir)
+                cross_sectional_pipeline.make_registration_qc_plots(sst_bids, unified_mask_sst_bids,
+                                                                    template_derivatives['sst']['t1w_brain'], working_dir)
+                if group_template is not None:
+                    cross_sectional_pipeline.make_registration_qc_plots(group_template, group_template_brain_mask,
+                                                                        template_derivatives['sst']['t1w_brain'], working_dir)
 
                 compute_qc_stats(seg_n4['bias_corrected_t1w'], brain_mask_bids, seg_n4['segmentation_image'],
                                  thickness, sst_brain_bids, template_derivatives['sst']['t1w_brain'],

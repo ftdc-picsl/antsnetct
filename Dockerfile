@@ -27,7 +27,7 @@ RUN apt update && apt install -y bc
 # Get c3d
 COPY --from=pyushkevich/tk:2023b /tk/c3d/build/c3d /opt/bin/c3d
 # Get ants
-COPY --from=antsx/ants:2.5.4 /opt/ants /opt/ants
+COPY --from=antsx/ants:master /opt/ants /opt/ants
 
 COPY scripts/trim_neck.sh /opt/bin/trim_neck.sh
 # Copy data and code from builder
