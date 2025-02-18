@@ -1252,7 +1252,7 @@ def compute_qc_stats(t1w_bids, mask_bids, seg_bids, work_dir, thick_bids=None, t
 
 
 def _create_registration_gif(fixed_slice_image, moving_slice_image, work_dir, fixed_text="Fixed Image",
-                            moving_text="Moving Image", num_frames=20, pause_frames=10, font_size=40):
+                            moving_text="Moving Image", num_frames=50, pause_frames=10, font_size=60):
     """
     Creates an animated GIF that fades between two images, with a title bar at the top containing text.
 
@@ -1265,17 +1265,15 @@ def _create_registration_gif(fixed_slice_image, moving_slice_image, work_dir, fi
     work_dir : str
         Path to the working directory.
     fixed_text : str, optional
-        Text to display on the fixed image. Default is "Fixed Image".
+        Text to display on the fixed image.
     moving_text : str, optional
-        Text to display on the moving image. Default is "Moving Image".
+        Text to display on the moving image.
     num_frames : int, optional
-        Number of frames for the fade transition. Default is 20.
+        Number of frames for the fade transition.
     pause_frames : int, optional
-        Number of frames to pause on each image. Default is 10.
+        Number of frames to pause on each image.
     font_size : int, optional
-        Font size for the text. Default is 40.
-    title_bar_height : int, optional
-        Height of the title bar. Default is 60.
+        Font size for the text.
 
     Returns
     --------
@@ -1296,7 +1294,7 @@ def _create_registration_gif(fixed_slice_image, moving_slice_image, work_dir, fi
     # Create transition frames
     frames = []
 
-    # Fade from img1 → img2
+    # Fade from img1 to img2
     for alpha in np.linspace(0, 1, num_frames):
         blended = Image.blend(img1, img2, alpha)
         frames.append(blended)
@@ -1313,17 +1311,16 @@ def _create_registration_gif(fixed_slice_image, moving_slice_image, work_dir, fi
     frames.extend([img1] * pause_frames)
 
     # Save as animated GIF
-    output_path = system_helpers.get_temp_filename(work_dir, 'registrationqc.gif')
+    output_path = system_helpers.get_temp_file(work_dir, 'registrationqc', suffix='.gif')
 
-    frames[0].save(output_path, save_all=True, append_images=frames[1:], duration=50, loop=1)
+    frames[0].save(output_path, save_all=True, append_images=frames[1:], duration=50, loop=0)
 
     return output_path
 
 
-
-def _add_text_to_slice(image, text, font_size=40):
+def _add_text_to_slice(image, text, font_size=60):
     """
-    Expands a 2D image at the top to add a black rectangle with text.
+    Expands a 2D image at the top to add a black rectangle with centered text.
 
     Args:
         image (PIL.Image): The original image.
@@ -1335,39 +1332,44 @@ def _add_text_to_slice(image, text, font_size=40):
     """
     width, height = image.size
 
-    title_bar_height = font_size + 20
+    # Load font - try different font families for cross-platform support
+    def _load_font(size):
+        import matplotlib.font_manager as fm
+
+        font_families = ["Arial", "Helvetica", "Liberation Sans", "DejaVu Sans", "Nimbus Sans", "FreeSans"]
+
+        # Get a list of all system fonts
+        system_fonts = fm.findSystemFonts(fontpaths=None, fontext="ttf")
+
+        for font_path in system_fonts:
+            font_name = fm.FontProperties(fname=font_path).get_name()
+            if any(family in font_name for family in font_families):
+                return ImageFont.truetype(font_path, size)
+
+        return ImageFont.truetype(system_fonts[0], size)
+
+
+    font = _load_font(font_size)
+
+    # Draw text box in a dummy image to compute text height
+    temp_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))  # Dummy image for size calc
+    bbox = temp_draw.textbbox((0, 0), text, font=font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+
+    title_bar_height = int(text_height * 2)
 
     new_height = height + title_bar_height
 
-    # Load font - try different font families to try to get the right font on all platforms
-    def _load_font(size=40):
-        """
-        Loads Arial for cross-platform consistency.
-        Falls back to system default fonts if unavailable.
-        """
-        fallback_fonts = ["Arial", "Liberation Sans", "DejaVu Sans"]
-
-        for font_family in fallback_fonts:
-            try:
-                return ImageFont.truetype(font_family, size)
-            except IOError:
-                continue
-
-        return ImageFont.load_default()
-
-    # Draw text
     # Create a new blank image (black at top, image below)
     new_img = Image.new("RGBA", (width, new_height), "black")
-    new_img.paste(image, (0, title_bar_height))  # Paste original image below
-    font = _load_font(font_size)
+    new_img.paste(image, (0, title_bar_height))
+
+    # Draw text centered in title bar
     draw = ImageDraw.Draw(new_img)
-    bbox = draw.textbbox((0, 0), text, font=font)
-    text_width = bbox[2] - bbox[0]
-    text_height = bbox[3] - bbox[1]
     text_x = (width - text_width) // 2
     text_y = (title_bar_height - text_height) // 2
     draw.text((text_x, text_y), text, font=font, fill="white")
 
     return new_img
-
 
