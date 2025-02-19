@@ -20,6 +20,8 @@ dependencies = [
     "antspynet",
     "antspyx>=0.5.4",
     "filelock",
+    "imageio",
+    "pillow",
     "pybids==0.16.5",
     "templateflow==24.2.0"
 ]
