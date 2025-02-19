@@ -1,10 +1,12 @@
 import ants
 import antspynet
-
 import csv
+import imageio
 import logging
 import numpy as np
 import os
+
+from PIL import Image, ImageDraw, ImageFont
 
 from .system_helpers import run_command, get_nifti_file_prefix, copy_file, get_temp_file, get_temp_dir, get_verbose
 
@@ -2027,7 +2029,8 @@ def convert_scalar_image_to_rgb(scalar_image, work_dir, mask=None, colormap='hot
 
 
 def create_tiled_mosaic(scalar_image, mask, work_dir, overlay=None, tile_shape=(-1, -1), overlay_alpha=0.25, axis=2,
-                        pad=('mask+4'), slice_spec=(3,'mask+8','mask-8'), flip_spec=None):
+                        pad=('mask+4'), slice_spec=(3,'mask+8','mask-8'), flip_spec=None, title_bar_text=None,
+                        title_bar_font_size=60):
     """Create a tiled mosaic of a scalar image using a colormap.
 
     Parameters:
@@ -2056,6 +2059,11 @@ def create_tiled_mosaic(scalar_image, mask, work_dir, overlay=None, tile_shape=(
     flip_spec : list, optional
         Flip specification in the form (x,y). Default is None, in which case the flip is decided based on the slice axis,
         assuming LPI input.
+    title_bar_text : str, optional
+        Text to overlay on the title bar, if required. If not None, a black rectangle is added to the top of the image with
+        the specified text centered within it.
+    title_bar_font_size : int, optional
+        Font size for the title bar text, in points. Default is 60.
 
     Returns:
     --------
@@ -2082,10 +2090,67 @@ def create_tiled_mosaic(scalar_image, mask, work_dir, overlay=None, tile_shape=(
 
     run_command(cmd)
 
-    if get_verbose():
-        logger.info(f"Mosaic image saved to {mosaic_file}")
+    if title_bar_text is not None:
+        mosaic_file = _add_text_to_slice(mosaic_file, title_bar_text, font_size=title_bar_font_size)
 
     return mosaic_file
+
+
+def _add_text_to_slice(image, text, font_size=60):
+    """
+    Expands a 2D image at the top to add a black rectangle with centered text.
+
+    Args:
+        image (PIL.Image): The original image.
+        text (str): Text to overlay.
+        font_size (int): Font size for the text.
+
+    Returns:
+        PIL.Image: New image with the added text bar.
+    """
+    width, height = image.size
+
+    # Load font - try different font families for cross-platform support
+    def _load_font(size):
+        import matplotlib.font_manager as fm
+
+        font_families = ["Arial", "Helvetica", "Liberation Sans", "DejaVu Sans", "Nimbus Sans", "FreeSans"]
+
+        # Get a list of all system fonts
+        system_fonts = fm.findSystemFonts(fontpaths=None, fontext="ttf")
+
+        for font_path in system_fonts:
+            font_name = fm.FontProperties(fname=font_path).get_name()
+            if any(family in font_name for family in font_families):
+                return ImageFont.truetype(font_path, size)
+
+        return ImageFont.truetype(system_fonts[0], size)
+
+
+    font = _load_font(font_size)
+
+    # Draw text box in a dummy image to compute text height
+    temp_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))  # Dummy image for size calc
+    bbox = temp_draw.textbbox((0, 0), text, font=font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+
+    title_bar_height = int(text_height * 2)
+
+    new_height = height + title_bar_height
+
+    # Create a new blank image (black at top, image below)
+    new_img = Image.new("RGBA", (width, new_height), "black")
+    new_img.paste(image, (0, title_bar_height))
+
+    # Draw text centered in title bar
+    draw = ImageDraw.Draw(new_img)
+    text_x = (width - text_width) // 2
+    text_y = (title_bar_height - text_height) // 2
+    draw.text((text_x, text_y), text, font=font, fill="white")
+
+    return new_img
+
 
 
 def image_correlation(image1, image2, work_dir, exclude_background=True):
