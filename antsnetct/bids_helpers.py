@@ -6,6 +6,7 @@ import os
 import re
 import templateflow
 
+# This is used to find the antsnetct version
 from importlib import metadata
 
 from .system_helpers import copy_file, get_temp_dir, run_command
