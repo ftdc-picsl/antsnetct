@@ -502,6 +502,10 @@ def longitudinal_analysis():
                 cross_sectional_pipeline.make_thickness_qc_plots(seg_n4['bias_corrected_t1w'], brain_mask_bids, thickness,
                                                                  working_dir)
 
+                if template_derivatives['sst']['jacobian'] is not None:
+                    make_sst_jacobian_plots(sst_bids, unified_mask_sst_bids, template_derivatives['sst']['jacobian'],
+                                            working_dir)
+
                 compute_qc_stats(seg_n4['bias_corrected_t1w'], brain_mask_bids, seg_n4['segmentation_image'],
                                  thickness, sst_brain_bids, template_derivatives['sst']['t1w_brain'],
                                  working_dir, group_template=group_template, group_template_mask=group_template_brain_mask,
@@ -980,6 +984,32 @@ def template_space_derivatives(sst, session_sst_transform, seg_n4, thickness, wo
     return template_space_bids
 
 
+def make_sst_jacobian_plots(sst_bids, sst_mask_bids, session_sst_jacobian_bids, work_dir):
+    # Resample everything to 1mm so the PNG plots have a roughly consistent number of slices
+    scalar_image = ants_helpers.resample_image_by_spacing(sst_bids.get_path(), [1, 1, 1], work_dir)
+
+    mask_image = ants_helpers.resample_image_by_spacing(sst_mask_bids.get_path(), [1, 1, 1], work_dir,
+                                                        interpolation='NearestNeighbor')
+
+    jacobian_image = ants_helpers.resample_image_by_spacing(session_sst_jacobian_bids.get_path(), [1, 1, 1], work_dir)
+
+    # winsorize a bit more aggressively to boost brightness of the brain
+    scalar_image = ants_helpers.winsorize_intensity(scalar_image, mask_image, work_dir, lower_percentile=1.0,
+                                                    upper_iqr_scale=1.5)
+
+    jac_rgb = ants_helpers.convert_scalar_image_to_rgb(jacobian_image, work_dir, colormap='logjacobian',
+                                                       min_value=-0.56, max_value=0.56)
+
+    tiled_jac_ax = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=jac_rgb, overlay_alpha=0.6,
+                                                    axis=2, pad=('mask+5'), slice_spec=(3,'mask','mask'))
+    tiled_jac_cor = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=jac_rgb, overlay_alpha=0.6,
+                                                    axis=1, pad=('mask+5'), slice_spec=(3,'mask','mask'))
+    system_helpers.copy_file(tiled_jac_ax, session_sst_jacobian_bids.get_derivative_path_prefix() +
+                             '_space-sst_desc-logjacaxqc.png')
+    system_helpers.copy_file(tiled_jac_cor, session_sst_jacobian_bids.get_derivative_path_prefix() +
+                             '_space-sst_desc-logjaccorqc.png')
+
+
 def compute_qc_stats(t1w_bids, mask_bids, seg_bids, thick_bids, sst_brain_bids, t1w_brain_sst_space_bids, work_dir,
                      group_template=None, group_template_mask=None, t1w_brain_group_template_space_bids=None):
     """Compute QC statistics for a T1w image, with segmentation and cortical thickness data
@@ -1018,12 +1048,13 @@ def compute_qc_stats(t1w_bids, mask_bids, seg_bids, thick_bids, sst_brain_bids, 
     mask_vol = mask_image[mask_image > 0].shape[0] * np.prod(mask_image.spacing) / 1000.0 # volume in ml
     seg_vols = [seg_image[seg_image == i].shape[0] * np.prod(seg_image.spacing) / 1000.0 for i in (2, 3, 8, 9, 10, 11)]
 
+    cgm_mask = seg_image == 8
+
     gm_mean_intensity = t1w_image[cgm_mask].mean()
     wm_mean_intensity = t1w_image[seg_image == 2].mean()
     wm_gm_contrast = wm_mean_intensity / gm_mean_intensity
 
     thick_image = ants_image_read(thick_bids.get_path())
-    cgm_mask = seg_image == 8
     gm_thickness = thick_image[cgm_mask]
     thick_mean = gm_thickness.mean()
     thick_std = gm_thickness.std()

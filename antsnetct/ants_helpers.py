@@ -1989,7 +1989,10 @@ def convert_scalar_image_to_rgb(scalar_image, work_dir, mask=None, colormap='hot
     tmp_file_prefix = get_temp_file(work_dir, prefix='scalar_to_rgb')
 
     builtin_colormaps = {'antsct': [[0,0,0], [0,1,0], [0,0,1], [1,0,0], [1,0,0], [1,0,0], [1,0,0], [1,0,0], [0,1,0], [1,1,0],
-                                    [0,1,1], [1,0,1]]
+                                    [0,1,1], [1,0,1]],
+                         'logjacobian': [[0.2, 0.2, 0.6], [0.2, 0.2, 0.8], [0.0, 0.0, 1.0], [0.4, 0.4, 1.0], [0.8, 0.8, 1.0],
+                                         [1.0, 1.0, 1.0], [1.0, 0.8, 0.8], [1.0, 0.4, 0.4], [1.0, 0.0, 0.0], [0.8, 0.2, 0.2],
+                                         [0.6, 0.2, 0.2]]
     }
 
     if mask is None:
