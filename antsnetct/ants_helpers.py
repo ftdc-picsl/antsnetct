@@ -2032,7 +2032,7 @@ def convert_scalar_image_to_rgb(scalar_image, work_dir, mask=None, colormap='hot
 
 
 def create_tiled_mosaic(scalar_image, mask, work_dir, overlay=None, tile_shape=(-1, -1), overlay_alpha=0.25, axis=2,
-                        pad=('mask+4'), slice_spec=(3,'mask+8','mask-8'), flip_spec=None, title_bar_text=None,
+                        pad=('mask+4'), slice_spec=(3,'mask+8','mask-8'), flip_spec=(1,1), title_bar_text=None,
                         title_bar_font_size=60):
     """Create a tiled mosaic of a scalar image using a colormap.
 
@@ -2060,8 +2060,7 @@ def create_tiled_mosaic(scalar_image, mask, work_dir, overlay=None, tile_shape=(
         at an offset of -8 from the last slice within the mask. Set to (interval,mask,mask), to set the boundaries to the full
         extent of the mask.
     flip_spec : list, optional
-        Flip specification in the form (x,y). Default is None, in which case the flip is decided based on the slice axis,
-        assuming LPI input.
+        Flip specification in the form (x,y). Default (1,1) works for LPI input.
     title_bar_text : str, optional
         Text to overlay on the title bar, if required. If not None, a black rectangle is added to the top of the image with
         the specified text centered within it.
@@ -2074,12 +2073,6 @@ def create_tiled_mosaic(scalar_image, mask, work_dir, overlay=None, tile_shape=(
         Path to mosaic image
     """
     tmp_file_prefix = get_temp_file(work_dir, prefix='mosaic')
-
-    if flip_spec is None:
-        if axis == 2:
-            flip_spec = [0, 1]
-        else:
-            flip_spec = [1, 1]
 
     mosaic_file = f"{tmp_file_prefix}_mosaic.png"
 
