@@ -243,5 +243,6 @@ antsApplyTransforms \
     -i sub-01_ses-01_desc-biascorrbrain_T1w.nii.gz \
     -r tpl-group_T1w.nii.gz \
     -o sub-01_ses-01_space-group_desc-biascorrbrain_T1w.nii.gz \
-    -t sub-01_from-T1w_to-group_template_mode-image_xfm.h5  sub-01_ses-01_from-T1w_to-sst_mode-image_xfm.h5
+    -t sub-01_from-T1w_to-group_template_mode-image_xfm.h5 \
+    -t sub-01_ses-01_from-T1w_to-sst_mode-image_xfm.h5
 ```
