@@ -22,8 +22,8 @@ dependencies = [
     "filelock",
     "imageio",
     "pillow",
-    "pybids==0.16.5",
-    "templateflow==24.2.0"
+    "pybids>=0.17.2",
+    "templateflow>=24.2.0"
 ]
 
 [project.urls]
