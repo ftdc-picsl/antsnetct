@@ -193,8 +193,10 @@ def cross_sectional_analysis():
                                      "prior.", action='store_true')
     segmentation_parser.add_argument("--legacy-deep-atropos", help="Use the legacy deep_atropos network. "
                                      "Has no effect if deep_atropos is not called", action='store_true')
-    segmentation_parser.add_argument("--atropos-n4-iterations", help="Number of iterations of atropos-n4",
+    segmentation_parser.add_argument("--atropos-n4-iterations", help="Number of iterations of the atropos-n4 loop",
                                      type=int, default=2)
+    segmentation_parser.add_argument("--atropos-seg-iterations", help="Number of iterations of the atropos segmentation",
+                                     type=int, default=15)
     segmentation_parser.add_argument("--atropos-prior-weight", help="Prior weight for Atropos", type=float, default=0.25)
     segmentation_parser.add_argument("--prior-smoothing-sigma", help="Sigma for smoothing the priors, in voxels. Experimental",
                                      type=float, default=0)
@@ -353,6 +355,7 @@ def cross_sectional_analysis():
                                                   working_dir, prior_metadata=seg_priors['prior_metadata'],
                                                   do_atropos_n4=args.do_ants_atropos_n4,
                                                   atropos_n4_iterations=args.atropos_n4_iterations,
+                                                  atropos_iterations=args.atropos_seg_iterations,
                                                   atropos_prior_weight=args.atropos_prior_weight)
 
                 if args.longitudinal_preproc:
@@ -702,8 +705,8 @@ def get_segmentation_priors(t1w_bids, t1w_bids_preproc, work_dir, segmentation_d
 
 
 def segment_and_bias_correct(t1w_bids_preproc, brain_mask_bids, segmentation_priors, work_dir, prior_metadata=None,
-                             do_atropos_n4=True, atropos_n4_iterations=2, atropos_prior_weight=0.25, denoise=True,
-                             n4_spline_spacing=180, n4_convergence='[ 50x50x50x50,1e-7 ]', n4_shrink_factor=3):
+                             do_atropos_n4=True, atropos_n4_iterations=2, atropos_iterations=15, atropos_prior_weight=0.25,
+                             denoise=True, n4_spline_spacing=180, n4_convergence='[ 50x50x50x50,1e-7 ]', n4_shrink_factor=3):
     """Segment and bias correct a T1w image
 
     If do_atropos_n4 is True, the priors are used to iteratively refine the bias correction and segmentation
@@ -728,9 +731,20 @@ def segment_and_bias_correct(t1w_bids_preproc, brain_mask_bids, segmentation_pri
         are used as the posteriors for the segmentation, and the T1w image is bias-corrected using the priors.
     atropos_n4_iterations : int, optional
         Number of iterations for antsAtroposN4.sh.
+    atropos_iterations : int, optional
+        Number of iterations for Atropos segmentation. This is the number of iterations inside the Atropos executable,
+        not the number of times N4 / Atropos is run.
     atropos_prior_weight : float, optional
         Prior weight for Atropos. Minimum useful value is 0.2, below this the priors are not very well constrained and you will
         see labels that overlap in intensity (like SGM and CBM) appear in the wrong places.
+    denoise : bool, optional
+        If true, denoise the T1w image before bias correction.
+    n4_spline_spacing : float, optional
+        Initial spline spacing for N4 bias correction, in mm.
+    n4_convergence : str, optional
+        Convergence criteria for N4 bias correction.
+    n4_shrink_factor : int, optional
+        Shrink factor for N4 bias correction.
 
     Returns:
     --------
@@ -751,7 +765,8 @@ def segment_and_bias_correct(t1w_bids_preproc, brain_mask_bids, segmentation_pri
                                                            segmentation_priors, work_dir, iterations=atropos_n4_iterations,
                                                            prior_weight=atropos_prior_weight, denoise=denoise,
                                                            n4_spline_spacing=n4_spline_spacing, n4_convergence=n4_convergence,
-                                                           n4_shrink_factor=n4_shrink_factor)
+                                                           n4_shrink_factor=n4_shrink_factor,
+                                                           atropos_iterations=atropos_iterations)
 
         # remap the segmentation posteriors to BIDS labels
         seg_output['segmentation_image'] = ants_helpers.posteriors_to_segmentation(seg_output['posteriors'], work_dir)
