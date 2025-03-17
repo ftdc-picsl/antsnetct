@@ -102,6 +102,8 @@ def longitudinal_analysis():
     segmentation_parser = parser.add_argument_group('Segmentation arguments for session processing')
     segmentation_parser.add_argument("--atropos-n4-iterations", help="Number of iterations of atropos-n4",
                                      type=int, default=2)
+    segmentation_parser.add_argument("--atropos-seg-iterations", help="Number of iterations of the atropos segmentation",
+                                     type=int, default=15)
     segmentation_parser.add_argument("--atropos-prior-weight", help="Prior weight for Atropos in the session space",
                                      type=float, default=0.5)
     segmentation_parser.add_argument("--prior-smoothing-sigma", help="Sigma for smoothing the priors before session "
@@ -475,7 +477,8 @@ def longitudinal_analysis():
                 logger.info(f"Segmenting session {idx + 1}")
                 seg_n4 = cross_sectional_pipeline.segment_and_bias_correct(
                     long_preproc_t1w_bids[idx], brain_mask_bids, t1w_priors, working_dir, denoise=True, do_atropos_n4=True,
-                    atropos_n4_iterations=args.atropos_n4_iterations, atropos_prior_weight=args.atropos_prior_weight)
+                    atropos_n4_iterations=args.atropos_n4_iterations, atropos_iterations=args.atropos_seg_iterations,
+                    atropos_prior_weight=args.atropos_prior_weight)
                 # Compute thickness
                 logger.info(f"Cortical thickness for session {idx + 1}")
                 thickness = cross_sectional_pipeline.cortical_thickness(seg_n4, working_dir,
