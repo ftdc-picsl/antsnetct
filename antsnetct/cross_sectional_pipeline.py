@@ -380,6 +380,11 @@ def cross_sectional_analysis():
                     logger.info("Creating template space derivatives")
                     template_derivs = template_space_derivatives(template, template_reg, seg_n4, thickness, working_dir)
                     t1w_brain_template_space = template_derivs['t1w_brain']
+                    compute_qc_stats(seg_n4['bias_corrected_t1w'], brain_mask_bids, seg_n4['segmentation_image'], working_dir,
+                                     thickness, template, template_brain_mask, t1w_brain_template_space)
+                else:
+                    compute_qc_stats(seg_n4['bias_corrected_t1w'], brain_mask_bids, seg_n4['segmentation_image'], working_dir,
+                                     thickness, None, None, None)
 
                 # Make QC plots
                 logger.info("Creating QC plots")
@@ -387,9 +392,6 @@ def cross_sectional_analysis():
                                            working_dir)
 
                 make_thickness_qc_plots(seg_n4['bias_corrected_t1w'], brain_mask_bids, thickness, working_dir)
-
-                compute_qc_stats(seg_n4['bias_corrected_t1w'], brain_mask_bids, seg_n4['segmentation_image'], working_dir,
-                                 thickness, template, template_brain_mask, t1w_brain_template_space)
 
                 if args.keep_workdir.lower() == 'always':
                     logger.info("Keeping working directory: " + working_dir)
