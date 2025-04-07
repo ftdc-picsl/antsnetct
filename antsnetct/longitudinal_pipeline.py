@@ -916,6 +916,9 @@ def template_space_derivatives(sst, session_sst_transform, seg_n4, thickness, wo
     sst_space_bids['thickness'] = bids_helpers.image_to_bids(thickness_sst_space, session_ref_image_bids.get_ds_path(),
                                                              sst_space_rel_output_prefix + '_desc-thickness.nii.gz')
 
+    # Default to None, no jacobian will be produced if the SST transform is linear
+    sst_space_bids['jacobian'] = None
+
     # Make the jacobian log determinant image in the template space
     jacobian_sst_space = ants_helpers.get_log_jacobian_determinant(sst.get_path(), session_sst_transform, work_dir)
 
