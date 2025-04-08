@@ -1269,6 +1269,9 @@ def get_log_jacobian_determinant(reference_image, transform, work_dir, use_geom=
         # The composite transform might not contain a warp, or might be an inverse transform
         # in antsnetct we always use forward transforms, so assume here we were passed an affine only transform,
         # eg for longitudinal registration
+        if (get_verbose()):
+            logger.info(f"Transform {transform} does not appear to be a forward warp with displacement field, "
+                        "log jacobian determinant will not be calculated.")
         return None
 
     cmd = ['CreateJacobianDeterminantImage', '3', warp_file, log_jacobian_file, '1', '1' if use_geom else '0']
