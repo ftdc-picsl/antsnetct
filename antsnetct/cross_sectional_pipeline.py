@@ -208,13 +208,14 @@ def cross_sectional_analysis():
     thickness_parser.add_argument("--thickness-iterations", help="Number of iterations for cortical thickness estimation.",
                                   type=int, default=45)
 
+    if len(sys.argv) == 1:
+        parser.print_usage()
+        print(f"\nRun {os.path.basename(sys.argv[0])} --help for more information")
+        sys.exit(1)
+
     args = parser.parse_args()
 
     logger.info("Parsed args: " + str(args))
-
-    if len(sys.argv) == 1:
-        parser.print_help()
-        sys.exit(1)
 
     template = None
     template_brain_mask = None

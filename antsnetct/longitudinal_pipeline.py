@@ -63,6 +63,7 @@ def longitudinal_analysis():
     ''')
 
     required_parser = parser.add_argument_group('Required arguments')
+    required_parser.add_argument("--longitudinal", help="Do longitudinal analysis", action='store_true', required=True)
     required_parser.add_argument("--cross-sectional-dataset", "--input-dataset", help="BIDS derivatives dataset dir, "
                                  "containing the cross-sectional analysis", type=str, required=True)
     required_parser.add_argument("--output-dataset", help="Output BIDS dataset dir", type=str, required=True)
@@ -125,6 +126,11 @@ def longitudinal_analysis():
                                  "cohorts", type=str, default=None)
     template_parser.add_argument("--template-reg-quick", help="Do quick registration to the template", action='store_true')
 
+    if len(sys.argv) == 2:
+        # get here if user runs antsnetct --longitudinal
+        parser.print_usage()
+        print(f"\nRun {os.path.basename(sys.argv[0])} --longitudinal --help for more information")
+        sys.exit(1)
 
     args = parser.parse_args()
 
