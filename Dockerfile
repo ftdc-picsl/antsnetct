@@ -54,4 +54,3 @@ ENV PATH="/opt/bin:/opt/ants/bin:$PATH"
 USER antspyuser
 
 ENTRYPOINT ["antsnetct"]
-CMD ["-h"]

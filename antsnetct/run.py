@@ -30,7 +30,6 @@ def main():
     from .longitudinal_pipeline import longitudinal_analysis
 
     if '--longitudinal' in sys.argv:
-        sys.argv.remove('--longitudinal')
         longitudinal_analysis()
     else:
         cross_sectional_analysis()
