@@ -117,8 +117,8 @@ def longitudinal_analysis():
                                   type=int, default=45)
 
     template_parser = parser.add_argument_group('Group template arguments')
-    template_parser.add_argument("--template-name", help="Template to use for registration, or 'none' to disable this step.",
-                                 type=str, default='MNI152NLin2009cAsym')
+    template_parser.add_argument("--template-name", help="Template to use for registration. A group template is required "
+                                 "to provide an unbiased initialization for the SST.", type=str, default='MNI152NLin2009cAsym')
     template_parser.add_argument("--template-res", help="Resolution of the template, eg '01', '02', etc. Note this is a "
                                  "templateflow index and not a physical spacing. If the selected template does not define "
                                  "multiple resolutions, this is ignored.", type=str, default='01')
@@ -150,16 +150,18 @@ def longitudinal_analysis():
     group_template_brain_mask = None
 
     # setup templateflow, check template can be found
-    if args.template_name.lower() != 'none':
-        if not 'TEMPLATEFLOW_HOME' in os.environ or not os.path.exists(os.environ.get('TEMPLATEFLOW_HOME')):
-            raise PipelineError(f"templateflow directory not found at " +
-                                f"TEMPLATEFLOW_HOME={os.environ.get('TEMPLATEFLOW_HOME')}")
+    if args.template_name.lower() == 'none':
+        raise PipelineError('Group template cannot be none for longitudinal analysis. ')
 
-        group_template = bids_helpers.TemplateImage(args.template_name, suffix='T1w', description=None,
-                                              resolution=args.template_res, cohort=args.template_cohort)
+    if not 'TEMPLATEFLOW_HOME' in os.environ or not os.path.exists(os.environ.get('TEMPLATEFLOW_HOME')):
+        raise PipelineError(f"templateflow directory not found at " +
+                            f"TEMPLATEFLOW_HOME={os.environ.get('TEMPLATEFLOW_HOME')}")
 
-        group_template_brain_mask = bids_helpers.TemplateImage(args.template_name, suffix='mask', description='brain',
-                                                         resolution=args.template_res, cohort=args.template_cohort)
+    group_template = bids_helpers.TemplateImage(args.template_name, suffix='T1w', description=None,
+                                                resolution=args.template_res, cohort=args.template_cohort)
+
+    group_template_brain_mask = bids_helpers.TemplateImage(args.template_name, suffix='mask', description='brain',
+                                                           resolution=args.template_res, cohort=args.template_cohort)
 
     system_helpers.set_verbose(args.verbose)
 

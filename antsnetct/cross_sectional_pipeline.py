@@ -162,7 +162,7 @@ def cross_sectional_analysis():
                                   "before further processing", type=int, default=10)
     template_parser = parser.add_argument_group("Template arguments")
     template_parser.add_argument("--template-name", help="Template to use for registration, or 'none' to disable this step.",
-                                 type=str, default='MNI152NLin2009cAsym')
+                                 type=str, default='none')
     template_parser.add_argument("--template-res", help="Resolution of the template, eg '01', '02', etc. Note this is a "
                                  "templateflow index and not a physical spacing. If the selected template does not define "
                                  "multiple resolutions, this is ignored.", type=str, default='01')
@@ -205,7 +205,8 @@ def cross_sectional_analysis():
                                      default=0)
 
     thickness_parser = parser.add_argument_group("Thickness arguments")
-    thickness_parser.add_argument("--thickness-iterations", help="Number of iterations for cortical thickness estimation.",
+    thickness_parser.add_argument("--thickness-iterations", help="Number of iterations for cortical thickness estimation. "
+                                  "Reducing this will make the pipeline run faster but will tend to underestimate thickness.",
                                   type=int, default=45)
 
     if len(sys.argv) == 1:
@@ -366,6 +367,12 @@ def cross_sectional_analysis():
                     compute_qc_stats(seg_n4['bias_corrected_t1w'], brain_mask_bids, seg_n4['segmentation_image'],
                                      working_dir)
                     logger.info(f"Finished processing {t1w_bids.get_uri(relative=False)}")
+
+                    if args.keep_workdir.lower() == 'always':
+                        logger.info("Keeping working directory: " + working_dir)
+                        shutil.copytree(working_dir, os.path.join(output_dataset,
+                                                                  preproc_t1w_bids.get_derivative_rel_path_prefix() +
+                                                                  "_workdir"))
                     continue
 
                 logger.info("Computing cortical thickness")
@@ -1096,9 +1103,9 @@ def make_segmentation_qc_plots(t1w_bids, mask_bids, seg_bids, work_dir):
 
     seg_rgb = ants_helpers.convert_scalar_image_to_rgb(seg_image, work_dir, colormap='antsct')
 
-    tiled_seg_ax = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=seg_rgb, overlay_alpha=0.25,
+    tiled_seg_ax = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=seg_rgb, overlay_alpha=0.2,
                                                     axis=2, pad=('mask+5'), slice_spec=(3,'mask','mask'))
-    tiled_seg_cor = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=seg_rgb, overlay_alpha=0.25,
+    tiled_seg_cor = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=seg_rgb, overlay_alpha=0.2,
                                                     axis=1, pad=('mask+5'), slice_spec=(3,'mask','mask'))
     system_helpers.copy_file(tiled_seg_ax, t1w_bids.get_derivative_path_prefix() + '_desc-segaxqc.png')
     system_helpers.copy_file(tiled_seg_cor, t1w_bids.get_derivative_path_prefix() + '_desc-segcorqc.png')
@@ -1134,9 +1141,14 @@ def make_thickness_qc_plots(t1w_bids, mask_bids, thick_bids, work_dir):
     scalar_image = ants_helpers.winsorize_intensity(scalar_image, mask_image, work_dir, lower_percentile=0.0,
                                                     upper_iqr_scale=1.5)
 
-    thick_rgb = ants_helpers.convert_scalar_image_to_rgb(thick_image, work_dir, colormap='hot', min_value=0, max_value=6)
+    thick_mask = ants_helpers.threshold_image(thick_image, work_dir, 0.0001, 1000000.0)
 
-    thick_mask = ants_helpers.threshold_image(thick_image, work_dir, lower=0.001, upper=1000)
+    if ants_helpers.brain_volume_ml(thick_mask) == 0.0:
+        logger.warning("Cortical thickness image is zero (perhaps too few iterations)")
+        thick_mask = mask_image
+
+    thick_rgb = ants_helpers.convert_scalar_image_to_rgb(thick_image, work_dir, mask=thick_mask, colormap='hot', min_value=0,
+                                                         max_value=6)
 
     tiled_thick_ax = ants_helpers.create_tiled_mosaic(scalar_image, thick_mask, work_dir, overlay=thick_rgb,
                                                       overlay_alpha=1, axis=2, pad=('mask+5'), slice_spec=(3,'mask','mask'))
