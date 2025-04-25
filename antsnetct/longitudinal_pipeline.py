@@ -138,11 +138,6 @@ def longitudinal_analysis():
 
     system_helpers.set_verbose(args.verbose)
 
-    # If no args, print help and exit
-    if len(sys.argv) == 1:
-        parser.print_help()
-        sys.exit(1)
-
     if args.participant is None:
         raise ValueError('Participant must be defined')
 
@@ -162,12 +157,6 @@ def longitudinal_analysis():
 
     group_template_brain_mask = bids_helpers.TemplateImage(args.template_name, suffix='mask', description='brain',
                                                            resolution=args.template_res, cohort=args.template_cohort)
-
-    system_helpers.set_verbose(args.verbose)
-
-    if len(sys.argv) == 1:
-        parser.print_help()
-        sys.exit(1)
 
     cx_dataset = args.cross_sectional_dataset
 
