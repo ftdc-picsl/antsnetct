@@ -2184,3 +2184,33 @@ def image_correlation(image1, image2, work_dir, exclude_background=True):
     corr = np.corrcoef(img1, img2)
 
     return float(corr[0,1])
+
+
+def desikan_killiany_tourville_parcellation(image, work_dir):
+    """Does a Desikan-Killiany-Tourville parcellation of the input image using ANTsPyNet.
+
+    Parameters:
+    ----------
+    image : str
+        Path to input image.
+    work_dir : str
+        Path to working directory.
+
+    Returns:
+    -------
+    str
+        Path to parcellated image.
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='dkt31')
+
+    parcellated_image = f"{tmp_file_prefix}_parcellated.nii.gz"
+
+    # Load the image
+    img = ants.image_read(image)
+
+    dkt31 = antspynet.desikan_killiany_tourville_labeling(img, do_preprocessing=True, return_probability_images=False
+                                                          do_lobar_parcellation=False, version=1, verbose=verbose=get_verbose())
+
+    ants.image_write(dkt31, parcellated_image)
+
+    return parcellated_image

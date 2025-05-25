@@ -144,9 +144,11 @@ def parcellation_pipeline():
                                 action='store_true')
 
     label_parser = parser.add_argument_group('AntsXNet parcellation options')
-    label_parser.add_argument("--dkt31", help="Do DKT31 parcellation", action='store_true')
-    label_parser.add_argument("--hoa", help="Do Harvard-Oxford atlas parcellation", action='store_true')
-    label_parser.add_argument("--cerebellum", help="Do cerebellum parcellation", action='store_true')
+    label_parser.add_argument("--dkt31", help="Do DKT31 parcellation", action=argparse.BooleanOptionalAction, default=True)
+    label_parser.add_argument("--hoa", help="Do Harvard-Oxford atlas parcellation. If you are using atlas labels, this may be "
+                              "required", action=argparse.BooleanOptionalAction, default=True)
+    label_parser.add_argument("--cerebellum", help="Do cerebellum parcellation", action=argparse.BooleanOptionalAction,
+                              default=False)
 
 
     template_parser = parser.add_argument_group('Atlas-based labeling arguments')
@@ -234,24 +236,95 @@ def parcellation_pipeline():
             input_session_preproc_t1w_bids = bids_helpers.find_participant_images(input_dataset, args.participant, bids_wd,
                                                                                   validate=False, **bids_t1w_filter)
 
-
     logger.info(f"Using participant images: {[im.get_uri() for im in input_session_preproc_t1w_bids]}")
 
-    with tempfile.TemporaryDirectory(suffix=f"antsnetct_parcellate_{args.participant}.tmpdir") as working_dir:
-        try:
+    for t1w_bids in input_session_preproc_t1w_bids:
+        with tempfile.TemporaryDirectory(
+                suffix=f"antsnetparc_{system_helpers.get_nifti_file_prefix(t1w_bids.get_path())}.tmpdir") as working_dir:
+            try:
 
-            # Parcellate each session
+                logger.info("Processing T1w image: " + t1w_bids.get_uri(relative=False))
+
+                do_antsnet_parcellation(t1w_bids, working_dir, dkt31=args.dkt31, hoa=args.hoa, cerebellum=args.cerebellum)
+
+            except Exception as e:
+                logger.error(f"Caught {type(e)} during processing of {str(t1w_bids)}")
+                # Print stack trace
+                traceback.print_exc()
+                debug_workdir = os.path.join(output_dataset, t1w_bids.get_derivative_rel_path_prefix() + "_workdir")
+                if args.keep_workdir.lower() != 'never':
+                    logger.info("Saving working directory to " + debug_workdir)
+                    shutil.copytree(working_dir, debug_workdir)
+
+    # Optionally parcellate SST images
+    if args.parcellate_sst:
+        sst_bids = bids_helpers.find_participant_images(input_dataset, args.participant, bids_wd,
+                                                        validate=False, datatype='func', suffix='SST')
+        if len(sst_bids) == 0:
+            raise ValueError(f"No SST images found for participant {args.participant}")
+        with tempfile.TemporaryDirectory(
+            suffix=f"antsnetparc_{system_helpers.get_nifti_file_prefix(sst_bids.get_path())}.tmpdir") as working_dir:
+            try:
+                if args.parcellate_sst:
+                    logger.info("Processing SST image: " + sst_bids.get_uri(relative=False))
+                    parcellate_sst(sst_bids, output_dataset, args.participant, args.longitudinal, args.verbose)
+            except Exception as e:
+                logger.error(f"Caught {type(e)} during processing of {args.participant}")
+                # Print stack trace
+                traceback.print_exc()
+                debug_workdir = os.path.join(args.output_dataset, f"sub-{args.participant}", f"sub-{args.participant}_workdir")
+                if args.keep_workdir.lower() != 'never':
+                    logger.info(f"Saving working directory {working_dir} to {debug_workdir}")
+                    shutil.copytree(working_dir, debug_workdir)
 
 
-            # optionally parcellate SST
+def do_antsnet_parcellation(t1w_bids, work_dir, dkt31=True, hoa=True, cerebellum=False):
+    """Do antsnet parcellation on a T1w image.
 
-        except Exception as e:
-            logger.error(f"Caught {type(e)} during processing of {args.participant}")
-            # Print stack trace
-            traceback.print_exc()
-            debug_workdir = os.path.join(args.output_dataset, f"sub-{args.participant}", f"sub-{args.participant}_workdir")
-            if args.keep_workdir.lower() != 'never':
-                logger.info(f"Saving working directory {working_dir} to {debug_workdir}")
-                shutil.copytree(working_dir, debug_workdir)
+    Parameters:
+    -----------
+    t1w_bids : BIDSImage
+        BIDS image object for the T1w image
+    work_dir : str
+        Working directory for the parcellation
+    dkt31 : bool
+        Do DKT31 parcellation
+    hoa : bool
+        Do Harvard-Oxford atlas parcellation
+    cerebellum : bool
+        Do cerebellum parcellation
+
+    Returns:
+    -------
+    dict with keys:
+        - dkt31
+        - hoa
+        - cerebellum
+    for the selected parcellations.
+    """
+    logger.info("Doing antsnet parcellation on " + t1w_bids.get_uri(relative=False))
+
+    # Read the T1w image
+    t1w_image = ants_image_read(t1w_bids.get_path())
+
+    # Get the brain mask
+    brain_mask = preprocessing.get_brain_mask(t1w_image)
+
+    # Do the parcellation
+    parcellation_results = dict()
+
+    if dkt31:
+        parcellation_results['dkt31'] = cross_sectional_pipeline.do_dkt31_parcellation(t1w_image, work_dir, brain_mask)
+
+    if hoa:
+        parcellation_results['hoa'] = cross_sectional_pipeline.do_hoa_parcellation(t1w_image, work_dir, brain_mask)
+
+    if cerebellum:
+        parcellation_results['cerebellum'] = cross_sectional_pipeline.do_cerebellum_parcellation(t1w_image, work_dir,
+                                                                                               brain_mask)
+
+    return parcellation_results
 
 
+def parcellate_sst(sst_bids, output_dataset, participant, longitudinal, verbose):
+    raise NotImplementedError("SST parcellation not implemented yet")
