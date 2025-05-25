@@ -1231,7 +1231,7 @@ def brain_volume_ml(mask_image):
     return brain_volume_ml
 
 
-def get_log_jacobian_determinant(reference_image, transform, work_dir, use_geom=False):
+def get_log_jacobian_determinant(reference_image, transform, work_dir, use_geom=True):
     """Compute the log of the determinant of the Jacobian of a transform
 
     Parameters:
@@ -1254,6 +1254,9 @@ def get_log_jacobian_determinant(reference_image, transform, work_dir, use_geom=
     tmp_file_prefix = get_temp_file(work_dir, prefix='jacobian')
 
     log_jacobian_file = f"{tmp_file_prefix}_logjac.nii.gz"
+
+    if not use_geom:
+        raise ValueError("Jacobian determinant calculation must be geometric, see ANTs issue #1884")
 
     # First decompose transform into its components
 
