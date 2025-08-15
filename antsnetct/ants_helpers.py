@@ -48,6 +48,7 @@ def apply_mask(image, mask, work_dir):
 
     return masked_image_file
 
+
 def smooth_image(image, sigma, work_dir):
     """Smooth an image with a Gaussian kernel
 
@@ -2186,7 +2187,7 @@ def image_correlation(image1, image2, work_dir, exclude_background=True):
     return float(corr[0,1])
 
 
-def desikan_killiany_tourville_parcellation(image, work_dir):
+def desikan_killiany_tourville_parcellation(image, work_dir, brain_mask=None):
     """Does a Desikan-Killiany-Tourville parcellation of the input image using ANTsPyNet.
 
     Parameters:
@@ -2195,7 +2196,9 @@ def desikan_killiany_tourville_parcellation(image, work_dir):
         Path to input image.
     work_dir : str
         Path to working directory.
-
+    brain_mask : str, optional
+        Path to brain mask image. If provided, the parcellation is masked after the fact, but
+        this mask does not affect the parcellation itself.
     Returns:
     -------
     str
@@ -2203,7 +2206,7 @@ def desikan_killiany_tourville_parcellation(image, work_dir):
     """
     tmp_file_prefix = get_temp_file(work_dir, prefix='dkt31')
 
-    parcellated_image = f"{tmp_file_prefix}_parcellated.nii.gz"
+    parcellated_image_file = f"{tmp_file_prefix}_parcellated.nii.gz"
 
     # Load the image
     img = ants.image_read(image)
@@ -2211,6 +2214,128 @@ def desikan_killiany_tourville_parcellation(image, work_dir):
     dkt31 = antspynet.desikan_killiany_tourville_labeling(img, do_preprocessing=True, return_probability_images=False
                                                           do_lobar_parcellation=False, version=1, verbose=verbose=get_verbose())
 
-    ants.image_write(dkt31, parcellated_image)
+    if brain_mask is not None:
+        # Apply the brain mask to the parcellated image
+        mask_image = ants.image_read(brain_mask)
+        dkt31 = ants.apply_masks(dkt31, mask_image)
 
-    return parcellated_image
+    ants.image_write(dkt31, parcellated_image_file)
+
+    return parcellated_image_file
+
+
+def harvard_oxford_subcortical_parcellation(image, work_dir, brain_mask=None):
+    """Does a Harvard-Oxford subcortical parcellation of the input image using ANTsPyNet.
+
+    Parameters:
+    ----------
+    image : str
+        Path to input image.
+    work_dir : str
+        Path to working directory.
+    brain_mask : str, optional
+        Path to brain mask image. If provided, the parcellation is masked after the fact, but
+        this mask does not affect the parcellation itself.
+
+    Returns:
+    -------
+    str
+        Path to parcellated image.
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='harvard_oxford_subcortical')
+
+    parcellated_image_file = f"{tmp_file_prefix}_parcellated.nii.gz"
+
+    # Load the image
+    img = ants.image_read(image)
+
+    hoa_subcortical = antspynet.harvard_oxford_subcortical_labeling(img, do_preprocessing=True, return_probability_images=False,
+                                                                   verbose=get_verbose())
+
+    if brain_mask is not None:
+        # Apply the brain mask to the parcellated image
+        mask_image = ants.image_read(brain_mask)
+        hoa_subcortical = ants.apply_mask(hoa_subcortical, mask_image)
+
+    ants.image_write(hoa_subcortical['parcellation_segmentation_image'], parcellated_image_file)
+
+    return parcellated_image_file
+
+
+def cerebellar_parcellation(image, work_dir, cerebellum_mask=None):
+    """Does a cerebellar parcellation of the input image using ANTsPyNet.
+
+    Parameters:
+    ----------
+    image : str
+        Path to a T1w input image.
+    work_dir : str
+        Path to working directory.
+    cerebellum_mask : str, optional
+        Path to a cerebellum mask image. If provided, the this defines the segmentation mask.
+        Otherwise, the cerebellum is automatically segmented using brain extraction and registration.
+        The cerebellum mask from harvard_oxford_subcortical_parcellation is a good choice.
+
+    Returns:
+    -------
+    str
+        Path to parcellated image.
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='cerebellar_parcellation')
+
+    parcellated_image_file = f"{tmp_file_prefix}_parcellated.nii.gz"
+
+    # Load the image
+    img = ants.image_read(image)
+
+    if cerebellum_mask is not None:
+        # If a cerebellum mask is provided, use it to define the segmentation mask
+        cerebellum_mask_image = ants.image_read(cerebellum_mask)
+
+    cerebellar_labels = antspynet.cerebellum_morphology(img, do_preprocessing=True, return_probability_images=False,
+                                                        mask=cerebellum_mask_image, compute_thickness_image=False,
+                                                        verbose=get_verbose())
+
+    ants.image_write(cerebellar_labels['parcellation_segmentation_image'], parcellated_image_file)
+
+    return parcellated_image_file
+
+
+def label_statistics(label_image, work_dir, label_definitions, scalar_image=None):
+    """Calculate statistics for each label in a label image.
+
+    Parameters:
+    -----------
+    label_image : str
+        Path to label image.
+    work_dir : str
+        Path to working directory.
+    scalar_image : str, optional
+        Path to scalar image. If provided, statistics will be calculated for each label in the scalar image.
+    label_definitions : dict, optional
+        Dictionary mapping label values to names. If provided, the output will include these names as well as numeric labels.
+
+    Returns:
+    --------
+    pandas.DataFrame
+        DataFrame with statistics for each label.
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='label_statistics')
+
+    # Load the label image
+    labels = ants.image_read(label_image)
+
+    if scalar_image is not None:
+        scalar = ants.image_read(scalar_image)
+        stats = ants.label_geometry_measures(labels, scalar)
+    else:
+        stats = ants.label_geometry_measures(labels)
+
+    # ants.label_geometry_measures returns a pandas dataframe with integer 'Label' column
+    label_names = [label_definitions.get(label, str(label)) for label in stats['Label']]
+    # Ensure we have as many names as labels
+    if len(label_names) != len(stats['Label']):
+        raise ValueError("Label definitions do not match the number of labels in the image.")
+    stats['LabelName'] = label_names
+
+    return stats

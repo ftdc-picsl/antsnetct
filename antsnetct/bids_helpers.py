@@ -48,6 +48,7 @@ class BIDSImage:
         self._set_derivative_path_prefix()
         self._derivative_rel_path_prefix = os.path.relpath(self._derivative_path_prefix, self._ds_path)
         self._set_metadata_from_sidecar()
+        self._file_entities = bids.layout.parse_file_entities(os.path.basename(self._path))
 
 
     def _set_ds_name(self):
@@ -120,9 +121,42 @@ class BIDSImage:
         return BIDSImage(dest_ds_path, self._rel_path)
 
 
+    def get_file_entities(self):
+        """Returns a copy of the file name entities dictionary.
+
+        Example: {'sub': '01', 'ses': '01', 'suffix': 'T1w', 'extension': '.nii.gz'}
+
+        """
+        return self._file_entities.copy()
+
+
+    def get_entity(self, entity, include_metadata=True):
+        """Returns the value of a specific file or metadata entity. The file name is checked first.
+
+        Parameters:
+        ----------
+        entity : str
+            The name of the file entity to retrieve.
+        include_metadata : bool, optional
+            If True, checks the metadata for the entity if it is not found in the file entities.
+
+        Returns:
+        --------
+            str: The value of the specified file entity, or None if it does not exist.
+        """
+        file_entity = self._file_entities.get(entity, None)
+
+        if file_entity is None and include_metadata:
+            # If the entity is not in the file entities, check the metadata
+            if self._metadata is not None:
+                file_entity = self._metadata.get(entity, None)
+
+        return file_entity
+
+
     def get_metadata(self):
         """
-        Returns a copy of the metadata dictionary.
+        Returns a copy of the metadata dictionary from its sidecar file.
 
         Returns:
             dict: A copy of the image's metadata.

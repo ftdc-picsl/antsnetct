@@ -13,6 +13,7 @@ import json
 import logging
 import numpy as np
 import os
+import pandas as pd
 import shutil
 import sys
 import tempfile
@@ -45,10 +46,13 @@ def parcellation_pipeline():
         "t1w": {
             "datatype": "anat",
             "desc": "preproc",
+            "session": "*",
             "suffix": "T1w"
         }
 
-    User-defined filters override this, so they should include the default filter keys.
+    User-defined filters override this, so they should include the default filter keys. The 'session' can be set to something
+    other than '*' to process only specified sessions, but it should not be removed, because it is necessary to filter out
+    longitudinal templates.
 
     Required inputs are cross-sectional or longitudinal antsnetct datasets. If atlas-based parcellation is required, a
     label definition configuration file is also required.
@@ -140,8 +144,10 @@ def parcellation_pipeline():
     subject_parser.add_argument("--participant-images", help="Text file containing a list of participant images to process "
                                  "relative to the input dataset. If not provided, all images for the participant "
                                  "will be processed.", type=str, default=None)
-    subject_parser.add_argument("--parcellate-sst", help="Parcellate SST images, if they exist (implies --longitudinal)",
-                                action='store_true')
+    # Maybe add this later - first get sessions done. Not sure how best to handle SST.
+    # Is it best to apply parcellation directly, or merge session results somehow?
+    # subject_parser.add_argument("--parcellate-sst", help="Parcellate SST images, if they exist (implies --longitudinal)",
+    #                            action='store_true')
 
     label_parser = parser.add_argument_group('AntsXNet parcellation options')
     label_parser.add_argument("--dkt31", help="Do DKT31 parcellation", action=argparse.BooleanOptionalAction, default=True)
@@ -150,10 +156,9 @@ def parcellation_pipeline():
     label_parser.add_argument("--cerebellum", help="Do cerebellum parcellation", action=argparse.BooleanOptionalAction,
                               default=False)
 
-
     template_parser = parser.add_argument_group('Atlas-based labeling arguments')
-    template_parser.add_argument("--template-label-config", help="JSON file containing the label definitions for the group "
-                                 "template", type=str, default=None)
+    template_parser.add_argument("--atlas-label-config", help="JSON file containing the label definitions in group "
+                                 "template space", type=str, default=None)
 
     if len(sys.argv) == 1:
         parser.print_usage()
@@ -208,7 +213,7 @@ def parcellation_pipeline():
     logger.info("Output dataset path: " + output_dataset)
     logger.info("Output dataset name: " + output_dataset_description['Name'])
 
-    # preprocessed images to be processed longitudinally
+    # preprocessed images
     input_session_preproc_t1w_bids = list()
 
     # brain masks for the preprocessed images
@@ -230,6 +235,7 @@ def parcellation_pipeline():
             bids_t1w_filter = bids_helpers.get_modality_filter_query('t1w')
             # Need to filter on desc-preproc in addition to the default t1w filter
             bids_t1w_filter['desc'] = 'preproc'
+            bids_t1w_filter['session'] = '*' # process all sessions, but ignore longitudinal templates
 
         with tempfile.TemporaryDirectory(suffix=f"antsnetct_bids_{args.participant}.tmpdir") as bids_wd:
             # Have to turn off validation for derivatives
@@ -245,7 +251,20 @@ def parcellation_pipeline():
 
                 logger.info("Processing T1w image: " + t1w_bids.get_uri(relative=False))
 
-                do_antsnet_parcellation(t1w_bids, working_dir, dkt31=args.dkt31, hoa=args.hoa, cerebellum=args.cerebellum)
+                # get thickness image
+                t1w_thickness = t1w_bids.get_derivative_rel_path_prefix() + "_seg-antsnetct_desc-thickness.nii.gz"
+
+                antsnet_parc = antsnet_parcellation(t1w_bids, working_dir, dkt31=args.dkt31, hoa=args.hoa,
+                                                    cerebellum=args.cerebellum)
+
+                # Do thickness stats on dkt labels
+                if args.dkt31:
+                    logger.info("Collecting thickness stats on " + t1w_bids.get_uri(relative=False))
+                    compute_volume_and_thickness_stats(t1w_bids, t1w_thickness, antsnet_parc['dkt31'], working_dir)
+                if args.hoa:
+                    logger.info("Doing Harvard-Oxford stats on " + t1w_bids.get_uri(relative=False))
+                    compute_volume_stats(t1w_bids, antsnet_parc['hoa'], working_dir)
+
 
             except Exception as e:
                 logger.error(f"Caught {type(e)} during processing of {str(t1w_bids)}")
@@ -256,29 +275,48 @@ def parcellation_pipeline():
                     logger.info("Saving working directory to " + debug_workdir)
                     shutil.copytree(working_dir, debug_workdir)
 
-    # Optionally parcellate SST images
-    if args.parcellate_sst:
-        sst_bids = bids_helpers.find_participant_images(input_dataset, args.participant, bids_wd,
-                                                        validate=False, datatype='func', suffix='SST')
-        if len(sst_bids) == 0:
-            raise ValueError(f"No SST images found for participant {args.participant}")
-        with tempfile.TemporaryDirectory(
-            suffix=f"antsnetparc_{system_helpers.get_nifti_file_prefix(sst_bids.get_path())}.tmpdir") as working_dir:
-            try:
-                if args.parcellate_sst:
-                    logger.info("Processing SST image: " + sst_bids.get_uri(relative=False))
-                    parcellate_sst(sst_bids, output_dataset, args.participant, args.longitudinal, args.verbose)
-            except Exception as e:
-                logger.error(f"Caught {type(e)} during processing of {args.participant}")
-                # Print stack trace
-                traceback.print_exc()
-                debug_workdir = os.path.join(args.output_dataset, f"sub-{args.participant}", f"sub-{args.participant}_workdir")
-                if args.keep_workdir.lower() != 'never':
-                    logger.info(f"Saving working directory {working_dir} to {debug_workdir}")
-                    shutil.copytree(working_dir, debug_workdir)
+            # Do atlas-based parcellation if requested
+            if atlas_label_config is not None:
+                try:
+                    logger.info("Doing atlas-based parcellation on " + t1w_bids.get_uri(relative=False))
+                    parcellation_results = do_atlas_based_parcellation(t1w_bids, atlas_label_config, working_dir, antsnet_parc,
+                                                                       args.longitudinal)
+
+                    # Save the parcellation results to the output dataset
+                    for key, value in parcellation_results.items():
+                        bids_helpers.save_parcellation_results(output_dataset, t1w_bids, key, value)
+
+                except Exception as e:
+                    logger.error(f"Caught {type(e)} during atlas-based parcellation of {str(t1w_bids)}")
+                    traceback.print_exc()
+                    debug_workdir = os.path.join(output_dataset, t1w_bids.get_derivative_rel_path_prefix() + "_workdir")
+                    if args.keep_workdir.lower() != 'never':
+                        logger.info("Saving working directory to " + debug_workdir)
+                        shutil.copytree(working_dir, debug_workdir)
+
+    # # Optionally parcellate SST images
+    # if args.parcellate_sst:
+    #     sst_bids = bids_helpers.find_participant_images(input_dataset, args.participant, bids_wd,
+    #                                                     validate=False, datatype='func', suffix='SST')
+    #     if len(sst_bids) == 0:
+    #         raise ValueError(f"No SST images found for participant {args.participant}")
+    #     with tempfile.TemporaryDirectory(
+    #         suffix=f"antsnetparc_{system_helpers.get_nifti_file_prefix(sst_bids.get_path())}.tmpdir") as working_dir:
+    #         try:
+    #             if args.parcellate_sst:
+    #                 logger.info("Processing SST image: " + sst_bids.get_uri(relative=False))
+    #                 parcellate_sst(sst_bids, output_dataset, args.participant, args.longitudinal, args.verbose)
+    #         except Exception as e:
+    #             logger.error(f"Caught {type(e)} during processing of {args.participant}")
+    #             # Print stack trace
+    #             traceback.print_exc()
+    #             debug_workdir = os.path.join(args.output_dataset, f"sub-{args.participant}", f"sub-{args.participant}_workdir")
+    #             if args.keep_workdir.lower() != 'never':
+    #                 logger.info(f"Saving working directory {working_dir} to {debug_workdir}")
+    #                 shutil.copytree(working_dir, debug_workdir)
 
 
-def do_antsnet_parcellation(t1w_bids, work_dir, dkt31=True, hoa=True, cerebellum=False):
+def antsnet_parcellation(t1w_bids, work_dir, dkt31=True, hoa=True, cerebellum=False):
     """Do antsnet parcellation on a T1w image.
 
     Parameters:
@@ -292,7 +330,7 @@ def do_antsnet_parcellation(t1w_bids, work_dir, dkt31=True, hoa=True, cerebellum
     hoa : bool
         Do Harvard-Oxford atlas parcellation
     cerebellum : bool
-        Do cerebellum parcellation
+        Do cerebellum parcellation (requires hoa)
 
     Returns:
     -------
@@ -300,7 +338,7 @@ def do_antsnet_parcellation(t1w_bids, work_dir, dkt31=True, hoa=True, cerebellum
         - dkt31
         - hoa
         - cerebellum
-    for the selected parcellations.
+    containing BIDSImage objects for the selected parcellations.
     """
     logger.info("Doing antsnet parcellation on " + t1w_bids.get_uri(relative=False))
 
@@ -313,18 +351,112 @@ def do_antsnet_parcellation(t1w_bids, work_dir, dkt31=True, hoa=True, cerebellum
     # Do the parcellation
     parcellation_results = dict()
 
+    if cerebellum:
+        hoa = True  # cerebellum parcellation requires hoa
+
     if dkt31:
-        parcellation_results['dkt31'] = cross_sectional_pipeline.do_dkt31_parcellation(t1w_image, work_dir, brain_mask)
+        dkt31 = ants_helpers.desikan_killiany_tourville_parcellation(t1w_image, work_dir, brain_mask)
+        parcellation_results['dkt31'] = bids_helpers.image_to_bids(
+            dkt31,
+            t1w_bids.get_ds_path(),
+            t1w_bids.get_derivative_rel_path_prefix() + "_seg-dkt31_dseg.nii.gz",
+            metadata={'Description': 'ANTsPyNet DKT31', 'Sources': [t1w_bids.get_uri(relative=True)]}
+            )
 
     if hoa:
-        parcellation_results['hoa'] = cross_sectional_pipeline.do_hoa_parcellation(t1w_image, work_dir, brain_mask)
+        hoa = ants_helpers.hoa_parcellation(t1w_image, work_dir, brain_mask)
+        parcellation_results['hoa'] = bids_helpers.image_to_bids(
+            hoa,
+            t1w_bids.get_ds_path(),
+            t1w_bids.get_derivative_rel_path_prefix() + "_seg-hoa_dseg.nii.gz",
+            metadata={'Description': 'ANTsPyNet Harvard-Oxford Subcortical', 'Sources': [t1w_bids.get_uri(relative=True)]}
+            )
 
     if cerebellum:
-        parcellation_results['cerebellum'] = cross_sectional_pipeline.do_cerebellum_parcellation(t1w_image, work_dir,
-                                                                                               brain_mask)
+        cerebellum_mask_file = system_helpers.get_temp_file(work_dir, prefix='antsnet_parc', suffix='.nii.gz')
+        hoa_labels = ants_image_read(parcellation_results['hoa'].get_path())
+        # Create a cerebellum mask from the Harvard-Oxford labels
+        cerebellum_mask = ants_helpers.threshold_image(parcellation_results['hoa'].get_path(), work_dir, 29, 32)
+        cerebellum = ants_helpers.cerebellum_parcellation(t1w_image, work_dir, cerebellum_mask)
+        parcellation_results['cerebellum'] = bids_helpers.image_to_bids(
+            cerebellum,
+            t1w_bids.get_ds_path(),
+            t1w_bids.get_derivative_rel_path_prefix() + "_seg-cerebellum_dseg.nii.gz",
+            metadata={'Description': 'ANTsPyNet Cerebellum',
+                      'Sources': [t1w_bids.get_uri(relative=True), parcellation_results['hoa'].get_uri(relative=True)]}
+            )
 
     return parcellation_results
 
 
-def parcellate_sst(sst_bids, output_dataset, participant, longitudinal, verbose):
+def parcellate_sst(sst_bids, work_dir):
     raise NotImplementedError("SST parcellation not implemented yet")
+
+
+def atlas_based_parcellation(t1w_bids, atlas_label_config, work_dir, antsnet_parcellation=None, longitudinal=False):
+    """Do atlas-based parcellation on a T1w image.
+
+    Parameters:
+    -----------
+    t1w_bids : BIDSImage
+        BIDS image object for the T1w image
+    atlas_label_config : dict
+        Atlas label configuration dict
+    work_dir : str
+        Working directory for the parcellation
+    antsnet_parcellation : dict
+        Dictionary with antsnet parcellation results. This must contain 'hoa' if the atlas-based parcellation has any labels
+        with 'restrict_to_cortex' or 'propagate_to_cortex' set to True.
+    longitudinal : bool
+        Do longitudinal parcellation
+
+    Returns:
+    -------
+    dict with keys for each atlas, containing the parcellation results.
+    """
+    logger.info("Doing atlas-based parcellation on " + t1w_bids.get_uri(relative=False))
+
+    # Read the T1w image
+    t1w_image = ants_image_read(t1w_bids.get_path())
+
+
+    return parcellation_results
+
+
+def label_stats(label_image, label_definitions, work_dir, scalar_images=None):
+    """Compute stats for a label image.
+
+    Parameters:
+    -----------
+    label_image : BIDSImage
+        Label image to compute stats for
+    label_definitions : dict
+        Label definitions for the label image
+    work_dir : str
+        Working directory for the stats
+    scalar_images : list of BIDSImage, optional
+        List of scalar images on which to compute stats.
+
+    Returns:
+    -------
+    list of pandas DataFrame, one for each scalar image, or a single DataFrame if scalar_images is None.
+    """
+    label_stats = list()
+    if scalar_images is None:
+        label_stat = ants_helpers.label_statistics(label_image.get_path(), work_dir, label_definitions)
+        # Save the label statistics to the output dataset
+        label_file = label_image.get_derivative_rel_path_prefix() + "_desc-labelgeometry.tsv"
+        pd.DataFrame.to_csv(label_stat, label_file, sep='\t', index=False)
+        label_stats.append(label_file)
+    else:
+        for scalar in scalar_images:
+            if not os.path.exists(scalar.get_path()):
+                raise ValueError(f"Scalar image {scalar.get_uri(relative=False)} does not exist")
+
+            logger.info("Computing stats for label image " + label_image.get_uri(relative=False))
+            label_stat = ants_helpers.label_statistics(label_image.get_path(), label_definitions, work_dir, scalar.get_path())
+            label_file = scalar.get_derivative_rel_path_prefix() + "_seg- desc-labelstats.tsv"
+            pd.DataFrame.to_csv(label_stat, label_file, sep='\t', index=False)
+            label_stats.append(label_file)
+            label_stats.append(label_stat)
+
