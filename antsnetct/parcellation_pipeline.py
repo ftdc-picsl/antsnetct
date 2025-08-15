@@ -4,9 +4,9 @@ from . import cross_sectional_pipeline
 from . import preprocessing
 from . import system_helpers
 
-from .system_helpers import PipelineError
+from .data import get_label_definitions
 
-from ants import image_read as ants_image_read
+from .system_helpers import PipelineError
 
 import argparse
 import json
@@ -94,15 +94,13 @@ def parcellation_pipeline():
 
     {
       "schaefer100x7": {
-        "label_definition": "schaefer100x7.json",
-        "label_image": "schaefer100x7.nii.gz",
+        "label_image": "tpl-MNI152NLin2009cAsym_res-01_atlas-Schaefer2018_desc-100Parcels17Networks_dseg.nii.gz",
         "template_name": "MNI152NLin2009cAsym",
         "sample_thickness": true,
         "restrict_to_cortex": true,
         "propagate_to_cortex": true
       },
-      brainCOLORSubcortical: {
-        "label_definition": "brainCOLORSubcortical.json",
+      "brainCOLORSubcortical": {
         "label_image": "tpl-ADNINormalAgingANTs_res-01_atlas-BrainColor_desc-subcortical_dseg.nii.gz",
         "template_name": "ADNINormalAgingANTs",
         "sample_thickness": false
@@ -251,20 +249,20 @@ def parcellation_pipeline():
 
                 logger.info("Processing T1w image: " + t1w_bids.get_uri(relative=False))
 
+                # Get the brain mask for the T1w image
+                t1w_brain_mask_bids = bids_helpers.BIDSImage(
+                    t1w_bids.get_ds_path(),
+                    t1w_bids.get_derivative_rel_path_prefix() + "desc-brain_mask.nii.gz"
+                )
+
                 # get thickness image
-                t1w_thickness = t1w_bids.get_derivative_rel_path_prefix() + "_seg-antsnetct_desc-thickness.nii.gz"
+                t1w_thickness_bids = bids_helpers.BIDSImage(
+                    t1w_bids.get_ds_path(),
+                    t1w_bids.get_derivative_rel_path_prefix() + "_seg-antsnetct_desc-thickness.nii.gz"
+                )
 
                 antsnet_parc = antsnet_parcellation(t1w_bids, working_dir, dkt31=args.dkt31, hoa=args.hoa,
                                                     cerebellum=args.cerebellum)
-
-                # Do thickness stats on dkt labels
-                if args.dkt31:
-                    logger.info("Collecting thickness stats on " + t1w_bids.get_uri(relative=False))
-                    compute_volume_and_thickness_stats(t1w_bids, t1w_thickness, antsnet_parc['dkt31'], working_dir)
-                if args.hoa:
-                    logger.info("Doing Harvard-Oxford stats on " + t1w_bids.get_uri(relative=False))
-                    compute_volume_stats(t1w_bids, antsnet_parc['hoa'], working_dir)
-
 
             except Exception as e:
                 logger.error(f"Caught {type(e)} during processing of {str(t1w_bids)}")
@@ -279,7 +277,7 @@ def parcellation_pipeline():
             if atlas_label_config is not None:
                 try:
                     logger.info("Doing atlas-based parcellation on " + t1w_bids.get_uri(relative=False))
-                    parcellation_results = do_atlas_based_parcellation(t1w_bids, atlas_label_config, working_dir, antsnet_parc,
+                    parcellation_results = atlas_based_parcellation(t1w_bids, atlas_label_config, working_dir, antsnet_parc,
                                                                        args.longitudinal)
 
                     # Save the parcellation results to the output dataset
@@ -316,7 +314,7 @@ def parcellation_pipeline():
     #                 shutil.copytree(working_dir, debug_workdir)
 
 
-def antsnet_parcellation(t1w_bids, work_dir, dkt31=True, hoa=True, cerebellum=False):
+def antsnet_parcellation(t1w_bids, brain_mask_bids, thickness_bids, work_dir, dkt31=True, hoa=True, cerebellum=False):
     """Do antsnet parcellation on a T1w image.
 
     Parameters:
@@ -342,11 +340,9 @@ def antsnet_parcellation(t1w_bids, work_dir, dkt31=True, hoa=True, cerebellum=Fa
     """
     logger.info("Doing antsnet parcellation on " + t1w_bids.get_uri(relative=False))
 
-    # Read the T1w image
-    t1w_image = ants_image_read(t1w_bids.get_path())
-
-    # Get the brain mask
-    brain_mask = preprocessing.get_brain_mask(t1w_image)
+    t1w = t1w_bids.get_path()
+    brain_mask = brain_mask_bids.get_path()
+    thickness = thickness_bids.get_path()
 
     # Do the parcellation
     parcellation_results = dict()
@@ -355,16 +351,15 @@ def antsnet_parcellation(t1w_bids, work_dir, dkt31=True, hoa=True, cerebellum=Fa
         hoa = True  # cerebellum parcellation requires hoa
 
     if dkt31:
-        dkt31 = ants_helpers.desikan_killiany_tourville_parcellation(t1w_image, work_dir, brain_mask)
+        dkt31 = ants_helpers.desikan_killiany_tourville_parcellation(t1w, work_dir, brain_mask)
         parcellation_results['dkt31'] = bids_helpers.image_to_bids(
             dkt31,
             t1w_bids.get_ds_path(),
             t1w_bids.get_derivative_rel_path_prefix() + "_seg-dkt31_dseg.nii.gz",
             metadata={'Description': 'ANTsPyNet DKT31', 'Sources': [t1w_bids.get_uri(relative=True)]}
             )
-
     if hoa:
-        hoa = ants_helpers.hoa_parcellation(t1w_image, work_dir, brain_mask)
+        hoa = ants_helpers.hoa_parcellation(t1w, work_dir, brain_mask)
         parcellation_results['hoa'] = bids_helpers.image_to_bids(
             hoa,
             t1w_bids.get_ds_path(),
@@ -373,11 +368,9 @@ def antsnet_parcellation(t1w_bids, work_dir, dkt31=True, hoa=True, cerebellum=Fa
             )
 
     if cerebellum:
-        cerebellum_mask_file = system_helpers.get_temp_file(work_dir, prefix='antsnet_parc', suffix='.nii.gz')
-        hoa_labels = ants_image_read(parcellation_results['hoa'].get_path())
         # Create a cerebellum mask from the Harvard-Oxford labels
         cerebellum_mask = ants_helpers.threshold_image(parcellation_results['hoa'].get_path(), work_dir, 29, 32)
-        cerebellum = ants_helpers.cerebellum_parcellation(t1w_image, work_dir, cerebellum_mask)
+        cerebellum = ants_helpers.cerebellum_parcellation(t1w, work_dir, cerebellum_mask)
         parcellation_results['cerebellum'] = bids_helpers.image_to_bids(
             cerebellum,
             t1w_bids.get_ds_path(),
@@ -393,7 +386,8 @@ def parcellate_sst(sst_bids, work_dir):
     raise NotImplementedError("SST parcellation not implemented yet")
 
 
-def atlas_based_parcellation(t1w_bids, atlas_label_config, work_dir, antsnet_parcellation=None, longitudinal=False):
+def atlas_based_parcellation(t1w_bids, brain_mask_bids, thickness_bids, atlas_label_config, work_dir,
+                             antsnet_parcellation=None, longitudinal=False):
     """Do atlas-based parcellation on a T1w image.
 
     Parameters:
@@ -416,14 +410,16 @@ def atlas_based_parcellation(t1w_bids, atlas_label_config, work_dir, antsnet_par
     """
     logger.info("Doing atlas-based parcellation on " + t1w_bids.get_uri(relative=False))
 
-    # Read the T1w image
-    t1w_image = ants_image_read(t1w_bids.get_path())
+    parcellation_results = dict()
 
+    atlas_config = json.load(atlas_label_config)
+
+    for atlas_name, atlas_info in atlas_config.items():
 
     return parcellation_results
 
 
-def label_stats(label_image, label_definitions, work_dir, scalar_images=None):
+def make_label_stats(label_image, label_definitions, work_dir, scalar_images=None):
     """Compute stats for a label image.
 
     Parameters:
