@@ -2301,8 +2301,8 @@ def cerebellar_parcellation(image, work_dir, cerebellum_mask=None):
     return parcellated_image_file
 
 
-def label_statistics(label_image, work_dir, label_definitions, scalar_image=None):
-    """Calculate statistics for each label in a label image.
+def ants_label_statistics(label_image, work_dir, label_definitions, scalar_image=None):
+    """Calculate statistics for each label in a label image. Uses ITK label stats filters (fast, but no median).
 
     Parameters:
     -----------
@@ -2327,7 +2327,7 @@ def label_statistics(label_image, work_dir, label_definitions, scalar_image=None
 
     if scalar_image is not None:
         scalar = ants.image_read(scalar_image)
-        stats = ants.label_geometry_measures(labels, scalar)
+        stats = ants.label_stats(scalar, labels)
     else:
         stats = ants.label_geometry_measures(labels)
 
@@ -2339,3 +2339,158 @@ def label_statistics(label_image, work_dir, label_definitions, scalar_image=None
     stats['LabelName'] = label_names
 
     return stats
+
+
+def retain_labels(label_image, labels_to_keep, work_dir):
+    """Retain only specified labels in a label image. Other labels are set to zero.
+
+    Parameters:
+    -----------
+    label_image : str
+        Path to label image.
+    labels_to_keep : list of int
+        List of labels to retain.
+    work_dir : str
+        Path to working directory.
+
+    Returns:
+    --------
+    str
+        Path to output label image with only the specified labels retained.
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='retain_labels')
+
+    output_label_file = f"{tmp_file_prefix}_retained_labels.nii.gz"
+
+    # Load the label image
+    labels = ants.image_read(label_image)
+
+    mask = np.isin(labels.numpy(), labels_to_keep)
+
+    new_labels_array = np.where(mask.nonzero(), labels.numpy(), 0)
+
+    new_labels = ants.from_numpy(new_labels_array, origin=labels.origin, spacing=labels.spacing, direction=labels.direction)
+
+    ants.image_write(new_labels, output_label_file)
+
+    if get_verbose():
+        if invert:
+            logger.info(f"Retained all labels except {labels_to_keep}")
+        else:
+            logger.info(f"Retained labels {labels_to_keep}")
+        logger.info(f"Output label image saved to {output_label_file}")
+
+    return output_label_file
+
+
+def remove_labels(label_image, labels_to_remove, work_dir):
+    """Remove specified labels from a label image. Other labels are retained.
+
+    Parameters:
+    -----------
+    label_image : str
+        Path to label image.
+    labels_to_remove : list of int
+        List of labels to remove.
+    work_dir : str
+        Path to working directory.
+
+    Returns:
+    --------
+    str
+        Path to output label image with the specified labels removed.ß
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='remove_labels')
+
+    output_label_file = f"{tmp_file_prefix}_removed_labels.nii.gz"
+
+    # Load the label image
+    labels = ants.image_read(label_image)
+
+    mask = np.isin(labels.numpy(), labels_to_remove)
+
+    new_labels_array = np.where(mask.nonzero(), 0, labels.numpy())
+
+    new_labels = ants.from_numpy(new_labels_array, origin=labels.origin, spacing=labels.spacing, direction=labels.direction)
+
+    ants.image_write(new_labels, output_label_file)
+
+    if get_verbose():
+        logger.info(f"Removed labels {labels_to_remove}")
+        logger.info(f"Output label image saved to {output_label_file}")
+
+    return output_label_file
+
+
+def add_labels_to_segmentation(src_image, label_image, labels_to_add, work_dir, unique_label_indices=True, background_label=0):
+    """Add specified labels to a label image. Only adds over a background label.
+
+    Parameters:
+    -----------
+    src_image : str
+        Path to source image, to which labels will be added.
+    label_image : str
+        Path to label image.
+    labels_to_add : list of int
+        List of labels to add.
+    work_dir : str
+        Path to working directory.
+    unique_label_indices : bool, optional
+        If True, the labels to add are remapped to unique indices starting from max(label_image)+1.
+        If False, the labels are added as-is. Default is True.
+    background_label : int, optional
+        Label value in label_image that is considered background, and can be replaced by the new labels.
+
+    Returns:
+    --------
+    list
+        Path to output label image with the specified labels added, and a list of the label indices that were added.
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='add_labels_to_segmentation')
+
+    output_label_file = f"{tmp_file_prefix}_added_labels.nii.gz"
+
+    # Load the label image
+    src_labels = ants.image_read(src_image)
+
+    # Load the label image
+    additional_labels = ants.image_read(label_image)
+
+    # Labels must be in the same voxel and physical space
+    if not (src_labels.shape == additional_labels.shape and
+            src_labels.image_physical_space_consistency(additional_labels, tolerance=1e-5)):
+        raise ValueError("Source and label images are not in the same physical space.")
+
+    addition_mask = src_labels == background_label
+
+    additional_labels = additional_labels * addition_mask
+
+    label_map = dict()
+
+    if unique_label_indices:
+        max_existing_label = int(np.max(src_labels.numpy()))
+        next_label = max_existing_label + 1
+        for label in labels_to_add:
+            label_map[label] = next_label
+            next_label += 1
+    else:
+        for label in labels_to_add:
+            label_map[label] = label
+
+    output_array = src_labels.numpy()
+    add_array = additional_labels.numpy()
+
+    for label_to_add, new_label in label_map.items():
+        # add new label to src_array
+        output_array[add_array == label_to_add] = new_label
+
+    output_img = ants.from_numpy(output_array, origin=src_labels.origin, spacing=src_labels.spacing,
+                               direction=src_labels.direction)
+
+    ants.image_write(output_img, output_label_file)
+
+    if get_verbose():
+        logger.info(f"Added labels {labels_to_add} to {src_image} as {list(label_map.values())}")
+        logger.info(f"Output label image saved to {output_label_file}")
+
+    return output_label_file, list(label_map.values())

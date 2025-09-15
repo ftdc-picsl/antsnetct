@@ -125,13 +125,8 @@ def get_nifti_file_prefix(image_file):
         raise ValueError(f"Image file {image_file} does not end in .nii or .nii.gz")
 
 
-def copy_file(source, destination):
-    """Copy a file from src to dst. User write permission will be added to the destination file if not already present.
-
-    The copy is done by shutil and will work with regular files or symbolic links to regular files.
-
-    User write permission will be added to the destination file if not already present. This prevents errors from being
-    unable to edit or overwrite the destination file if it was copied from a read-only directory.
+def copy_file(source, destination, preserve_mode=False):
+    """Copy a file from src to dst.
 
     Parameters:
     ----------
@@ -139,10 +134,20 @@ def copy_file(source, destination):
         The source file.
     dst : str
         The destination file.
+    preserve_mode : bool, optional
+        If True, preserve the file mode (permissions) of the source file. If False (default), copy with default permissions,
+        however user write permissions will be added if not already present.
 
     Returns:
     -------
     None
+
+    Raises:
+    ------
+    FileNotFoundError : If the source file does not exist.
+    Exception : If the source file is not a file.
+    Exception : If the copy fails.
+    Exception : If setting user write permission on the destination file fails.
 
     Example:
     --------
@@ -154,7 +159,10 @@ def copy_file(source, destination):
         raise Exception(f"The source path {source} is not a file.")
 
     try:
-        shutil.copy(source, destination)
+        if (preserve_mode):
+            shutil.copy(source, destination)
+        else:
+            shutil.copyfile(source, destination)
     except Exception as e:
         raise Exception(f"Failed to copy file {source} to {destination}: {e}")
 

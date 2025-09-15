@@ -4,16 +4,18 @@ from . import cross_sectional_pipeline
 from . import preprocessing
 from . import system_helpers
 
-from .data import get_label_definitions
+from .data import get_label_definitions_path
 
-from .system_helpers import PipelineError
+from .system_helpers import copy_file, PipelineError
 
+import ants
 import argparse
 import json
 import logging
 import numpy as np
 import os
 import pandas as pd
+import re
 import shutil
 import sys
 import tempfile
@@ -89,28 +91,54 @@ def parcellation_pipeline():
     because tpl-MNI152NLin2009cAsym has a transform from tpl-MNI152NLin6Asym. But a parcellation in tpl-OASIS30ANTs cannot be
     used, because tpl-MNI152NLin2009cAsym does not have a transform to tpl-OASIS30ANTs.
 
-    The atlas parcellation configuration file is a JSON file that contains a named dict for each atlas parcellation. For
-    example,
+    The atlas parcellation configuration file is a JSON file that contains a named dict for each atlas parcellation. Each dict
+    must have a unique name, which will be used to name the output parcellation. Each dict must have the following keys:
 
+        "template_label" - the name of the template in which the label image resides, e.g. "MNI152NLin2009cAsym"
+        "atlas_label" - the atlas name, e.g. "Schaefer2018"
+
+    Optional keys are:
+
+        "template_resolution" - the resolution of the template, e.g. "01"
+        "atlas_description" - the description of the atlas, e.g. "100Parcels7Networks"
+        sample_thickness - "if true, compute statistics on cortical thickness, if thickness exists for the session"
+        restrict_to_cortex - "if true, restrict the parcellation to the cortical GM label"
+        propagate_to_cortex - "if true, propagate the parcellation to the cortical GM mask of the target image"
+
+
+    The label_image must exist at the path "{TEMPLATEFLOW_HOME}/tpl-{template_name}/{label_image}". The {label_image} is
+    identified as
+
+      tpl-{template_name}_[res-{template_resolution}]_atlas-{atlas_label}_[desc-{atlas_description}_]dseg.nii.gz
+
+    There must be a corresponding .tsv file with label definitions at the same location.
+
+    Example config:
     {
       "schaefer100x7": {
-        "label_image": "tpl-MNI152NLin2009cAsym_res-01_atlas-Schaefer2018_desc-100Parcels17Networks_dseg.nii.gz",
-        "template_name": "MNI152NLin2009cAsym",
+        "template_label": "MNI152NLin2009cAsym",
+        "template_resolution": "01",
+        "atlas_label": "Schaefer2018",
+        "atlas_description": "100Parcels7Networks",
         "sample_thickness": true,
         "restrict_to_cortex": true,
-        "propagate_to_cortex": true
+        "propagate_to_cortex": false
       },
       "brainCOLORSubcortical": {
-        "label_image": "tpl-ADNINormalAgingANTs_res-01_atlas-BrainColor_desc-subcortical_dseg.nii.gz",
         "template_name": "ADNINormalAgingANTs",
+        "template_resolution": "01",
+        "atlas_label": "BrainColor",
+        "atlas_description": "subcortical",
         "sample_thickness": false
       }
     }
 
-    Optional keys define the masking and propagation options. All labels are restricted to the mask defined by the antsnetct
-    brain segmentation, excluding CSF. If "restrict_to_cortex" is true, the parcellation will be restricted to the cortical GM
-    label.  If "propagate_to_cortex" is true, the parcellation will be propagated to the cortical mask of the target
-    image - this fills in cortical voxels that are missed due to registration error.
+    All labels are restricted to the mask defined by the antsnetct brain segmentation, excluding CSF.
+
+    If thickness is present for the session, it will be used to define a cortical thickness mask. This can be used with the
+    "restrict_to_cortex" and "propagate_to_cortex" options. If "restrict_to_cortex" is true, the parcellation will be
+    restricted to the cortical mask. If "propagate_to_cortex" is true, the parcellation will be propagated to the cortical mask
+    of the target image - this fills in cortical voxels that are missed due to registration error.
 
     if sample_thickness is true, the parcellation will be used to compute statistics on cortical thickness, if thickness exists
     for the session.
@@ -148,9 +176,9 @@ def parcellation_pipeline():
     #                            action='store_true')
 
     label_parser = parser.add_argument_group('AntsXNet parcellation options')
-    label_parser.add_argument("--dkt31", help="Do DKT31 parcellation", action=argparse.BooleanOptionalAction, default=True)
+    label_parser.add_argument("--dkt31", help="Do DKT31 parcellation", action=argparse.BooleanOptionalAction, default=False)
     label_parser.add_argument("--hoa", help="Do Harvard-Oxford atlas parcellation. If you are using atlas labels, this may be "
-                              "required", action=argparse.BooleanOptionalAction, default=True)
+                              "required", action=argparse.BooleanOptionalAction, default=False)
     label_parser.add_argument("--cerebellum", help="Do cerebellum parcellation", action=argparse.BooleanOptionalAction,
                               default=False)
 
@@ -233,7 +261,8 @@ def parcellation_pipeline():
             bids_t1w_filter = bids_helpers.get_modality_filter_query('t1w')
             # Need to filter on desc-preproc in addition to the default t1w filter
             bids_t1w_filter['desc'] = 'preproc'
-            bids_t1w_filter['session'] = '*' # process all sessions, but ignore longitudinal templates
+            if args.longitudinal:
+                bids_t1w_filter['session'] = '*' # process all sessions, but ignore longitudinal templates
 
         with tempfile.TemporaryDirectory(suffix=f"antsnetct_bids_{args.participant}.tmpdir") as bids_wd:
             # Have to turn off validation for derivatives
@@ -255,15 +284,10 @@ def parcellation_pipeline():
                     t1w_bids.get_derivative_rel_path_prefix() + "desc-brain_mask.nii.gz"
                 )
 
-                # get thickness image
-                t1w_thickness_bids = bids_helpers.BIDSImage(
-                    t1w_bids.get_ds_path(),
-                    t1w_bids.get_derivative_rel_path_prefix() + "_seg-antsnetct_desc-thickness.nii.gz"
-                )
+                t1w_thickness_bids = t1w_bids.get_derivative_image("_seg-antsnetct_desc-thickness.nii.gz")
 
                 antsnet_parc = antsnet_parcellation(t1w_bids, working_dir, dkt31=args.dkt31, hoa=args.hoa,
-                                                    cerebellum=args.cerebellum)
-
+                                                    cerebellum=args.cerebellum, thickness_bids=t1w_thickness_bids)
             except Exception as e:
                 logger.error(f"Caught {type(e)} during processing of {str(t1w_bids)}")
                 # Print stack trace
@@ -277,13 +301,9 @@ def parcellation_pipeline():
             if atlas_label_config is not None:
                 try:
                     logger.info("Doing atlas-based parcellation on " + t1w_bids.get_uri(relative=False))
-                    parcellation_results = atlas_based_parcellation(t1w_bids, atlas_label_config, working_dir, antsnet_parc,
-                                                                       args.longitudinal)
-
-                    # Save the parcellation results to the output dataset
-                    for key, value in parcellation_results.items():
-                        bids_helpers.save_parcellation_results(output_dataset, t1w_bids, key, value)
-
+                    hoa_parcellation = t1w_bids.get_derivative_if_exists("_seg-hoa_dseg.nii.gz")
+                    atlas_based_parcellation(t1w_bids, atlas_label_config, working_dir, longitudinal=args.longitudinal,
+                                             thickness_bids=t1w_thickness_bids, hoa_parcellation=hoa_parcellation)
                 except Exception as e:
                     logger.error(f"Caught {type(e)} during atlas-based parcellation of {str(t1w_bids)}")
                     traceback.print_exc()
@@ -292,37 +312,20 @@ def parcellation_pipeline():
                         logger.info("Saving working directory to " + debug_workdir)
                         shutil.copytree(working_dir, debug_workdir)
 
-    # # Optionally parcellate SST images
-    # if args.parcellate_sst:
-    #     sst_bids = bids_helpers.find_participant_images(input_dataset, args.participant, bids_wd,
-    #                                                     validate=False, datatype='func', suffix='SST')
-    #     if len(sst_bids) == 0:
-    #         raise ValueError(f"No SST images found for participant {args.participant}")
-    #     with tempfile.TemporaryDirectory(
-    #         suffix=f"antsnetparc_{system_helpers.get_nifti_file_prefix(sst_bids.get_path())}.tmpdir") as working_dir:
-    #         try:
-    #             if args.parcellate_sst:
-    #                 logger.info("Processing SST image: " + sst_bids.get_uri(relative=False))
-    #                 parcellate_sst(sst_bids, output_dataset, args.participant, args.longitudinal, args.verbose)
-    #         except Exception as e:
-    #             logger.error(f"Caught {type(e)} during processing of {args.participant}")
-    #             # Print stack trace
-    #             traceback.print_exc()
-    #             debug_workdir = os.path.join(args.output_dataset, f"sub-{args.participant}", f"sub-{args.participant}_workdir")
-    #             if args.keep_workdir.lower() != 'never':
-    #                 logger.info(f"Saving working directory {working_dir} to {debug_workdir}")
-    #                 shutil.copytree(working_dir, debug_workdir)
 
-
-def antsnet_parcellation(t1w_bids, brain_mask_bids, thickness_bids, work_dir, dkt31=True, hoa=True, cerebellum=False):
+def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=None, dkt31=True, hoa=True, cerebellum=False):
     """Do antsnet parcellation on a T1w image.
 
     Parameters:
     -----------
     t1w_bids : BIDSImage
         BIDS image object for the T1w image
+    brain_mask_bids : BIDSImage
+        BIDS image object for the brain mask
     work_dir : str
         Working directory for the parcellation
+    thickness_bids : BIDSImage
+        BIDS image object for the cortical thickness image
     dkt31 : bool
         Do DKT31 parcellation
     hoa : bool
@@ -336,13 +339,14 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, thickness_bids, work_dir, dk
         - dkt31
         - hoa
         - cerebellum
-    containing BIDSImage objects for the selected parcellations.
+    each key returns a dict containing 'image': BIDSImage objects for the selected parcellation, and 'label_definitions': str
+    path to the label definitions tsv file. Thickness stats will be produced for the DKT parcellation if appropriate. Other
+    parcellations will get label volumes and mean T1w intensity.
     """
     logger.info("Doing antsnet parcellation on " + t1w_bids.get_uri(relative=False))
 
     t1w = t1w_bids.get_path()
     brain_mask = brain_mask_bids.get_path()
-    thickness = thickness_bids.get_path()
 
     # Do the parcellation
     parcellation_results = dict()
@@ -351,33 +355,75 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, thickness_bids, work_dir, dk
         hoa = True  # cerebellum parcellation requires hoa
 
     if dkt31:
-        dkt31 = ants_helpers.desikan_killiany_tourville_parcellation(t1w, work_dir, brain_mask)
-        parcellation_results['dkt31'] = bids_helpers.image_to_bids(
-            dkt31,
-            t1w_bids.get_ds_path(),
-            t1w_bids.get_derivative_rel_path_prefix() + "_seg-dkt31_dseg.nii.gz",
-            metadata={'Description': 'ANTsPyNet DKT31', 'Sources': [t1w_bids.get_uri(relative=True)]}
+        logger.info("Starting DKT31 parcellation")
+        dkt31_bids = t1w_bids.get_derivative_image("_seg-dkt31_dseg.nii.gz")
+        parcellation_results['dkt31'] = dict()
+
+        if dkt31_bids is not None:
+            logger.info("DKT31 parcellation already exists at " + dkt31.get_uri(relative=False))
+            parcellation_results['dkt31']['image'] = dkt31_bids
+            parcellation_results['dkt31']['label_definitions'] = dkt31_bids.get_path().replace('.nii.gz', '.tsv')
+        else:
+            dkt31 = ants_helpers.desikan_killiany_tourville_parcellation(t1w, work_dir, brain_mask)
+            dkt31_bids = bids_helpers.image_to_bids(
+                dkt31,
+                t1w_bids.get_ds_path(),
+                t1w_bids.get_derivative_rel_path_prefix() + "_seg-dkt31_dseg.nii.gz",
+                metadata={'Description': 'ANTsPyNet DKT31', 'Manual': False, 'Sources': [t1w_bids.get_uri(relative=True)]}
             )
+            parcellation_results['dkt31']['image'] = dkt31_bids
+            parcellation_results['dkt31']['label_definitions'] = dkt31_bids.get_path().replace('.nii.gz', '.tsv')
+            copy_file(get_label_definitions_path('dkt31'), parcellation_results['dkt31']['label_definitions'])
+            # Label stats
+            if thickness_bids is not None:
+                # Sample thickness
+                logger.info("Sampling thickness for DKT31 parcellation")
+                thickness = thickness_bids.get_path()
+                stats = make_label_stats(thickness, dkt31, work_dir, scalar_images = [t1w_bids, thickness_bids],
+                                         scalar_descriptions = ['t1wintensity', 'corticalThickness'])
+                stats_df = pd.DataFrame(stats)
+                stats_df.to_csv(dkt31_bids.get_path().replace('.nii.gz', '_thickness.tsv'), sep='\t', index=False)
+
     if hoa:
-        hoa = ants_helpers.hoa_parcellation(t1w, work_dir, brain_mask)
-        parcellation_results['hoa'] = bids_helpers.image_to_bids(
-            hoa,
-            t1w_bids.get_ds_path(),
-            t1w_bids.get_derivative_rel_path_prefix() + "_seg-hoa_dseg.nii.gz",
-            metadata={'Description': 'ANTsPyNet Harvard-Oxford Subcortical', 'Sources': [t1w_bids.get_uri(relative=True)]}
+        logger.info("Starting Harvard-Oxford subcortical parcellation")
+        hoa_bids = t1w_bids.get_derivative_image("_seg-hoa_dseg.nii.gz")
+        parcellation_results['hoa'] = dict()
+
+        if hoa_bids is not None:
+            logger.info("Harvard-Oxford parcellation already exists at " + hoa_bids.get_uri(relative=False))
+            parcellation_results['hoa']['image'] = hoa_bids
+            parcellation_results['hoa']['label_definitions'] = hoa_bids.get_path().replace('.nii.gz', '.tsv')
+        else:
+            hoa = ants_helpers.harvard_oxford_subcortical_parcellation(t1w, work_dir, brain_mask)
+            hoa_bids = bids_helpers.image_to_bids(
+                hoa,
+                t1w_bids.get_ds_path(),
+                t1w_bids.get_derivative_rel_path_prefix() + "_seg-hoa_dseg.nii.gz",
+                metadata={'Description': 'ANTsPyNet Harvard-Oxford Subcortical',
+                          'Manual': False,
+                          'Sources': [t1w_bids.get_uri(relative=True)]}
             )
+            parcellation_results['hoa']['label_definitions'] = hoa_bids.get_path().replace('.nii.gz', '.tsv')
+            copy_file(get_label_definitions_path('harvard_oxford_subcortical'),
+                      parcellation_results['hoa']['label_definitions'])
 
     if cerebellum:
         # Create a cerebellum mask from the Harvard-Oxford labels
         cerebellum_mask = ants_helpers.threshold_image(parcellation_results['hoa'].get_path(), work_dir, 29, 32)
+        logger.info("Starting cerebellum parcellation")
         cerebellum = ants_helpers.cerebellum_parcellation(t1w, work_dir, cerebellum_mask)
-        parcellation_results['cerebellum'] = bids_helpers.image_to_bids(
+        parcellation_results['cerebellum'] = dict()
+        parcellation_results['cerebellum']['image'] = bids_helpers.image_to_bids(
             cerebellum,
             t1w_bids.get_ds_path(),
             t1w_bids.get_derivative_rel_path_prefix() + "_seg-cerebellum_dseg.nii.gz",
             metadata={'Description': 'ANTsPyNet Cerebellum',
+                      'Manual': False,
                       'Sources': [t1w_bids.get_uri(relative=True), parcellation_results['hoa'].get_uri(relative=True)]}
             )
+        parcellation_results['cerebellum']['label_definitions'] = \
+            parcellation_results['cerebellum']['image'].get_path().replace('.nii.gz', '.tsv')
+        copy_file(get_label_definitions_path('cerebellum'), parcellation_results['cerebellum']['label_definitions'])
 
     return parcellation_results
 
@@ -386,23 +432,27 @@ def parcellate_sst(sst_bids, work_dir):
     raise NotImplementedError("SST parcellation not implemented yet")
 
 
-def atlas_based_parcellation(t1w_bids, brain_mask_bids, thickness_bids, atlas_label_config, work_dir,
-                             antsnet_parcellation=None, longitudinal=False):
+def atlas_based_parcellation(t1w_bids, brain_mask_bids, atlas_label_config, work_dir, thickness_bids=None, longitudinal=False,
+                             hoa_parcellation=None):
     """Do atlas-based parcellation on a T1w image.
 
     Parameters:
     -----------
     t1w_bids : BIDSImage
         BIDS image object for the T1w image
-    atlas_label_config : dict
-        Atlas label configuration dict
+    atlas_label_config : str
+        Atlas label configuration file, in JSON format
+    brain_mask_bids : BIDSImage
+        BIDS image object for the brain mask
     work_dir : str
         Working directory for the parcellation
-    antsnet_parcellation : dict
-        Dictionary with antsnet parcellation results. This must contain 'hoa' if the atlas-based parcellation has any labels
-        with 'restrict_to_cortex' or 'propagate_to_cortex' set to True.
+    thickness_bids : BIDSImage
+        BIDS image object for the cortical thickness image, or None. This is used to define a cortical mask, and is required
+        if any atlas has 'restrict_to_cortex' or 'propagate_to_cortex' set to true.
     longitudinal : bool
-        Do longitudinal parcellation
+        Use longitudinal transforms to group template space
+    hoa_parcellation : BIDSImage, optional
+        Harvard-Oxford parcellation, required if propagate_to_cortex is true for any atlas.
 
     Returns:
     -------
@@ -414,20 +464,137 @@ def atlas_based_parcellation(t1w_bids, brain_mask_bids, thickness_bids, atlas_la
 
     atlas_config = json.load(atlas_label_config)
 
-    for atlas_name, atlas_info in atlas_config.items():
+    # Find the local template transformation for this session
+    local_template_transforms = list()
+
+    local_template_name = None
+
+    cortical_mask = None
+
+    if thickness_bids is not None:
+        cortical_mask = ants_helpers.threshold_image(thickness_bids.get_path(), work_dir, lower=0.01)
+
+    # Now get the transforms from the local template to the session
+    if longitudinal:
+        ds_path = t1w_bids.get_ds_path()
+        subject = t1w_bids.get_entity('sub')
+
+        sst_to_t1w_transform = f"{t1w_bids.get_derivative_path_prefix()}_from-sst_to-T1w_mode-image_xfm.h5"
+
+        sst_dir = os.path.join(ds_path, f"sub-{subject}", "anat")
+
+        # Use regex to extract template name matching "sub-{subject}_from_T1w_to_([A-Za-z0-9]+)_mode-image_xfm.h5"
+        regex = f"sub-{subject}_from-([A-Za-z0-9]+)_to-T1w_mode-image_xfm.h5"
+        for file in os.listdir(sst_dir):
+            match = re.match(regex, file)
+            if match:
+                local_template_name = match.group(1)
+                local_template_transforms = [sst_to_t1w_transform, os.path.join(sst_dir, file)]
+                break
+
+        if local_template_name is None:
+            raise ValueError(f"No transforms to group template space found for {t1w_bids.get_uri(relative=False)}")
+    else:
+        for file in os.listdir(os.path.dirname(t1w_bids.get_path())):
+                regex = f"{t1w_bids.get_derivative_path_prefix()}_from-([A-Za-z0-9]+)_to-T1w_mode-image_xfm.h5"
+                match = re.match(regex, file)
+                if match:
+                    local_template_name = match.group(1)
+                    local_template_transforms = [os.path.join(os.path.dirname(t1w_bids.get_path()), file)]
+
+        if local_template_name is None:
+            raise ValueError(f"No template transforms found for {t1w_bids.get_uri(relative=False)}")
+
+    # Iterate over atlases, which might be defined in another template space
+    # We need to find the transform from the atlas template to the local template
+    for output_atlas_name, atlas_info in atlas_config.items():
+        external_template_name = atlas_info['template_label']
+
+        logger.info(f"Processing atlas labels {output_atlas_name}:\n{json.dumps(atlas_info, indent=4)}")
+
+        # Get the atlas label image
+        label_image = bids_helpers.TemplateImage(external_template_name,
+                                                 suffix='dseg',
+                                                 resolution=atlas_info.get('template_resolution', '01'),
+                                                 description=atlas_info.get(['atlas_description'], None),
+                                                 atlas=atlas_info['atlas_label'])
+
+        label_definitions_file = label_image.get_path().replace('.nii.gz', '.tsv')
+
+        template_to_session_transforms = local_template_transforms.copy()
+
+        if local_template_name != external_template_name:
+            template_to_local_template_transform = bids_helpers.find_template_transform(local_template_name,
+                                                                                        external_template_name)
+            if template_to_local_template_transform is None:
+                raise ValueError(f"No transforms found from tpl-{local_template_name} to tpl-{external_template_name}")
+
+            template_to_session_transforms.append(template_to_local_template_transform)
+
+        logger.info(f"Warping atlas labels {label_image.get_uri(relative=False)} to session space with transforms: " +
+                    f"{template_to_session_transforms}")
+
+        # Warp labels to the local template space
+        parcellation = ants_helpers.apply_transforms(
+            t1w_bids.get_path(),
+            label_image.get_path(),
+            template_to_session_transforms,
+            work_dir,
+            interpolation='GenericLabel',
+            single_precision=True
+        )
+
+        parcellation = ants_helpers.apply_mask(parcellation, brain_mask_bids.get_path())
+
+        if atlas_info.get('restrict_to_cortex', False):
+            # Restrict the parcellation to the cortical GM
+            if cortical_mask is None:
+                raise ValueError(f"antsnet thickness image is required for cortical restriction of atlas {atlas_name}")
+            parcellation = ants_helpers.mask_image(parcellation, cortical_mask)
+        if atlas_info.get('propagate_to_cortex', False):
+            if hoa_parcellation is None:
+                raise ValueError(f"antsnet parcellation with 'hoa' is required for propagation of atlas {atlas_name}")
+            [tmp_parcellation, tmp_labels] = ants_helpers.add_labels_to_segmentation(parcellation, hoa_parcellation.get_path(),
+                                                                                     labels_to_add=[20,21,22,23])
+            tmp_parcellation = ants_helpers.propagate_labels_to_mask(tmp_parcellation, cortical_mask, work_dir)
+            # Now remove the added labels
+            parcellation = ants_helpers.remove_labels(tmp_parcellation, tmp_labels)
+
+        parcellation_bids = bids_helpers.image_to_bids(
+            parcellation,
+            t1w_bids.get_ds_path(),
+            t1w_bids.get_derivative_rel_path_prefix() + f"_seg-{output_atlas_name}_dseg.nii.gz",
+            metadata={'Description': f'antsnetct atlas-based parcellation {output_atlas_name}',
+                      'Manual': False,
+                      'Sources': [t1w_bids.get_uri(relative=True)]}
+            )
+
+        output_label_definitions = parcellation_bids.get_path().replace('.nii.gz', '.tsv')
+        copy_file(label_definitions_file, output_label_definitions)
+
+        parcellation_results[output_atlas_name]['segmentation_image'] = parcellation_bids
+        parcellation_results[output_atlas_name]['label_definitions'] = output_label_definitions
+
+        # Compute stats
+        scalar_images = [t1w_bids]
+        scalar_descriptions = ['t1wIntensity']
+        if thickness_bids is not None and atlas_info.get('sample_thickness', False):
+            scalar_images.append(thickness_bids)
+            scalar_descriptions.append('corticalThickness')
+        make_label_stats(parcellation_bids, label_definitions_file, work_dir, scalar_images=scalar_images)
 
     return parcellation_results
 
 
-def make_label_stats(label_image, label_definitions, work_dir, scalar_images=None):
-    """Compute stats for a label image.
+def make_label_stats(label_image_bids, label_def_file, work_dir, scalar_images=None, scalar_descriptions=None):
+    """Compute stats for a label image, optionally with scalar images. The stats are saved as derivatives of the label image.
 
     Parameters:
     -----------
-    label_image : BIDSImage
-        Label image to compute stats for
-    label_definitions : dict
-        Label definitions for the label image
+    label_image_bids : BIDSImage
+        Label image to compute stats on. Should have the entity 'seg' defined for correct naming of the output stats files.
+    label_def_file : str
+        TSV file containing label definitions
     work_dir : str
         Working directory for the stats
     scalar_images : list of BIDSImage, optional
@@ -435,24 +602,28 @@ def make_label_stats(label_image, label_definitions, work_dir, scalar_images=Non
 
     Returns:
     -------
-    list of pandas DataFrame, one for each scalar image, or a single DataFrame if scalar_images is None.
+    list of str: paths to the label stats files
     """
     label_stats = list()
-    if scalar_images is None:
-        label_stat = ants_helpers.label_statistics(label_image.get_path(), work_dir, label_definitions)
-        # Save the label statistics to the output dataset
-        label_file = label_image.get_derivative_rel_path_prefix() + "_desc-labelgeometry.tsv"
-        pd.DataFrame.to_csv(label_stat, label_file, sep='\t', index=False)
-        label_stats.append(label_file)
-    else:
-        for scalar in scalar_images:
+
+    label_definition_df = bids_helpers.load_label_definitions(label_def_file)
+
+    label_stat = ants_helpers.label_statistics(label_image_bids.get_path(), work_dir)
+    # Save the label statistics to the output dataset
+    label_file = label_image_bids.get_derivative_rel_path_prefix() + "_desc-labelGeometry.tsv"
+    pd.DataFrame.to_csv(label_stat, label_file, sep='\t', index=False)
+    label_stats.append(label_file)
+
+    if scalar_images is not None:
+        for scalar, scalar_desc in zip(scalar_images, scalar_descriptions):
             if not os.path.exists(scalar.get_path()):
                 raise ValueError(f"Scalar image {scalar.get_uri(relative=False)} does not exist")
-
-            logger.info("Computing stats for label image " + label_image.get_uri(relative=False))
-            label_stat = ants_helpers.label_statistics(label_image.get_path(), label_definitions, work_dir, scalar.get_path())
-            label_file = scalar.get_derivative_rel_path_prefix() + "_seg- desc-labelstats.tsv"
+            logger.info("Computing stats for label image " + label_image_bids.get_uri(relative=False))
+            label_stats = ants_helpers.label_statistics(label_image_bids.get_path(), label_definition_df, work_dir,
+                                                        scalar.get_path())
+            label_stats_file = label_image_bids.get_derivative_rel_path_prefix() + f"_desc-{scalar_desc}.tsv"
             pd.DataFrame.to_csv(label_stat, label_file, sep='\t', index=False)
-            label_stats.append(label_file)
-            label_stats.append(label_stat)
+            label_stats.append(label_stats_file)
+
+    return label_stats
 

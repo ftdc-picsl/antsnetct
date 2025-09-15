@@ -1,8 +1,11 @@
 import bids
 import copy
+import csv
 import filelock
+from __future__ import annotations # This allows type hints within class definitions
 import json
 import os
+import pandas as pd
 import re
 import templateflow
 
@@ -247,6 +250,26 @@ class BIDSImage:
         return self._derivative_path_prefix
 
 
+    def get_derivative_image(self, suffix: str) -> BIDSImage | None:
+        """Get the full path for a derivative file, given its suffix.
+
+        Parameters:
+        -----------
+        suffix : str
+            The suffix for the derivative file, including the leading underscore and extension, eg '_desc-brain_mask.nii.gz'.
+            Note that this is not a BIDS suffix like `T1w` or `dseg`, but the full suffix to create the file name
+            self.get_derivative_path_prefix() + suffix.
+
+        Returns:
+        --------
+            BIDSImage: the derivative image if it exists, or None if it does not.
+        """
+        deriv_abs_path = self._derivative_path_prefix + suffix
+        if not os.path.exists(deriv_abs_path):
+            return None
+        return BIDSImage(self._ds_path, os.path.relpath(self._derivative_rel_path_prefix + suffix))
+
+
     def get_derivative_rel_path_prefix(self):
         """Get the the prefix for derivatives relative to the dataset
 
@@ -278,7 +301,7 @@ class TemplateImage:
     suffix : str
         BIDS suffix of the required image, eg 'T1w', 'mask'.
     resolution : str, optional
-        Resolution label of the template, eg '01', '1'. If None, the first resolution found in the metadata is used.
+        Resolution label of the template, eg '01', '1'. Ignored if the template does not have a resolution entity.
     description : str, optional
         Description of the template.
     cohort : str, optional
@@ -293,27 +316,28 @@ class TemplateImage:
         # Almost all templates use res-1 or res-01, but if there's no resolution in the metadata, we'll use None
         if not 'res' in template_metadata:
             resolution = None
-
-        res_keys = list(template_metadata['res'].keys())
-
-        template_res_found = False
-
-        if resolution is None or resolution in res_keys:
-            template_res_found = True
         else:
-            # fmriprep allows res=1 for templates where the resolution label is '01'. We'll allow that, and the converse,
-            # by checking the integer representation of the resolution
-            # But only do this if the resolution is numeric
-            if resolution.isnumeric():
-                res_int = int(resolution)
-                metatadata_res_keys_int = [int(k) for k in res_keys]
-                # if we find res_int in metatadata_res_keys_int, then the resolution to use is res_keys at the same index
-                if res_int in metatadata_res_keys_int:
-                    resolution = res_keys[metatadata_res_keys_int.index(res_int)]
-                    template_res_found = True
+            res_keys = list(template_metadata['res'].keys())
 
-        if not template_res_found:
-            raise ValueError(f"Resolution {resolution} not found in template metadata")
+            # True if the resolution is found in the metadata, or is None (some templates don't have res- entities)
+            template_res_identified = False
+
+            if resolution in res_keys:
+                template_res_identified = True
+            else:
+                # fmriprep allows res=1 for templates where the resolution label is '01'. We'll allow that, and the converse,
+                # by checking the integer representation of the resolution
+                # But only do this if the resolution is numeric
+                if resolution.isnumeric():
+                    res_int = int(resolution)
+                    metatadata_res_keys_int = [int(k) for k in res_keys]
+                    # if we find res_int in metatadata_res_keys_int, then the resolution to use is res_keys at the same index
+                    if res_int in metatadata_res_keys_int:
+                        resolution = res_keys[metatadata_res_keys_int.index(res_int)]
+                        template_res_identified = True
+
+            if not template_res_identified:
+                raise ValueError(f"Resolution {resolution} not matched in template metadata")
 
         template_matches = templateflow.api.get(name, resolution=resolution, cohort=cohort, desc=description, suffix=suffix,
                                                 extension=".nii.gz", raise_empty=True, **extra_filters)
@@ -370,8 +394,58 @@ class TemplateImage:
         return self._derivative_space_string
 
     def get_uri(self):
-        """Returns the BIDS URI for the image file."""
+        """Returns the URI for the image file."""
         return self._uri
+
+
+class TemplateTransform:
+    """Represents a templateflow transform file.
+
+    Attributes:
+        _to (str): The space the transform is used to resample images to. Note that to and from are reversed for point set
+                   transforms.
+        _from (str): The space the transform is used to resample images from. Note that to and from are reversed for point set
+                     transforms.
+        _path (str): The absolute path to the transform file
+        _uri (str): The BIDS URI for the transform file
+
+    Parameters:
+    -----------
+    name : str
+        The name of the template, without the 'tpl-' prefix.
+    suffix : str
+        BIDS suffix of the required image, eg 'T1w', 'mask'.
+    extension : str
+        The file extension of the transform file, eg '.nii.gz', '.h5', '.mat'.
+    resolution : str, optional
+        Resolution label of the template, eg '01', '1'. Ignored if the template does not have a resolution entity.
+    description : str, optional
+        Description of the template.
+    cohort : str, optional
+        Cohort of the template.
+    extra_filters : dict, optional
+        Additional BIDS filters, eg atlas, label.
+    """
+    def __init__(self, name, suffix, extension, resolution='01', description=None, cohort=None, **extra_filters):
+
+        template_metadata = templateflow.api.get_metadata(name)
+
+        # Almost all templates use res-1 or res-01, but if there's no resolution in the metadata, we'll use None
+        if not 'res' in template_metadata:
+            resolution = None
+        else:
+            res_keys = list(template_metadata['res'].keys())
+
+            # True if the resolution is found in the metadata, or is None (some templates don't have res- entities)
+            template_res_identified = False
+
+            if resolution in res_keys:
+                template_res_identified = True
+            else:
+                # fmriprep allows res=1 for templates where the resolution label is '01'. We'll allow that, and the converse,
+                # by checking the integer representation of the resolution
+                # But only do this if the resolution is numeric
+                if resolution.isnumeric():
 
 
 def resolve_uri(dataset_path, file_uri):
@@ -942,3 +1016,85 @@ def find_participant_images(input_dataset_dir, participant_label, work_dir, vali
 
     return images
 
+
+def find_template_transform(fixed_template_name, moving_template_name):
+    """Find transforms from a templateflow template to another template. The transform is that which is used to resample
+    an image from the moving template space to the fixed template space.
+
+    Parameters:
+    -----------
+    fixed_template_name : str
+        Name of the fixed template, eg 'MNI152NLin2009cAsym'
+    moving_template_name : str
+        Name of the moving template, eg 'OASIS30ANTs'
+
+    Returns:
+    --------
+    str: a path to the transform file, or None if no transform is found.
+    """
+    # use kwarg dict to allow us to use 'from' as a key
+    transforms = templateflow.api.get(
+        moving_template_name,
+        **{"from": fixed_template_name},
+        mode="image",
+        suffix="xfm",
+        raise_empty=False
+    )
+    if len(transforms) > 0:
+        # return the .h5 warp if both that and a an affine .mat are present
+        for transform in transforms:
+            if transform.endswith('.h5'):
+                return transform
+        # should not get here
+        raise ValueError(f"Cannot choose between multiple transforms from {moving_template_name} to {fixed_template_name}")
+    else:
+        return None
+
+
+def get_label_definitions(path: str) -> pd.DataFrame:
+    """
+    Get a pandas DataFrame of label definitions from a TSV file in the antsnetct/data/label_definitions directory.
+
+    Parameters:
+    -----------
+    path : str
+        Path to the TSV file containing label definitions. The TSV file should have at least two columns: 'index' and 'name'.
+        The 'index' column should contain integer labels, and the 'name' column should contain the corresponding label names.
+
+    Returns:
+    --------
+    pd.DataFrame
+        A pandas DataFrame with two columns: 'index' (int) and 'name' (str).
+
+    """
+    if not path.is_file():
+        raise FileNotFoundError(f"{path} not found")
+
+    with path.open('r', encoding='utf-8', newline='') as f:
+        reader = csv.reader(f, delimiter="\t")
+        # Find the header (skip blank/comment lines)
+        for row in reader:
+            if not row or (row and row[0].lstrip().startswith("#")):
+                continue
+            header = [c.strip().lower() for c in row]
+            break
+        else:
+            return {}
+
+        if len(header) < 2 or header[0] != 'index' or header[1] != 'name':
+            raise ValueError(
+                f"{path}: expected first two header columns to be 'index' and 'name', got {header[:2]}"
+            )
+
+        mapping: dict[int, str] = {}
+        for row in reader:
+            if not row or (row and row[0].lstrip().startswith("#")):
+                continue
+            try:
+                idx = int(row[0].strip())
+            except ValueError as e:
+                raise ValueError(f"{path}: non-integer index in row {row}") from e
+            lab = row[1].strip()
+            mapping[idx] = lab
+
+    return pd.DataFrame(list(mapping.items()), columns=['index', 'name'])
