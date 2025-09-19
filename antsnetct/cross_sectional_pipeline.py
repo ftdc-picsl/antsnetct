@@ -1201,7 +1201,7 @@ def compute_qc_stats(t1w_bids, mask_bids, seg_bids, work_dir, thick_bids=None, t
 
     if thick_bids is not None:
         thick_image = ants_image_read(thick_bids.get_path())
-        gm_thickness = thick_image[cgm_mask]
+        gm_thickness = thick_image[thick_image > 0.01]
         thick_mean = gm_thickness.mean()
         thick_std = gm_thickness.std()
 

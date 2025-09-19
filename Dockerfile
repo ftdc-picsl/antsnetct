@@ -27,7 +27,7 @@ RUN apt update && apt install -y bc
 # Get c3d
 COPY --from=pyushkevich/tk:2023b /tk/c3d/build/c3d /opt/bin/c3d
 # Get ants
-COPY --from=antsx/ants:2.5.4 /opt/ants /opt/ants
+COPY --from=antsx/ants:2.6.2 /opt/ants /opt/ants
 
 COPY scripts/trim_neck.sh /opt/bin/trim_neck.sh
 # Copy data and code from builder
@@ -48,7 +48,7 @@ ENV GIT_COMMIT=$GIT_COMMIT
 ENV DOCKER_IMAGE_TAG=$DOCKER_IMAGE_TAG
 ENV DOCKER_IMAGE_VERSION=$DOCKER_IMAGE_VERSION
 
-ENV LD_LIBRARY_PATH="/opt/ants/lib:$LD_LIBRARY_PATH"
+ENV LD_LIBRARY_PATH="/opt/ants/lib"
 ENV PATH="/opt/bin:/opt/ants/bin:$PATH"
 
 USER antspyuser

@@ -274,3 +274,44 @@ def get_num_threads():
                                f"'{os.environ['ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS']}'")
     else:
         raise KeyError("ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS is not set in the environment.")
+
+
+def set_num_threads(num_threads=0):
+    """Set the number of threads to use in system calls. This sets environment variables for ITK, OpenMP, OpenBLAS, and other
+    libraries.
+
+    The number of threads to use in ANTs commands is set by the environment variable ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS.
+
+    The number of threads can be set explicitly, or automatically. If num_threads is 0, the number of threads is set
+    automatically to min(system_cores, 8).
+
+    This function should be called before importing ANTsPy or any other library that uses ITK.
+
+    Parameters:
+    ----------
+    num_threads : int, optional
+        The number of threads to use. If 0, the number of threads is set automatically.
+    """
+    if num_threads < 1:
+        num_threads = min(os.cpu_count(), 8)
+
+    os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = str(num_threads)
+    os.environ["OMP_NUM_THREADS"] = str(num_threads)
+    os.environ["OPENBLAS_NUM_THREADS"] = str(num_threads)
+    os.environ["MKL_NUM_THREADS"] = str(num_threads)
+    os.environ["VECLIB_MAXIMUM_THREADS"] = str(num_threads)
+
+
+def set_tf_threads():
+    """Set the number of threads to use in TensorFlow. This can only be set before TensorFlow is initialized.
+
+    The number of threads for tensorflow defaults to 1 but can be overridden by setting the environment variables
+    TF_NUM_INTRAOP_THREADS and TF_NUM_INTEROP_THREADS.
+
+    """
+    intra_threads = int(os.getenv('TF_NUM_INTRAOP_THREADS', '1'))
+    inter_threads = int(os.getenv('TF_NUM_INTEROP_THREADS', '1'))
+
+    tf.config.threading.set_intra_op_parallelism_threads(intra_threads)
+    tf.config.threading.set_inter_op_parallelism_threads(inter_threads)
+

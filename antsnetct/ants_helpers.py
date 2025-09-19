@@ -5,6 +5,7 @@ import imageio
 import logging
 import numpy as np
 import os
+import pandas as pd
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -2211,13 +2212,13 @@ def desikan_killiany_tourville_parcellation(image, work_dir, brain_mask=None):
     # Load the image
     img = ants.image_read(image)
 
-    dkt31 = antspynet.desikan_killiany_tourville_labeling(img, do_preprocessing=True, return_probability_images=False
-                                                          do_lobar_parcellation=False, version=1, verbose=verbose=get_verbose())
+    dkt31 = antspynet.desikan_killiany_tourville_labeling(img, do_preprocessing=True, return_probability_images=False,
+                                                          do_lobar_parcellation=False, version=1, verbose=get_verbose())
 
     if brain_mask is not None:
         # Apply the brain mask to the parcellated image
         mask_image = ants.image_read(brain_mask)
-        dkt31 = ants.apply_masks(dkt31, mask_image)
+        dkt31 = dkt31 * mask_image
 
     ants.image_write(dkt31, parcellated_image_file)
 
@@ -2255,7 +2256,7 @@ def harvard_oxford_subcortical_parcellation(image, work_dir, brain_mask=None):
     if brain_mask is not None:
         # Apply the brain mask to the parcellated image
         mask_image = ants.image_read(brain_mask)
-        hoa_subcortical = ants.apply_mask(hoa_subcortical, mask_image)
+        hoa_subcortical = hoa_subcortical * mask_image
 
     ants.image_write(hoa_subcortical['parcellation_segmentation_image'], parcellated_image_file)
 
@@ -2301,19 +2302,21 @@ def cerebellar_parcellation(image, work_dir, cerebellum_mask=None):
     return parcellated_image_file
 
 
-def ants_label_statistics(label_image, work_dir, label_definitions, scalar_image=None):
-    """Calculate statistics for each label in a label image. Uses ITK label stats filters (fast, but no median).
+def ants_label_statistics(label_image, label_definitions, work_dir, scalar_image=None):
+    """Calculate statistics for each label in a label image. Uses ITK label stats filters (fast, but no median)
+
+    WARNING: untested code - might be best to not use this for now
 
     Parameters:
     -----------
     label_image : str
         Path to label image.
+    label_definitions : dict
+        Dictionary mapping label values to names.
     work_dir : str
         Path to working directory.
     scalar_image : str, optional
         Path to scalar image. If provided, statistics will be calculated for each label in the scalar image.
-    label_definitions : dict, optional
-        Dictionary mapping label values to names. If provided, the output will include these names as well as numeric labels.
 
     Returns:
     --------
@@ -2322,20 +2325,103 @@ def ants_label_statistics(label_image, work_dir, label_definitions, scalar_image
     """
     tmp_file_prefix = get_temp_file(work_dir, prefix='label_statistics')
 
+    logger.warning("untested prototype code - this uses ITK filters (faster than numpy) but has not been fully tested")
+
     # Load the label image
     labels = ants.image_read(label_image)
 
     if scalar_image is not None:
         scalar = ants.image_read(scalar_image)
+        if not physical_and_voxel_space_consistent(labels, scalar):
+            raise ValueError("Label and scalar images must have the same physical space and voxel dimensions.")
         stats = ants.label_stats(scalar, labels)
+        stats = stats.rename(columns={'LabelValue': 'Label'})  # rename index for consistency with label_geometry_measures
+        # Also cast Label to int, as label_stats returns float
+        stats['Label'] = stats['Label'].astype(int)
     else:
         stats = ants.label_geometry_measures(labels)
 
-    # ants.label_geometry_measures returns a pandas dataframe with integer 'Label' column
-    label_names = [label_definitions.get(label, str(label)) for label in stats['Label']]
-    # Ensure we have as many names as labels
-    if len(label_names) != len(stats['Label']):
-        raise ValueError("Label definitions do not match the number of labels in the image.")
+    # drop row for label 0 if present (for label_stats it is, but for label_geometry_measures it is not)
+    stats = stats[stats['Label'] != 0].reset_index(drop=True)
+
+    # Map label values to names
+    label_names = [label_definitions.get(label, None) for label in stats['Label']]
+    if None in label_names:
+        raise ValueError(f"Undefined labels present in label image {label_image}")
+    stats['LabelName'] = label_names
+
+    return stats
+
+
+def numpy_label_statistics(label_image, label_definitions, work_dir, scalar_image=None):
+    """Calculate statistics for each label in a label image. Uses numpy for scalar stats (slower, but more flexible).
+
+    Parameters:
+    -----------
+    label_image : str
+        Path to label image. Label values should be positive integers representable as uint32. Zero is treated as background,
+        and is ignored.
+    label_definitions : dict
+        Dictionary mapping label values to names.
+    work_dir : str
+        Path to working directory.
+    scalar_image : str, optional
+        Path to scalar image. If provided, statistics will be calculated for each label in the scalar image.
+
+    Returns:
+    --------
+    pandas.DataFrame
+        DataFrame with statistics for each label.
+    """
+    # Load the label image
+    label_im = ants.image_read(label_image, pixeltype='uint32')
+
+    # numpy copies where we'll do most of the work
+    labels = label_im.numpy()
+    scalar = None
+
+    if scalar_image is None:
+        # Just do label geometry stats
+        stats = ants.label_geometry_measures(labels)
+    else:
+        scalar_im = ants.image_read(scalar_image)
+        if not physical_and_voxel_space_consistent(label_im, scalar_im):
+            raise ValueError("Label and scalar images must have the same physical space and voxel dimensions.")
+        scalar = scalar_im.numpy()
+
+        unique_labels = np.unique(labels)
+        # Remove background label 0
+        unique_labels = unique_labels[unique_labels > 0]
+
+        stats_list = list()
+        all_labels_mask = labels > 0
+        label_flat = labels[all_labels_mask]
+        scalar_flat = scalar[all_labels_mask]
+
+        for label in unique_labels:
+            mask = label_flat == label
+            count = np.sum(mask)
+            if scalar is not None:
+                values = scalar_flat[mask]
+                mean = np.mean(values)
+                std = np.std(values)
+                min_val = np.min(values)
+                max_val = np.max(values)
+                median = np.median(values)
+                q1 = np.percentile(values, 25)
+                q3 = np.percentile(values, 75)
+                stats_list.append({'Label': int(label), 'Count': int(count), 'Mean': float(mean), 'Std': float(std),
+                                   'Min': float(min_val), 'Max': float(max_val), 'Median': float(median), 'Q1': float(q1),
+                                   'Q3': float(q3)})
+            else:
+                stats_list.append({'LabelValue': int(label), 'Count': int(count)})
+
+        stats = pd.DataFrame(stats_list)
+
+    # Map label values to names
+    label_names = [label_definitions.get(label, None) for label in stats['Label']]
+    if None in label_names:
+        raise ValueError(f"Undefined labels present in label image {label_image}")
     stats['LabelName'] = label_names
 
     return stats
@@ -2457,9 +2543,8 @@ def add_labels_to_segmentation(src_image, label_image, labels_to_add, work_dir, 
     additional_labels = ants.image_read(label_image)
 
     # Labels must be in the same voxel and physical space
-    if not (src_labels.shape == additional_labels.shape and
-            src_labels.image_physical_space_consistency(additional_labels, tolerance=1e-5)):
-        raise ValueError("Source and label images are not in the same physical space.")
+    if not physical_and_voxel_space_consistent(src_labels, additional_labels):
+        raise ValueError("Source and label images are not in the same space (voxel and physical space must be identical).")
 
     addition_mask = src_labels == background_label
 
@@ -2494,3 +2579,34 @@ def add_labels_to_segmentation(src_image, label_image, labels_to_add, work_dir, 
         logger.info(f"Output label image saved to {output_label_file}")
 
     return output_label_file, list(label_map.values())
+
+
+def physical_and_voxel_space_consistent(image1, image2, tolerance=1e-5):
+    """Check if two images are in the same physical and voxel space.
+
+    Parameters:
+    -----------
+    image1 : ants.ANTsImage or str
+        First image or path to the image.
+    image2 : ants.ANTsImage or str
+        Second image or path to the image.
+    tolerance : float, optional
+        Tolerance for physical space consistency check. Default is 1e-5.
+
+    Returns:
+    --------
+    bool
+        True if the images are in the same physical and voxel space, False otherwise.
+    """
+    if isinstance(image1, str):
+        img1 = ants.image_read(image1)
+    else:
+        img1 = image1
+
+    if isinstance(image2, str):
+        img2 = ants.image_read(image2)
+    else:
+        img2 = image2
+    # physical_space_consistency checks origin, spacing, direction, which is almost always sufficient, but
+    # if shape is not the same we can return immediately, also maybe catch some edge cases
+    return img1.shape == img2.shape and img1.image_physical_space_consistency(img2, tolerance=tolerance)

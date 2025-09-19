@@ -1,17 +1,17 @@
 #!/usr/bin/env python
 import os
-import sys
-import tensorflow as tf
 import logging
+import tensorflow as tf
 
+from .parcellation_pipeline import run_parcellation_pipeline
 from .system_helpers import set_num_threads, set_tf_threads
+
 
 def main():
 
     logger = logging.getLogger(__name__)
 
     # Set up threading parameters before tf or ants get imported
-
     # Set tensorflow threads - can only be done before initializing tensorflow
     try:
         set_tf_threads()
@@ -19,22 +19,14 @@ def main():
         logger.warning("Could not set TensorFlow threads. This is likely because tensorflow was initialized before this "
                     "package was imported.")
 
-    logger.info("tensorflow thread settings:\n\tintra_op_parallelism_threads: %d\n\tinter_op_parallelism_threads: %d",
-                tf.config.threading.get_intra_op_parallelism_threads(), tf.config.threading.get_inter_op_parallelism_threads())
-
     # Set other threading parameters like ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS, using the existing environment if defined
     # Other variables like OMP_NUM_THREADS will be set the same as ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS
     set_num_threads(int(os.getenv('ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS', '0')))
 
     logger.info(f"Using {os.getenv('ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS')} threads for ITK processes")
 
-    from .cross_sectional_pipeline import cross_sectional_analysis
-    from .longitudinal_pipeline import longitudinal_analysis
+    run_parcellation_pipeline()
 
-    if '--longitudinal' in sys.argv:
-        longitudinal_analysis()
-    else:
-        cross_sectional_analysis()
 
 if __name__ == "__main__":
     main()

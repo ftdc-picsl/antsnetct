@@ -1,8 +1,9 @@
+from __future__ import annotations # This allows type hints within class definitions
+
 import bids
 import copy
 import csv
 import filelock
-from __future__ import annotations # This allows type hints within class definitions
 import json
 import os
 import pandas as pd
@@ -251,7 +252,7 @@ class BIDSImage:
 
 
     def get_derivative_image(self, suffix: str) -> BIDSImage | None:
-        """Get the full path for a derivative file, given its suffix.
+        """Get a BIDSImage for a derivative image with the specified suffix, if it exists.
 
         Parameters:
         -----------
@@ -362,7 +363,7 @@ class TemplateImage:
 
         self._derivative_space_string = derivative_string
 
-        self._uri = f"bids:templateflow:tpl-{self._name}/" + os.path.basename(self._path)
+        self._uri = f"bids:Templateflow:tpl-{self._name}/" + os.path.basename(self._path)
 
 
     def get_cohort(self):
@@ -396,56 +397,6 @@ class TemplateImage:
     def get_uri(self):
         """Returns the URI for the image file."""
         return self._uri
-
-
-class TemplateTransform:
-    """Represents a templateflow transform file.
-
-    Attributes:
-        _to (str): The space the transform is used to resample images to. Note that to and from are reversed for point set
-                   transforms.
-        _from (str): The space the transform is used to resample images from. Note that to and from are reversed for point set
-                     transforms.
-        _path (str): The absolute path to the transform file
-        _uri (str): The BIDS URI for the transform file
-
-    Parameters:
-    -----------
-    name : str
-        The name of the template, without the 'tpl-' prefix.
-    suffix : str
-        BIDS suffix of the required image, eg 'T1w', 'mask'.
-    extension : str
-        The file extension of the transform file, eg '.nii.gz', '.h5', '.mat'.
-    resolution : str, optional
-        Resolution label of the template, eg '01', '1'. Ignored if the template does not have a resolution entity.
-    description : str, optional
-        Description of the template.
-    cohort : str, optional
-        Cohort of the template.
-    extra_filters : dict, optional
-        Additional BIDS filters, eg atlas, label.
-    """
-    def __init__(self, name, suffix, extension, resolution='01', description=None, cohort=None, **extra_filters):
-
-        template_metadata = templateflow.api.get_metadata(name)
-
-        # Almost all templates use res-1 or res-01, but if there's no resolution in the metadata, we'll use None
-        if not 'res' in template_metadata:
-            resolution = None
-        else:
-            res_keys = list(template_metadata['res'].keys())
-
-            # True if the resolution is found in the metadata, or is None (some templates don't have res- entities)
-            template_res_identified = False
-
-            if resolution in res_keys:
-                template_res_identified = True
-            else:
-                # fmriprep allows res=1 for templates where the resolution label is '01'. We'll allow that, and the converse,
-                # by checking the integer representation of the resolution
-                # But only do this if the resolution is numeric
-                if resolution.isnumeric():
 
 
 def resolve_uri(dataset_path, file_uri):
@@ -620,11 +571,13 @@ def _get_dataset_links(existing_dataset_links, dataset_link_paths):
     This is used to record links to other datasets. If the dataset link already exists, the URI is checked to ensure it
     matches the existing URI.
 
+    Templateflow is added automatically, if not already present.
+
     Parameters:
     ----------
-        existing_dataset_links : dict
+        existing_dataset_links : dict or None
             The existing DatasetLinks field, if any.
-        dataset_link_paths : str
+        dataset_link_paths : list of str or None
             The new dataset links to add.
 
     Returns:
@@ -641,6 +594,9 @@ def _get_dataset_links(existing_dataset_links, dataset_link_paths):
     else:
         dataset_links = copy.deepcopy(existing_dataset_links)
 
+    if dataset_link_paths is None:
+        dataset_link_paths = {}
+
     for path in dataset_link_paths:
         # Get the dataset name from the dataset_description.json
         path_link = _get_single_dataset_link(path)
@@ -650,10 +606,18 @@ def _get_dataset_links(existing_dataset_links, dataset_link_paths):
 
         if name in dataset_links:
             if dataset_links[name] != uri:
-                raise ValueError(f"Dataset link {name} already exists with URI {existing_dataset_links[name]}, but new URI "
+                raise ValueError(f"Dataset link {name} already exists with URI {dataset_links[name]}, but new URI "
                                  f"{uri} provided")
         else:
             dataset_links[name] = uri
+
+    # Add Templateflow if not already present
+    if 'TemplateFlow' in dataset_links:
+        if dataset_links['TemplateFlow'] != os.path.abspath(templateflow.conf.TF_HOME):
+            raise ValueError(f"Dataset link TemplateFlow already exists with URI {dataset_links['TemplateFlow']}, "
+                             f"but new URI {os.path.abspath(templateflow.conf.TF_HOME)} provided")
+    else:
+        dataset_links['TemplateFlow'] = os.path.abspath(templateflow.conf.TF_HOME)
 
     return dataset_links
 
@@ -691,7 +655,7 @@ def update_output_dataset(output_dataset_dir, output_dataset_name, dataset_link_
 
     This is used to make or update an output dataset. If the dataset exists, its metadata is updated. Specifically, the
     GeneratedBy field is updated to include this pipeline, if needed. If dataset links are provided, they are added to the
-    description if needed.
+    description if needed. Templateflow is added automatically, if needed.
 
     Parameters:
     -----------
@@ -716,7 +680,7 @@ def update_output_dataset(output_dataset_dir, output_dataset_name, dataset_link_
     with filelock.SoftFileLock(lock_file, timeout=30):
         if not os.path.exists(os.path.join(output_dataset_dir, 'dataset_description.json')):
             # Write dataset_description.json
-            output_ds_description = {'Name': output_dataset_name, 'BIDSVersion': '1.8.0',
+            output_ds_description = {'Name': output_dataset_name, 'BIDSVersion': '1.10.1',
                                     'DatasetType': 'derivative', 'GeneratedBy': _get_generated_by()
                                     }
             if (dataset_link_paths is not None):
@@ -738,7 +702,7 @@ def update_output_dataset(output_dataset_dir, output_dataset_name, dataset_link_
             # If this container doesn't already exist in the generated_by list, it will be added
             output_ds_description['GeneratedBy'] = _get_generated_by(old_gen_by)
 
-            old_ds_links = output_ds_description.get('DatasetLinks')
+            old_ds_links = output_ds_description.get('DatasetLinks', )
 
             output_ds_description['DatasetLinks'] = _get_dataset_links(old_ds_links, dataset_link_paths)
 
@@ -782,7 +746,7 @@ def set_sources(sidecar_path, sources):
 def find_brain_mask(mask_dataset_directory, input_image):
     """
     Search a mask dataset for a mask for a given image. Returns the first brain mask derived from the input image.
-    Looks for brain mask matching '*desc-brain*_mask.nii.gz' with optional space-orig and res-01 entities.
+    Looks for brain mask matching '*_desc-brain*_mask.nii.gz' with optional space-orig and res-01 entities.
 
     Parameters:
     ----------
@@ -1051,9 +1015,9 @@ def find_template_transform(fixed_template_name, moving_template_name):
         return None
 
 
-def get_label_definitions(path: str) -> pd.DataFrame:
+def get_label_definitions(path: str) -> dict:
     """
-    Get a pandas DataFrame of label definitions from a TSV file in the antsnetct/data/label_definitions directory.
+    Get a dict of label definitions from a TSV file
 
     Parameters:
     -----------
@@ -1063,8 +1027,8 @@ def get_label_definitions(path: str) -> pd.DataFrame:
 
     Returns:
     --------
-    pd.DataFrame
-        A pandas DataFrame with two columns: 'index' (int) and 'name' (str).
+    dict
+        with integer keys and string values, mapping label indices to label names.
 
     """
     if not path.is_file():
@@ -1091,10 +1055,16 @@ def get_label_definitions(path: str) -> pd.DataFrame:
             if not row or (row and row[0].lstrip().startswith("#")):
                 continue
             try:
+                # verify idx is an integer, might be float (discouraged) but if so has to be an integer valued)
+                idxfloat = float(row[0].strip())
                 idx = int(row[0].strip())
+                if idxfloat != idx:
+                    raise ValueError(f"{path}: non-integer index '{row[0].strip()}' in row {row}")
             except ValueError as e:
-                raise ValueError(f"{path}: non-integer index in row {row}") from e
+                raise ValueError(f"Non-integer or non-numeric index '{row[0].strip()}' in row {row}") from e
             lab = row[1].strip()
+            if idx in mapping:
+                raise ValueError(f"{path}: duplicate index {idx} in row {row}")
             mapping[idx] = lab
 
-    return pd.DataFrame(list(mapping.items()), columns=['index', 'name'])
+    return mapping

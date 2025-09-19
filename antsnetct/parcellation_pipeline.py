@@ -30,15 +30,15 @@ class RawDefaultsHelpFormatter(
     pass
 
 
-def parcellation_pipeline():
+def run_parcellation_pipeline():
 
     # Handle args with argparse
     parser = argparse.ArgumentParser(formatter_class=RawDefaultsHelpFormatter, add_help = False,
                                      description='''Parcellation and regional statistics with ANTsPyNet.
 
     The analysis level for parcellation is the subject. By default, all T1w images for a participant will be
-    processed To process a specific subset of images for a participant, use the --participant-images option or
-    a BIDS filter file.
+    processed. For per-session control, use the --session option. To process a specific subset of images for a participant,
+    use the --participant-images option or a BIDS filter file.
 
     --- BIDS options ---
 
@@ -74,8 +74,6 @@ def parcellation_pipeline():
 
         Cerebellum - cerebellar segmentation into 3 classes (CSF, GM, WM) and lobular parcellation
         (https://www.cobralab.ca/cerebellum-lobules).
-
-
 
 
     Configuration of atlas parcellation
@@ -115,7 +113,7 @@ def parcellation_pipeline():
 
     Example config:
     {
-      "schaefer100x7": {
+      "schaefer2018x100x7": {
         "template_label": "MNI152NLin2009cAsym",
         "template_resolution": "01",
         "atlas_label": "Schaefer2018",
@@ -154,7 +152,6 @@ def parcellation_pipeline():
     ''')
 
     required_parser = parser.add_argument_group('Required arguments')
-    required_parser.add_argument("--longitudinal", help="Do longitudinal analysis", action='store_true', required=True)
     required_parser.add_argument("--input-dataset", "--input-dataset", help="BIDS derivatives dataset dir, "
                                  "containing the antsnetct output", type=str, required=True)
     required_parser.add_argument("--participant", help="Participant to process", type=str)
@@ -164,12 +161,16 @@ def parcellation_pipeline():
     optional_parser.add_argument("--keep-workdir", help="Copy working directory to output, for debugging purposes. Either "
                                  "'never', 'on_error', or 'always'.", type=str, default='on_error')
     optional_parser.add_argument("--verbose", help="Verbose output", action='store_true')
+    optional_parser.add_argument("--longitudinal", help="Do longitudinal analysis", action='store_true')
+
 
     subject_parser = parser.add_argument_group('Input filtering arguments')
     subject_parser.add_argument("--bids-filter-file", help="BIDS filter to apply to the input dataset", type=str, default=None)
     subject_parser.add_argument("--participant-images", help="Text file containing a list of participant images to process "
                                  "relative to the input dataset. If not provided, all images for the participant "
                                  "will be processed.", type=str, default=None)
+    subject_parser.add_argument("--session", help="Process only this session. This overrides any session defined in a "
+                                 "BIDS filter file, if any.", type=str, default=None)
     # Maybe add this later - first get sessions done. Not sure how best to handle SST.
     # Is it best to apply parcellation directly, or merge session results somehow?
     # subject_parser.add_argument("--parcellate-sst", help="Parcellate SST images, if they exist (implies --longitudinal)",
@@ -203,35 +204,28 @@ def parcellation_pipeline():
     atlas_label_config = None
 
     # Only need group template if we are doing atlas-based labeling
-    if args.template_label_config is not None:
+    if args.atlas_label_config is not None:
         if not 'TEMPLATEFLOW_HOME' in os.environ or not os.path.exists(os.environ.get('TEMPLATEFLOW_HOME')):
             raise PipelineError(f"templateflow directory not found at " +
                                 f"TEMPLATEFLOW_HOME={os.environ.get('TEMPLATEFLOW_HOME')}")
         atlas_label_config = json.load(f)
 
-    output_dataset = args.output_dataset
-
     input_dataset = args.input_dataset
-
-    if (input_dataset == output_dataset):
-        raise ValueError('Input and output datasets cannot be the same')
-
-    if os.path.exists(os.path.join(output_dataset, f"sub-{args.participant}")):
-        raise ValueError(f"Output exists for participant {args.participant}")
+    output_dataset = input_dataset
 
     input_dataset_description = None
 
-    if os.path.exists(os.path.join(input_dataset_description, 'dataset_description.json')):
-        with open(os.path.join(input_dataset_description, 'dataset_description.json'), 'r') as f:
+    if os.path.exists(os.path.join(input_dataset, 'dataset_description.json')):
+        with open(os.path.join(input_dataset, 'dataset_description.json'), 'r') as f:
             input_dataset_description = json.load(f)
     else:
         raise ValueError('input dataset does not contain a dataset_description.json file')
 
-    logger.info("input dataset path: " + input_dataset_description)
-    logger.info("Cross-sectional dataset name: " + input_dataset_description['Name'])
+    logger.info("input dataset path: " + input_dataset)
+    logger.info("input dataset name: " + input_dataset_description['Name'])
 
-    # Create the output dataset and add this container to the GeneratedBy, if needed
-    bids_helpers.update_output_dataset(output_dataset, input_dataset_description['Name'] + '_parcellation', [input_dataset])
+    # add this container to the GeneratedBy, if needed. This also checks the consistency of the templateflow location
+    bids_helpers.update_output_dataset(args.input_dataset, input_dataset_description['Name'])
 
     with open(os.path.join(output_dataset, 'dataset_description.json'), 'r') as f:
         output_dataset_description = json.load(f)
@@ -264,6 +258,9 @@ def parcellation_pipeline():
             if args.longitudinal:
                 bids_t1w_filter['session'] = '*' # process all sessions, but ignore longitudinal templates
 
+        if args.session is not None:
+            bids_t1w_filter['session'] = args.session
+
         with tempfile.TemporaryDirectory(suffix=f"antsnetct_bids_{args.participant}.tmpdir") as bids_wd:
             # Have to turn off validation for derivatives
             input_session_preproc_t1w_bids = bids_helpers.find_participant_images(input_dataset, args.participant, bids_wd,
@@ -281,12 +278,12 @@ def parcellation_pipeline():
                 # Get the brain mask for the T1w image
                 t1w_brain_mask_bids = bids_helpers.BIDSImage(
                     t1w_bids.get_ds_path(),
-                    t1w_bids.get_derivative_rel_path_prefix() + "desc-brain_mask.nii.gz"
+                    t1w_bids.get_derivative_rel_path_prefix() + "_desc-brain_mask.nii.gz"
                 )
 
                 t1w_thickness_bids = t1w_bids.get_derivative_image("_seg-antsnetct_desc-thickness.nii.gz")
 
-                antsnet_parc = antsnet_parcellation(t1w_bids, working_dir, dkt31=args.dkt31, hoa=args.hoa,
+                antsnet_parc = antsnet_parcellation(t1w_bids, t1w_brain_mask_bids, working_dir, dkt31=args.dkt31, hoa=args.hoa,
                                                     cerebellum=args.cerebellum, thickness_bids=t1w_thickness_bids)
             except Exception as e:
                 logger.error(f"Caught {type(e)} during processing of {str(t1w_bids)}")
@@ -301,9 +298,10 @@ def parcellation_pipeline():
             if atlas_label_config is not None:
                 try:
                     logger.info("Doing atlas-based parcellation on " + t1w_bids.get_uri(relative=False))
-                    hoa_parcellation = t1w_bids.get_derivative_if_exists("_seg-hoa_dseg.nii.gz")
-                    atlas_based_parcellation(t1w_bids, atlas_label_config, working_dir, longitudinal=args.longitudinal,
-                                             thickness_bids=t1w_thickness_bids, hoa_parcellation=hoa_parcellation)
+                    hoa_parc_bids = t1w_bids.get_derivative_image("_seg-hoa_dseg.nii.gz")
+                    atlas_based_parcellation(t1w_bids, t1w_brain_mask_bids, atlas_label_config, working_dir,
+                                             longitudinal=args.longitudinal, thickness_bids=t1w_thickness_bids,
+                                             hoa_parcellation=hoa_parc_bids)
                 except Exception as e:
                     logger.error(f"Caught {type(e)} during atlas-based parcellation of {str(t1w_bids)}")
                     traceback.print_exc()
@@ -433,7 +431,7 @@ def parcellate_sst(sst_bids, work_dir):
 
 
 def atlas_based_parcellation(t1w_bids, brain_mask_bids, atlas_label_config, work_dir, thickness_bids=None, longitudinal=False,
-                             hoa_parcellation=None):
+                             hoa_parcellation_bids=None):
     """Do atlas-based parcellation on a T1w image.
 
     Parameters:
@@ -451,7 +449,7 @@ def atlas_based_parcellation(t1w_bids, brain_mask_bids, atlas_label_config, work
         if any atlas has 'restrict_to_cortex' or 'propagate_to_cortex' set to true.
     longitudinal : bool
         Use longitudinal transforms to group template space
-    hoa_parcellation : BIDSImage, optional
+    hoa_parcellation_bids : BIDSImage, optional
         Harvard-Oxford parcellation, required if propagate_to_cortex is true for any atlas.
 
     Returns:
@@ -552,9 +550,10 @@ def atlas_based_parcellation(t1w_bids, brain_mask_bids, atlas_label_config, work
                 raise ValueError(f"antsnet thickness image is required for cortical restriction of atlas {atlas_name}")
             parcellation = ants_helpers.mask_image(parcellation, cortical_mask)
         if atlas_info.get('propagate_to_cortex', False):
-            if hoa_parcellation is None:
+            if hoa_parcellation_bids is None:
                 raise ValueError(f"antsnet parcellation with 'hoa' is required for propagation of atlas {atlas_name}")
-            [tmp_parcellation, tmp_labels] = ants_helpers.add_labels_to_segmentation(parcellation, hoa_parcellation.get_path(),
+            [tmp_parcellation, tmp_labels] = ants_helpers.add_labels_to_segmentation(parcellation,
+                                                                                     hoa_parcellation_bids.get_path(),
                                                                                      labels_to_add=[20,21,22,23])
             tmp_parcellation = ants_helpers.propagate_labels_to_mask(tmp_parcellation, cortical_mask, work_dir)
             # Now remove the added labels
@@ -566,7 +565,7 @@ def atlas_based_parcellation(t1w_bids, brain_mask_bids, atlas_label_config, work
             t1w_bids.get_derivative_rel_path_prefix() + f"_seg-{output_atlas_name}_dseg.nii.gz",
             metadata={'Description': f'antsnetct atlas-based parcellation {output_atlas_name}',
                       'Manual': False,
-                      'Sources': [t1w_bids.get_uri(relative=True)]}
+                      'Sources': [t1w_bids.get_uri(relative=True), label_image.get_uri(relative=False)]}
             )
 
         output_label_definitions = parcellation_bids.get_path().replace('.nii.gz', '.tsv')
@@ -581,12 +580,14 @@ def atlas_based_parcellation(t1w_bids, brain_mask_bids, atlas_label_config, work
         if thickness_bids is not None and atlas_info.get('sample_thickness', False):
             scalar_images.append(thickness_bids)
             scalar_descriptions.append('corticalThickness')
-        make_label_stats(parcellation_bids, label_definitions_file, work_dir, scalar_images=scalar_images)
+        make_label_stats(parcellation_bids, label_definitions_file, work_dir, scalar_images=scalar_images,
+                           scalar_descriptions=scalar_descriptions)
 
     return parcellation_results
 
 
-def make_label_stats(label_image_bids, label_def_file, work_dir, scalar_images=None, scalar_descriptions=None):
+def make_label_stats(label_image_bids, label_def_file, work_dir, compute_label_geometry=True, scalar_images=None,
+                     scalar_descriptions=None):
     """Compute stats for a label image, optionally with scalar images. The stats are saved as derivatives of the label image.
 
     Parameters:
@@ -597,33 +598,43 @@ def make_label_stats(label_image_bids, label_def_file, work_dir, scalar_images=N
         TSV file containing label definitions
     work_dir : str
         Working directory for the stats
+    compute_label_geometry : bool
+        If true, compute label geometry stats (volume, surface area, etc.)
     scalar_images : list of BIDSImage, optional
         List of scalar images on which to compute stats.
+    scalar_descriptions : list of str, optional
+        List of descriptions for the scalar images, used to name the output stats files. Must be the same length as
+        scalar_images.
 
     Returns:
     -------
     list of str: paths to the label stats files
     """
-    label_stats = list()
+    label_stats_output_files = list()
 
-    label_definition_df = bids_helpers.load_label_definitions(label_def_file)
+    label_definitions = bids_helpers.load_label_definitions(label_def_file)
 
-    label_stat = ants_helpers.label_statistics(label_image_bids.get_path(), work_dir)
-    # Save the label statistics to the output dataset
-    label_file = label_image_bids.get_derivative_rel_path_prefix() + "_desc-labelGeometry.tsv"
-    pd.DataFrame.to_csv(label_stat, label_file, sep='\t', index=False)
-    label_stats.append(label_file)
+    logger.info(f"Computing stats for label image {label_image_bids.get_uri(relative=False)}")
+
+    if compute_label_geometry:
+        logger.info("Computing label geometry stats")
+        label_geom_stats = ants_helpers.numpy_label_statistics(label_image_bids.get_path(), work_dir)
+        # Save the label statistics to the output dataset
+        label_geom_file = label_image_bids.get_derivative_rel_path_prefix() + "_desc-labelGeometry.tsv"
+        pd.DataFrame.to_csv(label_geom_stats, label_geom_file, sep='\t', index=False)
+        label_stats_output_files.append(label_geom_file)
 
     if scalar_images is not None:
         for scalar, scalar_desc in zip(scalar_images, scalar_descriptions):
             if not os.path.exists(scalar.get_path()):
                 raise ValueError(f"Scalar image {scalar.get_uri(relative=False)} does not exist")
-            logger.info("Computing stats for label image " + label_image_bids.get_uri(relative=False))
-            label_stats = ants_helpers.label_statistics(label_image_bids.get_path(), label_definition_df, work_dir,
+            logger.info("Computing scalar stats on image " + scalar.get_uri(relative=False))
+            label_stats = ants_helpers.label_statistics(label_image_bids.get_path(), label_definitions, work_dir,
                                                         scalar.get_path())
             label_stats_file = label_image_bids.get_derivative_rel_path_prefix() + f"_desc-{scalar_desc}.tsv"
-            pd.DataFrame.to_csv(label_stat, label_file, sep='\t', index=False)
+            pd.DataFrame.to_csv(label_stats, label_stats_file, sep='\t', index=False)
             label_stats.append(label_stats_file)
 
-    return label_stats
+    return label_stats_output_files
+
 
