@@ -2250,20 +2250,20 @@ def harvard_oxford_subcortical_parcellation(image, work_dir, brain_mask=None):
     # Load the image
     img = ants.image_read(image)
 
-    hoa_subcortical = antspynet.harvard_oxford_subcortical_labeling(img, do_preprocessing=True, return_probability_images=False,
-                                                                   verbose=get_verbose())
+    results = antspynet.harvard_oxford_atlas_labeling(img, do_preprocessing=True, verbose=get_verbose())
+    hoa_subcortical_image = results['segmentation_image']
 
     if brain_mask is not None:
         # Apply the brain mask to the parcellated image
         mask_image = ants.image_read(brain_mask)
-        hoa_subcortical = hoa_subcortical * mask_image
+        hoa_subcortical_image = hoa_subcortical_image * mask_image
 
-    ants.image_write(hoa_subcortical['parcellation_segmentation_image'], parcellated_image_file)
+    ants.image_write(hoa_subcortical_image, parcellated_image_file)
 
     return parcellated_image_file
 
 
-def cerebellar_parcellation(image, work_dir, cerebellum_mask=None):
+def cerebellum_parcellation(image, work_dir, cerebellum_mask=None):
     """Does a cerebellar parcellation of the input image using ANTsPyNet.
 
     Parameters:
@@ -2293,9 +2293,8 @@ def cerebellar_parcellation(image, work_dir, cerebellum_mask=None):
         # If a cerebellum mask is provided, use it to define the segmentation mask
         cerebellum_mask_image = ants.image_read(cerebellum_mask)
 
-    cerebellar_labels = antspynet.cerebellum_morphology(img, do_preprocessing=True, return_probability_images=False,
-                                                        mask=cerebellum_mask_image, compute_thickness_image=False,
-                                                        verbose=get_verbose())
+    cerebellar_labels = antspynet.cerebellum_morphology(img, do_preprocessing=True, cerebellum_mask=cerebellum_mask_image,
+                                                        compute_thickness_image=False, verbose=get_verbose())
 
     ants.image_write(cerebellar_labels['parcellation_segmentation_image'], parcellated_image_file)
 
@@ -2348,7 +2347,7 @@ def ants_label_statistics(label_image, label_definitions, work_dir, scalar_image
     label_names = [label_definitions.get(label, None) for label in stats['Label']]
     if None in label_names:
         raise ValueError(f"Undefined labels present in label image {label_image}")
-    stats['LabelName'] = label_names
+    stats.insert(stats.columns.get_loc("Label") + 1, "LabelName", label_names)
 
     return stats
 
@@ -2374,7 +2373,7 @@ def numpy_label_statistics(label_image, label_definitions, work_dir, scalar_imag
         DataFrame with statistics for each label.
     """
     # Load the label image
-    label_im = ants.image_read(label_image, pixeltype='uint32')
+    label_im = ants.image_read(label_image)
 
     # numpy copies where we'll do most of the work
     labels = label_im.numpy()
@@ -2382,7 +2381,7 @@ def numpy_label_statistics(label_image, label_definitions, work_dir, scalar_imag
 
     if scalar_image is None:
         # Just do label geometry stats
-        stats = ants.label_geometry_measures(labels)
+        stats = ants.label_geometry_measures(label_im)
     else:
         scalar_im = ants.image_read(scalar_image)
         if not physical_and_voxel_space_consistent(label_im, scalar_im):
@@ -2401,27 +2400,24 @@ def numpy_label_statistics(label_image, label_definitions, work_dir, scalar_imag
         for label in unique_labels:
             mask = label_flat == label
             count = np.sum(mask)
-            if scalar is not None:
-                values = scalar_flat[mask]
-                mean = np.mean(values)
-                std = np.std(values)
-                min_val = np.min(values)
-                max_val = np.max(values)
-                median = np.median(values)
-                q1 = np.percentile(values, 25)
-                q3 = np.percentile(values, 75)
-                stats_list.append({'Label': int(label), 'Count': int(count), 'Mean': float(mean), 'Std': float(std),
-                                   'Min': float(min_val), 'Max': float(max_val), 'Median': float(median), 'Q1': float(q1),
-                                   'Q3': float(q3)})
-            else:
-                stats_list.append({'LabelValue': int(label), 'Count': int(count)})
-
+            values = scalar_flat[mask]
+            mean = np.mean(values)
+            std = np.std(values)
+            min_val = np.min(values)
+            max_val = np.max(values)
+            median = np.median(values)
+            q1 = np.percentile(values, 25)
+            q3 = np.percentile(values, 75)
+            stats_list.append({'Label': int(label), 'Count': int(count), 'Mean': float(mean), 'Std': float(std),
+                                'Min': float(min_val), 'Max': float(max_val), 'Median': float(median), 'Q1': float(q1),
+                                'Q3': float(q3)})
         stats = pd.DataFrame(stats_list)
 
     # Map label values to names
     label_names = [label_definitions.get(label, None) for label in stats['Label']]
     if None in label_names:
         raise ValueError(f"Undefined labels present in label image {label_image}")
+    stats.insert(stats.columns.get_loc("Label") + 1, "LabelName", label_names)
     stats['LabelName'] = label_names
 
     return stats

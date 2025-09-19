@@ -61,7 +61,7 @@ class BIDSImage:
         if not os.path.exists(description_file):
             raise FileNotFoundError("dataset_description.json not found in dataset path")
 
-        with open(description_file, 'r') as f:
+        with open(description_file, 'r', encoding="utf-8") as f:
             ds_description = json.load(f)
 
         if 'Name' not in ds_description:
@@ -73,7 +73,7 @@ class BIDSImage:
     def _set_metadata_from_sidecar(self):
         """Loads metadata from the sidecar JSON file, if present."""
         if os.path.exists(self._sidecar_path):
-            with open(self._sidecar_path, 'r') as f:
+            with open(self._sidecar_path, 'r', encoding="utf-8") as f:
                 self._metadata = json.load(f)
         else:
             self._metadata = None
@@ -119,7 +119,7 @@ class BIDSImage:
                         # the source is within this dataset, replace bids:: with bids:{self.ds_name}
                         dest_metadata['Sources'][idx] = f"bids:{self._ds_name}:{source[6:]}"
 
-            with open(dest_sidecar_path, 'w') as f:
+            with open(dest_sidecar_path, 'w', encoding='utf-8') as f:
                 json.dump(dest_metadata, f, indent=4, sort_keys=True)
 
         return BIDSImage(dest_ds_path, self._rel_path)
@@ -178,7 +178,7 @@ class BIDSImage:
             A dictionary of metadata.
         """
         self._metadata = copy.deepcopy(metadata)
-        with open(self._sidecar_path, 'w') as f:
+        with open(self._sidecar_path, 'w', encoding="utf-8") as f:
             json.dump(self._metadata, f, indent=4, sort_keys=True)
 
 
@@ -194,7 +194,7 @@ class BIDSImage:
         """
         for key, value in extra_metadata.items():
             self._metadata[key] = value
-        with open(self._sidecar_path, 'w') as f:
+        with open(self._sidecar_path, 'w', encoding="utf-8") as f:
             json.dump(self._metadata, f, indent=4, sort_keys=True)
 
 
@@ -508,7 +508,7 @@ def image_to_bids(src_image, dataset_dir, dest_rel_path, metadata=None, overwrit
     copy_file(src_image, dest_file_path)
 
     if metadata is not None:
-        with open(dest_sidecar_path, 'w') as f:
+        with open(dest_sidecar_path, 'w', encoding="utf-8") as f:
             json.dump(metadata, f, indent=4, sort_keys=True)
 
     return BIDSImage(dataset_dir, dest_rel_path)
@@ -639,7 +639,7 @@ def _get_single_dataset_link(dataset_path):
     if not os.path.exists(description_file):
         raise FileNotFoundError(f"dataset_description.json not found in dataset path {dataset_path}")
 
-    with open(description_file, 'r') as f:
+    with open(description_file, 'r', encoding="utf-8") as f:
         ds_description = json.load(f)
 
     if 'Name' not in ds_description:
@@ -686,11 +686,11 @@ def update_output_dataset(output_dataset_dir, output_dataset_name, dataset_link_
             if (dataset_link_paths is not None):
                 output_ds_description['DatasetLinks'] = _get_dataset_links(None, dataset_link_paths)
             # Write json to output dataset
-            with open(os.path.join(output_dataset_dir, 'dataset_description.json'), 'w') as file_out:
+            with open(os.path.join(output_dataset_dir, 'dataset_description.json'), 'w', encoding="utf-8") as file_out:
                 json.dump(output_ds_description, file_out, indent=4, sort_keys=True)
         else:
             # Get output dataset metadata
-            with open(f"{output_dataset_dir}/dataset_description.json", 'r') as file_in:
+            with open(f"{output_dataset_dir}/dataset_description.json", 'r', encoding="utf-8") as file_in:
                 output_ds_description = json.load(file_in)
             # Check dataset name
             if not 'Name' in output_ds_description:
@@ -715,7 +715,7 @@ def update_output_dataset(output_dataset_dir, output_dataset_name, dataset_link_
                     ds_modified = True
 
             if ds_modified:
-                with open(f"{output_dataset_dir}/dataset_description.json", 'w') as file_out:
+                with open(f"{output_dataset_dir}/dataset_description.json", 'w', encoding="utf-8") as file_out:
                     json.dump(output_ds_description, file_out, indent=4, sort_keys=True)
 
 
@@ -735,11 +735,11 @@ def set_sources(sidecar_path, sources):
     if not isinstance(sources, list):
         sources = [sources]
 
-    with open(sidecar_path, 'r') as f:
+    with open(sidecar_path, 'r', encoding="utf-8") as f:
         sidecar_json = json.load(f)
         sidecar_json['Sources'] = sources
 
-    with open(sidecar_path, 'w') as f:
+    with open(sidecar_path, 'w', encoding="utf-8") as f:
         json.dump(sidecar_json, f, indent=4, sort_keys=True)
 
 
@@ -760,11 +760,6 @@ def find_brain_mask(mask_dataset_directory, input_image):
     BIDSImage:
         A BIDSImage object representing the mask, or None if no mask is found.
     """
-    # Load mask dataset_description.json
-    with open(os.path.join(mask_dataset_directory, 'dataset_description.json')) as f:
-        dataset_description = json.load(f)
-        mask_dataset_name = dataset_description['Name']
-
     search_prefix = input_image.get_derivative_rel_path_prefix()
     search_pattern = re.compile(rf"{search_prefix}(?:_space-orig)?(?:_res-01)?_desc-brain_mask.nii.gz")
 
@@ -805,12 +800,6 @@ def find_segmentation_probability_images(seg_dataset_directory, input_image):
         list of BIDSImage
             Images representing the classes in order: CSF, GM, WM, Deep GM, Brainstem, Cerebellum.
     """
-    with open(os.path.join(seg_dataset_directory, 'dataset_description.json')) as f:
-        dataset_description = json.load(f)
-        if 'Name' not in dataset_description:
-            raise ValueError(f"Dataset name not found in dataset_description.json for {seg_dataset_directory}")
-
-
     # the list to be returned, with posteriors in order
     output_posteriors = [None] * 6
 
@@ -1015,7 +1004,7 @@ def find_template_transform(fixed_template_name, moving_template_name):
         return None
 
 
-def get_label_definitions(path: str) -> dict:
+def load_label_definitions(path: str) -> dict:
     """
     Get a dict of label definitions from a TSV file
 
@@ -1031,10 +1020,10 @@ def get_label_definitions(path: str) -> dict:
         with integer keys and string values, mapping label indices to label names.
 
     """
-    if not path.is_file():
-        raise FileNotFoundError(f"{path} not found")
+    if not os.path.exists(path) or not os.path.isfile(path):
+        raise FileNotFoundError(f"Label definition file {path} not found")
 
-    with path.open('r', encoding='utf-8', newline='') as f:
+    with open(path, 'r', encoding='utf-8', newline='') as f:
         reader = csv.reader(f, delimiter="\t")
         # Find the header (skip blank/comment lines)
         for row in reader:
@@ -1068,3 +1057,16 @@ def get_label_definitions(path: str) -> dict:
             mapping[idx] = lab
 
     return mapping
+
+
+def write_tabular_data(df: pd.DataFrame, path: str):
+    """Write a pandas DataFrame to a TSV file.
+
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        The DataFrame to write.
+    path : str
+        The path to the TSV file to write.
+    """
+    df.to_csv(path, sep='\t', index=False, na_rep='n/a', encoding='utf-8', lineterminator='\n')

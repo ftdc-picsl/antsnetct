@@ -358,13 +358,13 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
         parcellation_results['dkt31'] = dict()
 
         if dkt31_bids is not None:
-            logger.info("DKT31 parcellation already exists at " + dkt31.get_uri(relative=False))
+            logger.info("DKT31 parcellation already exists at " + dkt31_bids.get_uri(relative=False))
             parcellation_results['dkt31']['image'] = dkt31_bids
             parcellation_results['dkt31']['label_definitions'] = dkt31_bids.get_path().replace('.nii.gz', '.tsv')
         else:
-            dkt31 = ants_helpers.desikan_killiany_tourville_parcellation(t1w, work_dir, brain_mask)
+            dkt31_file = ants_helpers.desikan_killiany_tourville_parcellation(t1w, work_dir, brain_mask)
             dkt31_bids = bids_helpers.image_to_bids(
-                dkt31,
+                dkt31_file,
                 t1w_bids.get_ds_path(),
                 t1w_bids.get_derivative_rel_path_prefix() + "_seg-dkt31_dseg.nii.gz",
                 metadata={'Description': 'ANTsPyNet DKT31', 'Manual': False, 'Sources': [t1w_bids.get_uri(relative=True)]}
@@ -372,15 +372,17 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
             parcellation_results['dkt31']['image'] = dkt31_bids
             parcellation_results['dkt31']['label_definitions'] = dkt31_bids.get_path().replace('.nii.gz', '.tsv')
             copy_file(get_label_definitions_path('dkt31'), parcellation_results['dkt31']['label_definitions'])
-            # Label stats
+
+            dkt_scalar_images = [t1w_bids]
+            dkt_scalar_descriptions = ['t1wIntensity']
+
             if thickness_bids is not None:
-                # Sample thickness
                 logger.info("Sampling thickness for DKT31 parcellation")
-                thickness = thickness_bids.get_path()
-                stats = make_label_stats(thickness, dkt31, work_dir, scalar_images = [t1w_bids, thickness_bids],
-                                         scalar_descriptions = ['t1wintensity', 'corticalThickness'])
-                stats_df = pd.DataFrame(stats)
-                stats_df.to_csv(dkt31_bids.get_path().replace('.nii.gz', '_thickness.tsv'), sep='\t', index=False)
+                dkt_scalar_images.append(thickness_bids)
+                dkt_scalar_descriptions.append('corticalThickness')
+
+            dkt_stats = make_label_stats(dkt31_bids, parcellation_results['dkt31']['label_definitions'], work_dir,
+                                         scalar_images=dkt_scalar_images, scalar_descriptions=dkt_scalar_descriptions)
 
     if hoa:
         logger.info("Starting Harvard-Oxford subcortical parcellation")
@@ -392,36 +394,58 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
             parcellation_results['hoa']['image'] = hoa_bids
             parcellation_results['hoa']['label_definitions'] = hoa_bids.get_path().replace('.nii.gz', '.tsv')
         else:
-            hoa = ants_helpers.harvard_oxford_subcortical_parcellation(t1w, work_dir, brain_mask)
+            hoa_file = ants_helpers.harvard_oxford_subcortical_parcellation(t1w, work_dir, brain_mask)
             hoa_bids = bids_helpers.image_to_bids(
-                hoa,
+                hoa_file,
                 t1w_bids.get_ds_path(),
                 t1w_bids.get_derivative_rel_path_prefix() + "_seg-hoa_dseg.nii.gz",
                 metadata={'Description': 'ANTsPyNet Harvard-Oxford Subcortical',
                           'Manual': False,
                           'Sources': [t1w_bids.get_uri(relative=True)]}
             )
+            parcellation_results['hoa']['image'] = hoa_bids
             parcellation_results['hoa']['label_definitions'] = hoa_bids.get_path().replace('.nii.gz', '.tsv')
-            copy_file(get_label_definitions_path('harvard_oxford_subcortical'),
-                      parcellation_results['hoa']['label_definitions'])
+            copy_file(get_label_definitions_path('hoa_subcortical'),
+                        parcellation_results['hoa']['label_definitions'])
+
+            hoa_scalar_images = [t1w_bids]
+            hoa_scalar_descriptions = ['t1wIntensity']
+            hoa_stats = make_label_stats(hoa_bids, parcellation_results['hoa']['label_definitions'], work_dir,
+                                         scalar_images=hoa_scalar_images, scalar_descriptions=hoa_scalar_descriptions)
 
     if cerebellum:
-        # Create a cerebellum mask from the Harvard-Oxford labels
-        cerebellum_mask = ants_helpers.threshold_image(parcellation_results['hoa'].get_path(), work_dir, 29, 32)
+
         logger.info("Starting cerebellum parcellation")
-        cerebellum = ants_helpers.cerebellum_parcellation(t1w, work_dir, cerebellum_mask)
+        cerebellum_bids = t1w_bids.get_derivative_image("_seg-cerebellum_dseg.nii.gz")
         parcellation_results['cerebellum'] = dict()
-        parcellation_results['cerebellum']['image'] = bids_helpers.image_to_bids(
-            cerebellum,
-            t1w_bids.get_ds_path(),
-            t1w_bids.get_derivative_rel_path_prefix() + "_seg-cerebellum_dseg.nii.gz",
-            metadata={'Description': 'ANTsPyNet Cerebellum',
-                      'Manual': False,
-                      'Sources': [t1w_bids.get_uri(relative=True), parcellation_results['hoa'].get_uri(relative=True)]}
-            )
-        parcellation_results['cerebellum']['label_definitions'] = \
-            parcellation_results['cerebellum']['image'].get_path().replace('.nii.gz', '.tsv')
-        copy_file(get_label_definitions_path('cerebellum'), parcellation_results['cerebellum']['label_definitions'])
+
+        if cerebellum_bids is not None:
+            logger.info("Cerebellum parcellation already exists at " + cerebellum_bids.get_uri(relative=False))
+            parcellation_results['cerebellum']['image'] = cerebellum_bids
+            parcellation_results['cerebellum']['label_definitions'] = cerebellum_bids.get_path().replace('.nii.gz', '.tsv')
+        else:
+            # Create a cerebellum mask from the Harvard-Oxford labels
+            cerebellum_mask = ants_helpers.threshold_image(parcellation_results['hoa']['image'].get_path(), work_dir, 29, 32)
+            cerebellum_file = ants_helpers.cerebellum_parcellation(t1w, work_dir, cerebellum_mask)
+            cerebellum_bids = bids_helpers.image_to_bids(
+                cerebellum_file,
+                t1w_bids.get_ds_path(),
+                t1w_bids.get_derivative_rel_path_prefix() + "_seg-cerebellum_dseg.nii.gz",
+                metadata={'Description': 'ANTsPyNet Cerebellum',
+                        'Manual': False,
+                        'Sources': [t1w_bids.get_uri(relative=True), parcellation_results['hoa'].get_uri(relative=True)]}
+                )
+            parcellation_results['cerebellum']['image'] = cerebellum_bids
+            parcellation_results['cerebellum']['label_definitions'] = \
+                parcellation_results['cerebellum']['image'].get_path().replace('.nii.gz', '.tsv')
+            copy_file(get_label_definitions_path('antspynet_cerebellum'),
+                      parcellation_results['cerebellum']['label_definitions'])
+
+            cerebellum_scalar_images = [t1w_bids]
+            cerebellum_scalar_descriptions = ['t1wIntensity']
+            cerebellum_stats = make_label_stats(cerebellum_bids, parcellation_results['cerebellum']['label_definitions'],
+                                                work_dir, scalar_images=cerebellum_scalar_images,
+                                                scalar_descriptions=cerebellum_scalar_descriptions)
 
     return parcellation_results
 
@@ -547,11 +571,11 @@ def atlas_based_parcellation(t1w_bids, brain_mask_bids, atlas_label_config, work
         if atlas_info.get('restrict_to_cortex', False):
             # Restrict the parcellation to the cortical GM
             if cortical_mask is None:
-                raise ValueError(f"antsnet thickness image is required for cortical restriction of atlas {atlas_name}")
+                raise ValueError(f"antsnet thickness image is required for cortical restriction of atlas {output_atlas_name}")
             parcellation = ants_helpers.mask_image(parcellation, cortical_mask)
         if atlas_info.get('propagate_to_cortex', False):
             if hoa_parcellation_bids is None:
-                raise ValueError(f"antsnet parcellation with 'hoa' is required for propagation of atlas {atlas_name}")
+                raise ValueError(f"antsnet parcellation with 'hoa' is required for propagation of atlas {output_atlas_name}")
             [tmp_parcellation, tmp_labels] = ants_helpers.add_labels_to_segmentation(parcellation,
                                                                                      hoa_parcellation_bids.get_path(),
                                                                                      labels_to_add=[20,21,22,23])
@@ -618,10 +642,10 @@ def make_label_stats(label_image_bids, label_def_file, work_dir, compute_label_g
 
     if compute_label_geometry:
         logger.info("Computing label geometry stats")
-        label_geom_stats = ants_helpers.numpy_label_statistics(label_image_bids.get_path(), work_dir)
+        label_geom_stats = ants_helpers.numpy_label_statistics(label_image_bids.get_path(), label_definitions, work_dir)
         # Save the label statistics to the output dataset
-        label_geom_file = label_image_bids.get_derivative_rel_path_prefix() + "_desc-labelGeometry.tsv"
-        pd.DataFrame.to_csv(label_geom_stats, label_geom_file, sep='\t', index=False)
+        label_geom_file = label_image_bids.get_derivative_path_prefix() + "_desc-labelGeometry.tsv"
+        bids_helpers.write_tabular_data(label_geom_stats, label_geom_file)
         label_stats_output_files.append(label_geom_file)
 
     if scalar_images is not None:
@@ -629,11 +653,11 @@ def make_label_stats(label_image_bids, label_def_file, work_dir, compute_label_g
             if not os.path.exists(scalar.get_path()):
                 raise ValueError(f"Scalar image {scalar.get_uri(relative=False)} does not exist")
             logger.info("Computing scalar stats on image " + scalar.get_uri(relative=False))
-            label_stats = ants_helpers.label_statistics(label_image_bids.get_path(), label_definitions, work_dir,
+            label_stats = ants_helpers.numpy_label_statistics(label_image_bids.get_path(), label_definitions, work_dir,
                                                         scalar.get_path())
-            label_stats_file = label_image_bids.get_derivative_rel_path_prefix() + f"_desc-{scalar_desc}.tsv"
-            pd.DataFrame.to_csv(label_stats, label_stats_file, sep='\t', index=False)
-            label_stats.append(label_stats_file)
+            label_stats_file = label_image_bids.get_derivative_path_prefix() + f"_desc-{scalar_desc}.tsv"
+            bids_helpers.write_tabular_data(label_stats, label_stats_file)
+            label_stats_output_files.append(label_stats_file)
 
     return label_stats_output_files
 

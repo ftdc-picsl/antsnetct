@@ -19,3 +19,8 @@ hcpyaT2Template
 hcpyaFATemplate
 hcpyaTemplateBrainMask
 hcpyaTemplateBrainSegmentation
+magetCerebellumxTemplate0GenericAffine
+magetCerebellumTemplate
+magetCerebellumTemplatePriors
+magetTemplate
+magetTemplateBrainMask
