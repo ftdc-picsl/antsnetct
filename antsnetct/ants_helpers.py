@@ -2334,20 +2334,31 @@ def ants_label_statistics(label_image, label_definitions, work_dir, scalar_image
         if not physical_and_voxel_space_consistent(labels, scalar):
             raise ValueError("Label and scalar images must have the same physical space and voxel dimensions.")
         stats = ants.label_stats(scalar, labels)
-        stats = stats.rename(columns={'LabelValue': 'Label'})  # rename index for consistency with label_geometry_measures
-        # Also cast Label to int, as label_stats returns float
+        # cast Label to int, as label_stats returns float
         stats['Label'] = stats['Label'].astype(int)
+
+        # replace variance with std
+        stats['std'] = np.sqrt(stats['Variance'])
+        # remove variance column
+        stats = stats.drop(columns=['Variance', 't']) # we drop t as we do stats in 3D
+        stats = stats.rename(columns={'LabelValue': 'label', 'Mean': 'mean', 'Min': 'min', 'Max': 'max',
+                                      'Count': 'voxel_count', 'Volume': 'volume_mm3', 'Mass': 'sum',
+                                      'x': 'center_of_mass_x', 'y': 'center_of_mass_y', 'z': 'center_of_mass_z'})
+        # label_stats includes background label 0, so remove it to be consistent with label geometry measures
+        stats = stats[stats['label'] != 0].reset_index(drop=True)
     else:
         stats = ants.label_geometry_measures(labels)
-
-    # drop row for label 0 if present (for label_stats it is, but for label_geometry_measures it is not)
-    stats = stats[stats['Label'] != 0].reset_index(drop=True)
+        # Output in BIDS snake case, and fix some unfortunate ANTs naming choices
+        stats = stats.rename(columns={'Label': 'label', 'VolumeInVoxels': 'voxel_count',
+                                      'VolumeInMillimetersCubed': 'volume_mm3',
+                                      'SurfaceAreaInMillimetersSquared': 'surface_area_mm2', 'Eccentricity': 'eccentricity',
+                                      'Elongation': 'elongation', 'Roundness': 'roundness', 'Flatness': 'flatness'})
 
     # Map label values to names
     label_names = [label_definitions.get(label, None) for label in stats['Label']]
     if None in label_names:
         raise ValueError(f"Undefined labels present in label image {label_image}")
-    stats.insert(stats.columns.get_loc("Label") + 1, "LabelName", label_names)
+    stats.insert(stats.columns.get_loc("label") + 1, "label_name", label_names)
 
     return stats
 
@@ -2382,6 +2393,10 @@ def numpy_label_statistics(label_image, label_definitions, work_dir, scalar_imag
     if scalar_image is None:
         # Just do label geometry stats
         stats = ants.label_geometry_measures(label_im)
+        stats = stats.rename(columns={'Label': 'label', 'VolumeInVoxels': 'voxel_count',
+                                      'VolumeInMillimetersCubed': 'volume_mm3',
+                                      'SurfaceAreaInMillimetersSquared': 'surface_area_mm2', 'Eccentricity': 'eccentricity',
+                                      'Elongation': 'elongation', 'Roundness': 'roundness', 'Flatness': 'flatness'})
     else:
         scalar_im = ants.image_read(scalar_image)
         if not physical_and_voxel_space_consistent(label_im, scalar_im):
@@ -2408,17 +2423,18 @@ def numpy_label_statistics(label_image, label_definitions, work_dir, scalar_imag
             median = np.median(values)
             q1 = np.percentile(values, 25)
             q3 = np.percentile(values, 75)
-            stats_list.append({'Label': int(label), 'Count': int(count), 'Mean': float(mean), 'Std': float(std),
-                                'Min': float(min_val), 'Max': float(max_val), 'Median': float(median), 'Q1': float(q1),
-                                'Q3': float(q3)})
+            sum = np.sum(values)
+            stats_list.append({'label': int(label), 'voxel_count': int(count), 'mean': float(mean), 'std': float(std),
+                                'min': float(min_val), 'max': float(max_val), 'sum': float(sum), 'median': float(median),
+                                'quartile_1': float(q1), 'quartile_3': float(q3)})
         stats = pd.DataFrame(stats_list)
 
     # Map label values to names
-    label_names = [label_definitions.get(label, None) for label in stats['Label']]
+    label_names = [label_definitions.get(label, None) for label in stats['label']]
     if None in label_names:
         raise ValueError(f"Undefined labels present in label image {label_image}")
-    stats.insert(stats.columns.get_loc("Label") + 1, "LabelName", label_names)
-    stats['LabelName'] = label_names
+    stats.insert(stats.columns.get_loc("label") + 1, "label_name", label_names)
+    stats['label_name'] = label_names
 
     return stats
 
@@ -2447,11 +2463,13 @@ def retain_labels(label_image, labels_to_keep, work_dir):
     # Load the label image
     labels = ants.image_read(label_image)
 
-    mask = np.isin(labels.numpy(), labels_to_keep)
+    label_arr = labels.numpy()
 
-    new_labels_array = np.where(mask.nonzero(), labels.numpy(), 0)
+    mask = np.isin(label_arr, labels_to_keep)
 
-    new_labels = ants.from_numpy(new_labels_array, origin=labels.origin, spacing=labels.spacing, direction=labels.direction)
+    label_arr[mask == 0] = 0
+
+    new_labels = ants.from_numpy(label_arr, origin=labels.origin, spacing=labels.spacing, direction=labels.direction)
 
     ants.image_write(new_labels, output_label_file)
 
@@ -2480,7 +2498,7 @@ def remove_labels(label_image, labels_to_remove, work_dir):
     Returns:
     --------
     str
-        Path to output label image with the specified labels removed.ß
+        Path to output label image with the specified labels removed.
     """
     tmp_file_prefix = get_temp_file(work_dir, prefix='remove_labels')
 
@@ -2489,11 +2507,13 @@ def remove_labels(label_image, labels_to_remove, work_dir):
     # Load the label image
     labels = ants.image_read(label_image)
 
-    mask = np.isin(labels.numpy(), labels_to_remove)
+    label_arr = labels.numpy()
 
-    new_labels_array = np.where(mask.nonzero(), 0, labels.numpy())
+    mask = np.isin(label_arr, labels_to_remove)
 
-    new_labels = ants.from_numpy(new_labels_array, origin=labels.origin, spacing=labels.spacing, direction=labels.direction)
+    label_arr[mask] = 0
+
+    new_labels = ants.from_numpy(label_arr, origin=labels.origin, spacing=labels.spacing, direction=labels.direction)
 
     ants.image_write(new_labels, output_label_file)
 
@@ -2606,3 +2626,48 @@ def physical_and_voxel_space_consistent(image1, image2, tolerance=1e-5):
     # physical_space_consistency checks origin, spacing, direction, which is almost always sufficient, but
     # if shape is not the same we can return immediately, also maybe catch some edge cases
     return img1.shape == img2.shape and img1.image_physical_space_consistency(img2, tolerance=tolerance)
+
+
+def propagate_labels_through_mask(mask_image, label_image, work_dir, max_propagation_distance=5, topology=0):
+    """Propagate labels through a mask using a fast marching method.
+
+    Parameters:
+    -----------
+    mask_image : str
+        Path to mask image. Labels will be propagated through the non-zero region of this mask.
+    label_image : str
+        Path to label image. Labels should be positive integers representable as uint32. Zero is treated as background.
+    work_dir : str
+        Path to working directory.
+    max_propagation_distance : int, optional
+        Maximum distance to propagate labels, in voxels. Default is 5.
+    topology : int, optional
+        Topology constraint for label propagation. One of 0 (no constraint), 1 (preserve topology), or 2 (no handles).
+
+    Returns:
+    --------
+    str
+        Path to output label image with labels propagated through the mask.
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='propagate_labels')
+
+    output_label_file = f"{tmp_file_prefix}_propagated_labels.nii.gz"
+
+    # Load the label image
+    labels = ants.image_read(label_image)
+
+    # Load the mask image
+    mask = ants.image_read(mask_image)
+
+    if not physical_and_voxel_space_consistent(labels, mask):
+        raise ValueError("Label and mask images must have the same physical space and voxel dimensions.")
+
+    propagated_labels = ants.iMath_propagate_labels_through_mask(mask, labels, max_propagation_distance, topology)
+
+    ants.image_write(propagated_labels, output_label_file)
+
+    if get_verbose():
+        logger.info(f"Labels from {label_image} propagated through {mask_image}")
+        logger.info(f"Output label image saved to {output_label_file}")
+
+    return output_label_file

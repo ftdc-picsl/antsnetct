@@ -104,7 +104,7 @@ def longitudinal_analysis():
     segmentation_parser.add_argument("--atropos-n4-iterations", help="Number of iterations of atropos-n4",
                                      type=int, default=2)
     segmentation_parser.add_argument("--atropos-seg-iterations", help="Number of iterations of the atropos segmentation",
-                                     type=int, default=15)
+                                     type=int, default=10)
     segmentation_parser.add_argument("--atropos-prior-weight", help="Prior weight for Atropos in the session space",
                                      type=float, default=0.5)
     segmentation_parser.add_argument("--prior-smoothing-sigma", help="Sigma for smoothing the priors before session "
@@ -911,7 +911,7 @@ def template_space_derivatives(sst, session_sst_transform, seg_n4, thickness, wo
     sst_space_bids = {}
 
     sst_space_bids['thickness'] = bids_helpers.image_to_bids(thickness_sst_space, session_ref_image_bids.get_ds_path(),
-                                                             sst_space_rel_output_prefix + '_desc-thickness.nii.gz')
+                                                             sst_space_rel_output_prefix + '_desc-cortical_thickness.nii.gz')
 
     # Default to None, no jacobian will be produced if the SST transform is linear
     sst_space_bids['jacobian'] = None
@@ -921,7 +921,7 @@ def template_space_derivatives(sst, session_sst_transform, seg_n4, thickness, wo
 
     if jacobian_sst_space is not None:
         sst_space_bids['jacobian'] = bids_helpers.image_to_bids(jacobian_sst_space, session_ref_image_bids.get_ds_path(),
-                                                                sst_space_rel_output_prefix + '_desc-logjacobian.nii.gz')
+                                                                sst_space_rel_output_prefix + '_desc-log_jacdet.nii.gz')
 
     # gray matter probability
     gm_prob_sst_space = ants_helpers.apply_transforms(sst.get_path(), seg_n4['posteriors'][1].get_path(), session_sst_transform,
@@ -961,7 +961,8 @@ def template_space_derivatives(sst, session_sst_transform, seg_n4, thickness, wo
 
 
         group_space_bids['thickness'] = bids_helpers.image_to_bids(thickness_group_space, session_ref_image_bids.get_ds_path(),
-                                                                   group_space_rel_output_prefix + '_desc-thickness.nii.gz')
+                                                                   group_space_rel_output_prefix +
+                                                                   '_desc-cortical_thickness.nii.gz')
 
         # gray matter probability
         gm_prob_group_space = ants_helpers.apply_transforms(group_template.get_path(), seg_n4['posteriors'][1].get_path(),
@@ -1008,9 +1009,9 @@ def make_sst_jacobian_plots(sst_bids, sst_mask_bids, session_sst_jacobian_bids, 
     tiled_jac_cor = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=jac_rgb, overlay_alpha=0.6,
                                                     axis=1, pad=('mask+5'), slice_spec=(3,'mask','mask'))
     system_helpers.copy_file(tiled_jac_ax, session_sst_jacobian_bids.get_derivative_path_prefix() +
-                             '_space-sst_desc-logjacaxqc.png')
+                             '_space-sst_desc-qcLogJacAx.png')
     system_helpers.copy_file(tiled_jac_cor, session_sst_jacobian_bids.get_derivative_path_prefix() +
-                             '_space-sst_desc-logjaccorqc.png')
+                             '_space-sst_desc-qcLogJacCor.png')
 
 
 def compute_qc_stats(t1w_bids, mask_bids, seg_bids, thick_bids, sst_brain_bids, t1w_brain_sst_space_bids, work_dir,
@@ -1075,7 +1076,7 @@ def compute_qc_stats(t1w_bids, mask_bids, seg_bids, thick_bids, sst_brain_bids, 
     non_csf_fraction = 1.0 - csf_vol / mask_vol
 
     # Write the stats to a TSV file
-    with open(t1w_bids.get_derivative_path_prefix() + '_desc-qcstats.tsv', 'w') as f:
+    with open(t1w_bids.get_derivative_path_prefix() + '_desc-qc_brainstats.tsv', 'w') as f:
         f.write("metric\tvalue\n")
         f.write(f"gm_mean_intensity\t{gm_mean_intensity:.4f}\n")
         f.write(f"wm_mean_intensity\t{wm_mean_intensity:.4f}\n")

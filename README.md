@@ -114,7 +114,7 @@ Some files have metadate stored in a JSON sidecar.
     <td>Composite transform for warping images from the T1w space to the template.</td>
   </tr>
   <tr>
-    <td>seg-antsnetct_desc-thickness.nii.gz</td>
+    <td>seg-antsnetct_desc-cortical_thickness.nii.gz</td>
     <td>Cortical thickness in mm.</td>
   </tr>
   <tr>
@@ -130,11 +130,11 @@ Some files have metadate stored in a JSON sidecar.
     <td>Bias-corrected, denoised image in the template space.</td>
   </tr>
   <tr>
-    <td>space-{template}[_res-{template_res}]_desc-logjacobian.nii.gz</td>
+    <td>space-{template}[_res-{template_res}]_desc-log_jacdet.nii.gz</td>
     <td>Log jacobian of the nonlinear component of the warp to the template, for analysis of nonlinear volume change.</td>
   </tr>
   <tr>
-    <td>space-{template}[_res-{template_res}]_desc-thickness.nii.gz</td>
+    <td>space-{template}[_res-{template_res}]_desc-cortical_thickness.nii.gz</td>
     <td>Cortical thickness in the template space.</td>
   </tr>
   <tr>

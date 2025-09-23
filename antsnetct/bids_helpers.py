@@ -52,7 +52,7 @@ class BIDSImage:
         self._set_derivative_path_prefix()
         self._derivative_rel_path_prefix = os.path.relpath(self._derivative_path_prefix, self._ds_path)
         self._set_metadata_from_sidecar()
-        self._file_entities = bids.layout.parse_file_entities(os.path.basename(self._path))
+        self._set_file_entities()
 
 
     def _set_ds_name(self):
@@ -68,6 +68,59 @@ class BIDSImage:
             raise ValueError("Dataset name ('Name') not found in dataset_description.json")
 
         self._ds_name = ds_description['Name']
+
+
+    def _set_file_entities(self):
+        """
+        Parse a BIDS-like filename into entity-label pairs plus 'suffix' and 'extension'.
+
+        Rules:
+        - Split on '_' into N tokens [0..N-1].
+        - For tokens 0..N-2: split on '-' into exactly two parts (entity, label).
+            Both must be strictly alphanumeric (A-Za-z0-9). Otherwise raise ValueError.
+        - For token N-1: split at the FIRST '.' into [suffix, rest].
+            - suffix must be strictly alphanumeric.
+            - extension is '.' + rest, and must match (?:\\.[A-Za-z0-9]+)+ (e.g., '.nii.gz').
+
+        Returns:
+        dict of {'entity': 'label', ..., 'suffix': <suffix>, 'extension': <extension>}
+        """
+        filename = os.path.basename(self._path)
+        if not filename or "_" not in filename:
+            raise ValueError("Filename must contain at least one '_' separating entities from suffix/extension.")
+
+        tokens = filename.split("_")
+        if len(tokens) < 2:
+            raise ValueError("Filename must have at least one entity-label pair and a suffix/extension.")
+
+        file_entities: dict[str, str] = {}
+
+        # Parse entity-label pairs
+        for part in tokens[:-1]:
+            etokens = part.split("-", 1)
+            if len(etokens) != 2:
+                raise ValueError(f"Invalid entity-label pair (missing single '-'): {part}")
+            entity, label = etokens[0], etokens[1]
+            if not (entity.isalnum() and label.isalnum()):
+                raise ValueError(f"Entity and label must be alphanumeric: {part}")
+            file_entities[entity] = label
+
+        # Parse suffix + extension from the last token
+        last = tokens[-1]
+        dtokens = last.split(".", 1)
+        if len(dtokens) != 2:
+            raise ValueError("Final token must contain a '.' separating suffix and extension.")
+        suffix, ext_rest = dtokens[0], dtokens[1]
+        if not suffix.isalnum():
+            raise ValueError(f"Suffix must be alphanumeric: {suffix}")
+
+        extension = f".{ext_rest}"
+        if re.fullmatch(r"(?:\.[A-Za-z0-9]+)+", extension) is None:
+            raise ValueError(f"Extension must be alphanumeric segments prefixed by dots: {extension}")
+
+        file_entities["suffix"] = suffix
+        file_entities["extension"] = extension
+        self._file_entities = file_entities
 
 
     def _set_metadata_from_sidecar(self):
@@ -987,19 +1040,23 @@ def find_template_transform(fixed_template_name, moving_template_name):
     """
     # use kwarg dict to allow us to use 'from' as a key
     transforms = templateflow.api.get(
-        moving_template_name,
-        **{"from": fixed_template_name},
-        mode="image",
+        fixed_template_name,
+        **{"from": moving_template_name},
         suffix="xfm",
         raise_empty=False
     )
-    if len(transforms) > 0:
-        # return the .h5 warp if both that and a an affine .mat are present
-        for transform in transforms:
-            if transform.endswith('.h5'):
-                return transform
-        # should not get here
-        raise ValueError(f"Cannot choose between multiple transforms from {moving_template_name} to {fixed_template_name}")
+
+    if transforms is not None:
+        if isinstance(transforms, list):
+            # return the .h5 warp if both that and a an affine .mat are present
+            for transform in transforms:
+                transform_str = str(transform)
+                if transform_str.endswith('.h5'):
+                    return transform_str
+            # should not get here
+            raise ValueError(f"Cannot choose between multiple transforms from {moving_template_name} to {fixed_template_name}")
+        else:
+            return str(transforms)
     else:
         return None
 
