@@ -18,11 +18,11 @@ version = "0.5.5dev"
 authors = [{ name = "Philip Cook", email = "cookpa@pennmedicine.upenn.edu" }]
 description = "ANTsPyNet cortical thickness"
 readme = "README.md"
-license = { file="LICENSE" }
+license = 'Apache-2.0'
+license-files = ["LICENSE"]
 keywords = ["ANTsPyNet", "ANTsPy", "neuroimaging", "thickness"]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: Apache 2.0 License",
     "Operating System :: Linux",
 ]
 

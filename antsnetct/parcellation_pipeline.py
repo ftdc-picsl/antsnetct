@@ -251,7 +251,7 @@ def run_parcellation_pipeline():
             # Need to filter on desc-preproc in addition to the default t1w filter
             bids_t1w_filter['desc'] = 'preproc'
             if args.longitudinal:
-                bids_t1w_filter['session'] = '*' # process all sessions, but ignore longitudinal templates
+                bids_t1w_filter['session'] = '.+' # process all sessions, but ignore longitudinal templates (no session key)
 
         if args.session is not None:
             bids_t1w_filter['session'] = args.session
@@ -259,7 +259,8 @@ def run_parcellation_pipeline():
         with tempfile.TemporaryDirectory(suffix=f"antsnetct_bids_{args.participant}.tmpdir") as bids_wd:
             # Have to turn off validation for derivatives
             input_session_preproc_t1w_bids = bids_helpers.find_participant_images(input_dataset, args.participant, bids_wd,
-                                                                                  validate=False, **bids_t1w_filter)
+                                                                                  validate=False, regex_search=True,
+                                                                                  **bids_t1w_filter)
 
     logger.info(f"Using participant images: {[im.get_uri() for im in input_session_preproc_t1w_bids]}")
 
@@ -507,14 +508,11 @@ def atlas_based_parcellation(t1w_bids, brain_mask_bids, atlas_label_config, work
     if thickness_bids is not None:
         cortical_mask = ants_helpers.threshold_image(thickness_bids.get_path(), work_dir, lower=0.001)
 
-    # Now get the transforms from the local template to the session
-    t1w_derivative_basename = os.path.basename(t1w_bids.get_derivative_path_prefix())
-
     if longitudinal:
         ds_path = t1w_bids.get_ds_path()
         subject = t1w_bids.get_entity('sub')
 
-        sst_to_t1w_transform = f"{t1w_derivative_basename}_from-sst_to-T1w_mode-image_xfm.h5"
+        sst_to_t1w_transform = t1w_bids.get_derivative_path_prefix() + '_from-sst_to-T1w_mode-image_xfm.h5'
 
         sst_dir = os.path.join(ds_path, f"sub-{subject}", "anat")
 
@@ -531,6 +529,7 @@ def atlas_based_parcellation(t1w_bids, brain_mask_bids, atlas_label_config, work
             raise ValueError(f"No transforms to group template space found for {t1w_bids.get_uri(relative=False)}")
     else:
         for file in os.listdir(os.path.dirname(t1w_bids.get_path())):
+                t1w_derivative_basename = os.path.basename(t1w_bids.get_derivative_path_prefix())
                 regex = f"{t1w_derivative_basename}_from-([A-Za-z0-9]+)_to-T1w_mode-image_xfm.h5"
                 match = re.match(regex, file)
                 if match:

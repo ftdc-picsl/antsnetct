@@ -1052,15 +1052,17 @@ def compute_qc_stats(t1w_bids, mask_bids, seg_bids, thick_bids, sst_brain_bids, 
     mask_vol = mask_image[mask_image > 0].shape[0] * np.prod(mask_image.spacing) / 1000.0 # volume in ml
     seg_vols = [seg_image[seg_image == i].shape[0] * np.prod(seg_image.spacing) / 1000.0 for i in (2, 3, 8, 9, 10, 11)]
 
+    cgm_mask = seg_image == 8
+
     gm_mean_intensity = t1w_image[cgm_mask].mean()
     wm_mean_intensity = t1w_image[seg_image == 2].mean()
     wm_gm_contrast = wm_mean_intensity / gm_mean_intensity
 
     thick_image = ants_image_read(thick_bids.get_path())
 
-    cgm_mask = thick_image > 0.01
+    thick_mask = thick_image > 0.001
 
-    gm_thickness = thick_image[cgm_mask]
+    gm_thickness = thick_image[thick_mask]
     thick_mean = gm_thickness.mean()
     thick_std = gm_thickness.std()
 
