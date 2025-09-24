@@ -246,3 +246,48 @@ antsApplyTransforms \
     -t sub-01_from-T1w_to-group_template_mode-image_xfm.h5 \
     -t sub-01_ses-01_from-T1w_to-sst_mode-image_xfm.h5
 ```
+
+
+## Post-processing brain parcellation
+
+```
+docker run --rm -it -v /path/to/local/templateflow:/opt/templateflow \
+  -e TEMPLATEFLOW_HOME=/opt/templateflow \
+  -e ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=2 \
+  --entrypoint antsnetct_parcellate \
+  antsnetct:latest --help
+```
+
+### ANTsXNet parcellation
+
+ANTsXNet parcellation is available for DKT31, Harvard-Oxford subcortical, and cerebellum
+segmentation.
+
+
+### Atlas-based parcellation
+
+Labels from any atlas in templateflow can be propagated to the session T1w image, given the
+appropriate transforms. Atlas configuration is done through a JSON file, which specifies the
+template, label image, and options for cortical restriction and propagation. As an
+example,
+```
+{
+    "schaefer2018x100x7": {
+        "template_label": "MNI152NLin2009cAsym",
+        "template_resolution": "01",
+        "atlas_label": "Schaefer2018",
+        "atlas_description": "100Parcels7Networks",
+        "sample_thickness": true,
+        "restrict_to_cortex": true,
+        "propagate_to_cortex": false
+    }
+}
+```
+
+will propagate the Schaefer 100-parcel, 7-network parcellation to the T1w image, from the MNI
+2009cAsym template at 1mm resolution. This requires that the subject / session T1w image
+is either registered to the same template, or is registered to a template that has a
+transform from the MNI152NLin2009cAsym template.
+
+The parcellation will be restricted to the cortical gray matter mask, which is derived from the
+cortical thickness image.
