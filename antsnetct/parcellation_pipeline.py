@@ -94,10 +94,17 @@ def run_parcellation_pipeline():
     Optional keys are:
 
         "template_resolution" - the resolution of the template, e.g. "01"
+
         "atlas_description" - the description of the atlas, e.g. "100Parcels7Networks"
-        sample_thickness - "if true, compute statistics on cortical thickness, if thickness exists for the session"
-        restrict_to_cortex - "if true, restrict the parcellation to the cortical GM label"
-        propagate_to_cortex - "if true, propagate the parcellation to the cortical GM mask of the target image"
+
+        "sample_thickness" - if true, compute statistics on cortical thickness, if thickness exists for the session
+
+        "restrict_to_cortex" - if true, restrict the parcellation to the cortical GM label
+
+        "propagate_to_cortex" - if true, propagate the parcellation to the cortical GM mask of the target image
+
+        "mask_csf" - if true, remove CSF voxels from the parcellation. Use this to remove CSF voxels. Note that using the
+        'restrict_to_cortex' or 'propagate_to_cortex' options makes this redundant.
 
 
     The label_image must exist at the path "{TEMPLATEFLOW_HOME}/tpl-{template_label}/{label_image}". The {label_image} is
@@ -123,11 +130,12 @@ def run_parcellation_pipeline():
         "template_resolution": "01",
         "atlas_label": "BrainColor",
         "atlas_description": "subcortical",
-        "sample_thickness": false
+        "sample_thickness": false,
+        "mask_csf": true,
       }
     }
 
-    All labels are restricted to the mask defined by the antsnetct brain segmentation, excluding CSF.
+    All labels are restricted to the mask defined by the antsnetct brain segmentation.
 
     If thickness is present for the session, it will be used to define a cortical thickness mask. This can be used with the
     "restrict_to_cortex" and "propagate_to_cortex" options. If "restrict_to_cortex" is true, the parcellation will be
@@ -287,10 +295,11 @@ def run_parcellation_pipeline():
                 # Do atlas-based parcellation if requested
                 if atlas_label_config is not None:
                     hoa_parc_bids = t1w_bids.get_derivative_image("_seg-hoa_dseg.nii.gz")
+                    segmentation_bids = t1w_bids.get_derivative_image("_seg-antsnetct_dseg.nii.gz")
                     atlas_ref_t1w_bids = t1w_biascorr_bids if t1w_biascorr_bids is not None else t1w_bids
                     atlas_based_parcellation(atlas_ref_t1w_bids, t1w_brain_mask_bids, atlas_label_config, working_dir,
                                             longitudinal=args.longitudinal, thickness_bids=t1w_thickness_bids,
-                                            hoa_parcellation_bids=hoa_parc_bids)
+                                            hoa_parcellation_bids=hoa_parc_bids, segmentation_bids=segmentation_bids)
 
             except Exception as e:
                 logger.error(f"Caught {type(e)} during processing of {str(t1w_bids)}")
@@ -464,8 +473,8 @@ def parcellate_sst(sst_bids, work_dir):
     raise NotImplementedError("SST parcellation not implemented yet")
 
 
-def atlas_based_parcellation(t1w_bids, brain_mask_bids, atlas_label_config, work_dir, thickness_bids=None, longitudinal=False,
-                             hoa_parcellation_bids=None):
+def atlas_based_parcellation(t1w_bids, brain_mask_bids, atlas_label_config, work_dir, longitudinal=False, thickness_bids=None,
+                             hoa_parcellation_bids=None, segmentation_bids=None):
     """Do atlas-based parcellation on a T1w image.
 
     Parameters:
@@ -486,6 +495,8 @@ def atlas_based_parcellation(t1w_bids, brain_mask_bids, atlas_label_config, work
         Use longitudinal transforms to group template space
     hoa_parcellation_bids : BIDSImage, optional
         Harvard-Oxford parcellation, required if propagate_to_cortex is true for any atlas.
+    segmentation_bids : BIDSImage, optional
+        antsnetct tissue segmentation, required if mask_csf is true for any atlas.
 
     Returns:
     -------
@@ -504,9 +515,13 @@ def atlas_based_parcellation(t1w_bids, brain_mask_bids, atlas_label_config, work
     local_template_name = None
 
     cortical_mask = None
+    not_csf_mask = None
 
     if thickness_bids is not None:
         cortical_mask = ants_helpers.threshold_image(thickness_bids.get_path(), work_dir, lower=0.001)
+
+    if segmentation_bids is not None:
+        not_csf_mask = ants_helpers.threshold_image(segmentation_bids.get_path(), work_dir, 3, 3, 0, 1)
 
     if longitudinal:
         ds_path = t1w_bids.get_ds_path()
@@ -602,6 +617,11 @@ def atlas_based_parcellation(t1w_bids, brain_mask_bids, atlas_label_config, work
             tmp_parcellation = ants_helpers.propagate_labels_through_mask(cortical_mask, tmp_parcellation, work_dir)
             # Now remove the added labels
             parcellation = ants_helpers.remove_labels(tmp_parcellation, tmp_labels, work_dir)
+        if atlas_info.get('mask_csf', False):
+            if segmentation_bids is None:
+                raise ValueError(f"antsnetct tissue segmentation is required for CSF masking of atlas {output_atlas_name}")
+            # Remove CSF voxels from the parcellation
+            parcellation = ants_helpers.apply_mask(parcellation, not_csf_mask, work_dir)
 
         parcellation_bids = bids_helpers.image_to_bids(
             parcellation,
