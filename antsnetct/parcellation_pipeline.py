@@ -698,7 +698,7 @@ def make_label_stats(label_image_bids, label_def_file, work_dir, compute_label_g
             logger.info("Computing scalar stats on image " + scalar.get_uri(relative=False))
             label_stats = ants_helpers.numpy_label_statistics(label_image_bids.get_path(), label_definitions, work_dir,
                                                         scalar.get_path())
-            label_stats_file = label_image_bids.get_derivative_path_prefix() + f"_desc-{scalar_desc}.tsv"
+            label_stats_file = label_image_bids.get_derivative_path_prefix() + f"_desc-{scalar_desc}_labelstats.tsv"
             bids_helpers.write_tabular_data(label_stats, label_stats_file)
             label_stats_output_files.append(label_stats_file)
 
