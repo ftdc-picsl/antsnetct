@@ -67,7 +67,7 @@ def longitudinal_analysis():
     required_parser.add_argument("--cross-sectional-dataset", "--input-dataset", help="BIDS derivatives dataset dir, "
                                  "containing the cross-sectional analysis", type=str, required=True)
     required_parser.add_argument("--output-dataset", help="Output BIDS dataset dir", type=str, required=True)
-    required_parser.add_argument("--participant", help="Participant to process", type=str)
+    required_parser.add_argument("--participant", "--subject", help="Participant to process", type=str)
 
     optional_parser = parser.add_argument_group('General optional arguments')
     optional_parser.add_argument("-h", "--help", action="help", help="show this help message and exit")
@@ -77,9 +77,9 @@ def longitudinal_analysis():
 
     subject_parser = parser.add_argument_group('Input filtering arguments')
     subject_parser.add_argument("--bids-filter-file", help="BIDS filter to apply to the input dataset", type=str, default=None)
-    subject_parser.add_argument("--participant-images", help="Text file containing a list of participant images to process "
-                                 "relative to the cross-sectional dataset. If not provided, all images for the participant "
-                                 "will be processed.", type=str, default=None)
+    subject_parser.add_argument("--participant-images", "--subject-images", help="Text file containing a list of participant "
+                                "images to process relative to the cross-sectional dataset. If not provided, all images for "
+                                "the participant will be processed.", type=str, default=None)
 
     sst_parser = parser.add_argument_group('Single Subject Template arguments')
     sst_parser.add_argument("--sst-transform", help="SST transform, rigid affine or syn", type=str, default='rigid')

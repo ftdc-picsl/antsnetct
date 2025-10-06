@@ -141,7 +141,7 @@ def cross_sectional_analysis():
     required_parser = parser.add_argument_group("Required arguments")
     required_parser.add_argument("--input-dataset", help="Input BIDS dataset dir, containing the source images", type=str,
                           required=True)
-    required_parser.add_argument("--participant", help="Participant to process", type=str, required=True)
+    required_parser.add_argument("--participant", "--subject", help="Participant to process", type=str, required=True)
     required_parser.add_argument("--output-dataset", help="Output BIDS dataset dir", type=str, required=True)
 
     optional_parser = parser.add_argument_group("General optional arguments")

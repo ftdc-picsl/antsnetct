@@ -158,7 +158,7 @@ def run_parcellation_pipeline():
     required_parser = parser.add_argument_group('Required arguments')
     required_parser.add_argument("--input-dataset", "--input-dataset", help="BIDS derivatives dataset dir, "
                                  "containing the antsnetct output", type=str, required=True)
-    required_parser.add_argument("--participant", help="Participant to process", type=str)
+    required_parser.add_argument("--participant", "--subject", help="Participant to process", type=str)
 
     optional_parser = parser.add_argument_group('General optional arguments')
     optional_parser.add_argument("-h", "--help", action="help", help="show this help message and exit")
@@ -170,9 +170,9 @@ def run_parcellation_pipeline():
 
     subject_parser = parser.add_argument_group('Input filtering arguments')
     subject_parser.add_argument("--bids-filter-file", help="BIDS filter to apply to the input dataset", type=str, default=None)
-    subject_parser.add_argument("--participant-images", help="Text file containing a list of participant images to process "
-                                 "relative to the input dataset. If not provided, all images for the participant "
-                                 "will be processed.", type=str, default=None)
+    subject_parser.add_argument("--participant-images","--subject-images", help="Text file containing a list of participant "
+                                "images to process relative to the input dataset. If not provided, all images for the "
+                                "participant will be processed.", type=str, default=None)
     subject_parser.add_argument("--session", help="Process only this session. This overrides any session defined in a "
                                  "BIDS filter file, if any.", type=str, default=None)
     # Maybe add this later - first get sessions done. Not sure how best to handle SST.
@@ -247,7 +247,7 @@ def run_parcellation_pipeline():
             t1w_relpaths = [line.strip() for line in f]
             for relpath in t1w_relpaths:
                 if not os.path.exists(os.path.join(input_dataset, relpath)):
-                    raise ValueError(f"Image {relpath} not found in cross-sectional dataset")
+                    raise ValueError(f"Image {relpath} not found in input dataset")
                 input_session_preproc_t1w_bids.append(bids_helpers.BIDSImage(input_dataset, relpath))
     else:
         bids_t1w_filter = dict()
@@ -393,8 +393,7 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
             dkt_stats = make_label_stats(dkt31_bids, parcellation_results['dkt31']['label_definitions'], work_dir,
                                          scalar_images=dkt_scalar_images, scalar_descriptions=dkt_scalar_descriptions)
 
-            # Need to implement a color scheme to make this useful
-            # cross_sectional_pipeline.make_segmentation_qc_plots(t1w_biascorr_bids, brain_mask_bids, dkt31_bids, work_dir)
+            make_parcellation_qc_plots(t1w_biascorr_bids, brain_mask_bids, dkt31_bids, 'dkt31', 'DKT31', work_dir)
 
     if hoa:
         logger.info("Starting Harvard-Oxford subcortical parcellation")
@@ -425,8 +424,7 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
             hoa_stats = make_label_stats(hoa_bids, parcellation_results['hoa']['label_definitions'], work_dir,
                                          scalar_images=hoa_scalar_images, scalar_descriptions=hoa_scalar_descriptions)
 
-            # Need to implement a color scheme to make this useful
-            # cross_sectional_pipeline.make_segmentation_qc_plots(t1w_biascorr_bids, brain_mask_bids, hoa_bids, work_dir)
+            make_parcellation_qc_plots(t1w_biascorr_bids, brain_mask_bids, hoa_bids, 'hoa', 'HOA', work_dir)
 
     if cerebellum:
 
@@ -441,9 +439,9 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
         else:
             # Create a cerebellum mask from the Harvard-Oxford labels
             cerebellum_mask = ants_helpers.threshold_image(parcellation_results['hoa']['image'].get_path(), work_dir, 29, 32)
-            cerebellum_file = ants_helpers.cerebellum_parcellation(t1w, work_dir, cerebellum_mask)
+            cerebellum_segmentations = ants_helpers.cerebellum_parcellation(t1w, work_dir, cerebellum_mask)
             cerebellum_bids = bids_helpers.image_to_bids(
-                cerebellum_file,
+                cerebellum_segmentations['parcellation'],
                 t1w_bids.get_ds_path(),
                 t1w_bids.get_derivative_rel_path_prefix() + "_seg-cerebellum_dseg.nii.gz",
                 metadata={'Description': 'ANTsPyNet Cerebellum',
@@ -451,7 +449,18 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
                         'Sources': [t1w_bids.get_uri(relative=True),
                                     parcellation_results['hoa']['image'].get_uri(relative=True)]}
                 )
+            # cerebellum three-tissue doesn't look any better than HOA
+            # cerebellum_three_tissue_bids = bids_helpers.image_to_bids(
+            #    cerebellum_segmentations['tissue_segmentation'],
+            #    t1w_bids.get_ds_path(),
+            #    t1w_bids.get_derivative_rel_path_prefix() + "_seg-cerebellum3Tissue_dseg.nii.gz",
+            #    metadata={'Description': 'ANTsPyNet Cerebellum 3-tissue segmentation',
+            #              'Manual': False,
+            #              'Sources': [t1w_bids.get_uri(relative=True),
+            #                          parcellation_results['hoa']['image'].get_uri(relative=True)]}
+            # )
             parcellation_results['cerebellum']['image'] = cerebellum_bids
+            # parcellation_results['cerebellum']['tissue_segmentation_image'] = cerebellum_three_tissue_bids
             parcellation_results['cerebellum']['label_definitions'] = \
                 parcellation_results['cerebellum']['image'].get_path().replace('.nii.gz', '.tsv')
             copy_file(get_label_definitions_path('antspynet_cerebellum'),
@@ -463,8 +472,11 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
                                                 work_dir, scalar_images=cerebellum_scalar_images,
                                                 scalar_descriptions=cerebellum_scalar_descriptions)
 
-            # Need to implement a color scheme to make this useful
-            # cross_sectional_pipeline.make_segmentation_qc_plots(t1w_biascorr_bids, brain_mask_bids, cerebellum_bids, work_dir)
+            make_parcellation_qc_plots(t1w_biascorr_bids, brain_mask_bids, cerebellum_bids, 'cerebellum_parcellation',
+                                       'Cerebellum', work_dir)
+
+            # make_parcellation_qc_plots(t1w_biascorr_bids, brain_mask_bids, cerebellum_three_tissue_bids,
+            #                           'cerebellum_tissue_segmentation', 'Cerebellum3Tissue', work_dir)
 
     return parcellation_results
 
@@ -704,4 +716,52 @@ def make_label_stats(label_image_bids, label_def_file, work_dir, compute_label_g
 
     return label_stats_output_files
 
+
+def make_parcellation_qc_plots(t1w_bids, brain_mask_bids, parcellation_bids, color_map, color_map_title, work_dir):
+    """Make QC plots for a parcellation.
+
+    Parameters:
+    -----------
+    t1w_bids : BIDSImage
+        T1w image to use as background
+    brain_mask_bids : BIDSImage
+        Brain mask for the T1w image
+    parcellation_bids : BIDSImage
+        Parcellation image to plot
+    color_map : str
+        Color map to use for the parcellation. This should be a string supported by
+        ants_helpers.convert_segmentation_image_to_rgb. For example, 'dkt31' or 'hoa'.
+    color_map_title : str
+        Used to name the output png file.
+    work_dir : str
+        Working directory for the plots
+    """
+    logger.info(f"Making QC plots for parcellation {parcellation_bids.get_uri(relative=False)}")
+
+    # Resample everything to 1mm so the PNG plots have a roughly consistent number of slices
+    scalar_image = ants_helpers.resample_image_by_spacing(t1w_bids.get_path(), [1, 1, 1], work_dir)
+
+    mask_image = ants_helpers.resample_image_by_spacing(brain_mask_bids.get_path(), [1, 1, 1], work_dir,
+                                                       interpolation='NearestNeighbor')
+
+    parcellation_image = ants_helpers.resample_image_by_spacing(parcellation_bids.get_path(), [1, 1, 1], work_dir,
+                                                                interpolation='NearestNeighbor')
+
+    # winsorize a bit more aggressively to boost brightness of the brain
+    scalar_image = ants_helpers.winsorize_intensity(scalar_image, mask_image, work_dir, lower_percentile=0.0,
+                                                    upper_iqr_scale=1.5)
+
+    parcellation_rgb = ants_helpers.convert_segmentation_image_to_rgb(parcellation_image, color_map, work_dir)
+
+    output_desc_ax = f"qcParcellation{color_map_title}Ax"
+    output_desc_cor = f"qcParcellation{color_map_title}Cor"
+
+    tiled_ax = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=parcellation_rgb,
+                                                      overlay_alpha=0.25, axis=2, pad=('mask+5'), slice_spec=(3,'mask','mask'))
+    tiled_cor = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=parcellation_rgb,
+                                                       overlay_alpha=0.25, axis=1, pad=('mask+5'), slice_spec=(3,'mask','mask'))
+
+    # Could make these derivatives of T1w or the parcellation, use the latter because that's what we do for the TSV files
+    system_helpers.copy_file(tiled_ax, parcellation_bids.get_derivative_path_prefix() + f"_desc-{output_desc_ax}.png")
+    system_helpers.copy_file(tiled_cor, parcellation_bids.get_derivative_path_prefix() + f"_desc-{output_desc_cor}.png")
 

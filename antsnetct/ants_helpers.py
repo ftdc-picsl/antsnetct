@@ -2036,6 +2036,109 @@ def convert_scalar_image_to_rgb(scalar_image, work_dir, mask=None, colormap='hot
     return rgb_file
 
 
+def convert_segmentation_image_to_rgb(segmentation_image, colormap, work_dir, mask=None):
+    """Convert a segmentation image to an RGB image using a colormap.
+
+    Parameters:
+    -----------
+    segmentation_image : str
+        Path to segmentation image
+    colormap : str or dict
+        Colormap to use. Strings reference pre-defined color maps:
+            'antsct': maps BIDS common segmentation labels to antsct colors.
+            'cerebellum': ANTsPyNet Cerebellar atlas labels.
+            'dkt31': Desikan-Killiany-Tourville 31 cortical labels.
+            'hoa': Harvard-Oxford atlas subcortical labels from ANTsPyNet.
+
+        If a dict, the keys are integer labels in the segmentation image, and the values are RGB triplets.
+        Each triplet should be a list of 3 integers in the range 0-255 for R, G, B. Note that is this different to
+        `convert_scalar_image_to_rgb`, where RGB values are floats in the range 0-1 and the colormap is linearly
+        interpolated across the scalar range. Here, each label is mapped to a specific color.
+    work_dir : str
+        Path to working directory
+    mask : str
+        Path to mask image. If provided, the colormap is only applied to voxels within the mask.
+
+    Returns:
+    --------
+    rgb_image : str
+        Path to RGB image
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='seg_to_rgb')
+
+    builtin_colormaps = {
+        'antsct': {0: [0,0,0], 1: [0,255,0], 2: [0,0,255], 3: [255,0,0], 4: [255,0,0], 5: [255,0,0], 6: [255,0,0], 7: [255,0,0],
+                   8: [0,255,0], 9: [255,255,0], 10: [0,255,255], 11: [255,0,255]},
+        'cerebellum_parcellation': {0: [0, 0, 0], 1: [31, 120, 180], 2: [251, 154, 153], 3: [41, 131, 29], 4: [227, 26, 28],
+                                    5: [178, 223, 138], 6: [255, 127, 0], 7: [166, 206, 227], 8: [202, 178, 214],
+                                    9: [106, 61, 154], 10:  [253, 191, 111], 11:  [255, 255, 153], 12:  [177, 89, 40],
+                                    101: [55, 126, 184], 102: [0, 239, 8], 103: [239, 53, 97], 104: [152, 78, 163],
+                                    105: [230, 159, 0], 106: [166, 86, 40], 107: [247, 129, 191], 108: [77, 158, 234],
+                                    109: [102, 194, 165], 110: [141, 211, 199], 111: [251, 128, 114], 112: [190, 186, 218]},
+        'cerebellum_tissue_segmentation': {0: [0, 0, 0], 1: [0, 255, 0], 2: [0, 0, 255], 3: [255, 0, 0]},
+        'dkt31':{0:[0, 0, 0], 1002: [125, 100, 160], 1003: [100, 25, 0], 1005: [220, 20, 100], 1006: [220, 20, 10],
+                 1007: [180, 220, 140], 1008: [220, 60, 220], 1009: [180, 40, 120], 1010: [140, 20, 140], 1011: [20, 30, 140],
+                 1012: [35, 75, 50], 1013: [225, 140, 140], 1014: [200, 35, 75], 1015: [160, 100, 50], 1016: [20, 220, 60],
+                 1017: [60, 220, 60], 1018: [220, 180, 140], 1019: [20, 100, 50], 1020: [220, 60, 20], 1021: [120, 100, 60],
+                 1022: [220, 20, 20], 1023: [220, 180, 220], 1024: [60, 20, 220], 1025: [160, 140, 180], 1026: [80, 20, 140],
+                 1027: [75, 50, 125], 1028: [20, 220, 160], 1029: [20, 180, 140], 1030: [140, 220, 220], 1031: [80, 160, 20],
+                 1034: [150, 150, 200], 1035: [255, 192, 32], 2002: [125, 100, 160], 2003: [100, 25, 0], 2005: [220, 20, 100],
+                 2006: [220, 20, 10], 2007: [180, 220, 140], 2008: [220, 60, 220], 2009: [180, 40, 120], 2010: [140, 20, 140],
+                 2011: [20, 30, 140], 2012: [35, 75, 50], 2013: [225, 140, 140], 2014: [200, 35, 75], 2015: [160, 100, 50],
+                 2016: [20, 220, 60], 2017: [60, 220, 60], 2018: [220, 180, 140], 2019: [20, 100, 50], 2020: [220, 60, 20],
+                 2021: [120, 100, 60], 2022: [220, 20, 20], 2023: [220, 180, 220], 2024: [60, 20, 220], 2025: [160, 140, 180],
+                 2026: [80, 20, 140], 2027: [75, 50, 125], 2028: [20, 220, 160], 2029: [20, 180, 140], 2030: [140, 220, 220],
+                 2031: [80, 160, 20], 2034: [150, 150, 200], 2035: [255, 192, 32]},
+        'hoa':{0: [0, 0, 0], 1: [120, 18, 134], 2: [120, 18, 134], 3: [175, 135, 175], 4: [204, 182, 142], 5: [42, 204, 164],
+               6: [120, 190, 150], 7: [255, 165, 0], 8: [255, 165, 0], 9: [122, 186, 220], 10: [122, 186, 220],
+               11: [236, 13, 176], 12: [236, 13, 176], 13: [12, 48, 255], 14: [12, 48, 255], 15: [119, 159, 176],
+               16: [0, 118, 14], 17: [0, 118, 14], 18: [196, 58, 250], 19: [196, 58, 250], 20: [220, 216, 20],
+               21: [220, 216, 20], 22: [103, 255, 255], 23: [103, 255, 255], 24: [234, 169, 30], 25: [177, 62, 64],
+               26: [177, 62, 64], 27: [241, 161, 162], 28: [241, 161, 162], 29: [220, 148, 34], 30: [220, 148, 34],
+               31: [220, 248, 164], 32: [220, 248, 164]},
+    }
+
+    color_dict = None
+
+    if isinstance(colormap, str):
+        if colormap.lower() in builtin_colormaps:
+            color_dict = builtin_colormaps[colormap.lower()]
+        else:
+            raise ValueError(f"Colormap {colormap} not recognized. Must be one of: {list(builtin_colormaps.keys())} or a dict.")
+    elif isinstance(colormap, dict):
+        color_dict = colormap
+    else:
+        raise ValueError("Colormap must be a string or a dict.")
+
+    segmentation = ants.image_read(segmentation_image)
+
+    if mask is not None:
+        mask_img = ants.image_read(mask)
+        segmentation = segmentation * mask_img
+
+    # Now iterate over the labels in the color dict and create an RGB image
+    seg_array = segmentation.numpy()
+    rgb_array = np.zeros(segmentation.shape + (3,), dtype=np.uint8)
+
+    # Iterate over voxels in the segmentation image, setting rgb_array values according to the color dict
+    for label, color in color_dict.items():
+        rgb_array[seg_array == label] = np.array(color)
+
+    rgb_image = ants.from_numpy(rgb_array,
+                                origin=segmentation.origin,
+                                spacing=segmentation.spacing,
+                                direction=segmentation.direction,
+                                is_rgb=True)
+
+    output_file = f"{tmp_file_prefix}_rgb.nii.gz"
+    ants.image_write(rgb_image, output_file)
+
+    if get_verbose():
+        logger.info("Segmentation image converted to RGB, saved to {output_file}")
+
+    return output_file
+
+
 def create_tiled_mosaic(scalar_image, mask, work_dir, overlay=None, tile_shape=(-1, -1), overlay_alpha=0.25, axis=2,
                         pad=('mask+4'), slice_spec=(3,'mask+8','mask-8'), flip_spec=(1,1), title_bar_text=None,
                         title_bar_font_size=60):
@@ -2279,12 +2382,13 @@ def cerebellum_parcellation(image, work_dir, cerebellum_mask=None):
 
     Returns:
     -------
-    str
-        Path to parcellated image.
+    dict
+        Dictionary with keys 'parcellation' and 'tissue_segmentation', each containing the path to the respective image.
     """
     tmp_file_prefix = get_temp_file(work_dir, prefix='cerebellar_parcellation')
 
     parcellated_image_file = f"{tmp_file_prefix}_parcellated.nii.gz"
+    tissue_image_file = f"{tmp_file_prefix}_tissue_segmentation.nii.gz"
 
     # Load the image
     img = ants.image_read(image)
@@ -2296,9 +2400,21 @@ def cerebellum_parcellation(image, work_dir, cerebellum_mask=None):
     cerebellar_labels = antspynet.cerebellum_morphology(img, do_preprocessing=True, cerebellum_mask=cerebellum_mask_image,
                                                         compute_thickness_image=False, verbose=get_verbose())
 
-    ants.image_write(cerebellar_labels['parcellation_segmentation_image'], parcellated_image_file)
+    # Map tissue segmentation BIDS common image-derived labels
+    tissue_segmentation = cerebellar_labels['tissue_segmentation_image']
 
-    return parcellated_image_file
+    bids_tissue_segmentation = tissue_segmentation.clone() * 0
+    # Cerebrospinal fluid == 1
+    bids_tissue_segmentation[tissue_segmentation == 1] = 3
+    # Gray matter == 2
+    bids_tissue_segmentation[tissue_segmentation == 2] = 1
+    # White matter == 3
+    bids_tissue_segmentation[tissue_segmentation == 3] = 2
+
+    ants.image_write(cerebellar_labels['parcellation_segmentation_image'], parcellated_image_file)
+    ants.image_write(bids_tissue_segmentation, tissue_image_file)
+
+    return {'parcellation': parcellated_image_file, 'tissue_segmentation': tissue_image_file}
 
 
 def ants_label_statistics(label_image, label_definitions, work_dir, scalar_image=None):
