@@ -449,7 +449,9 @@ def preprocess_t1w(t1w_bids, output_dataset, work_dir, orient='LPI', trim_neck=T
         logger.info("Trimming neck")
         preproc_t1w = preprocessing.trim_neck(preproc_t1w, work_dir)
 
-    preproc_t1w = preprocessing.pad_image(preproc_t1w, work_dir, pad_mm=pad)
+    if pad > 0:
+        logger.info(f"Padding image by {pad} mm")
+        preproc_t1w = preprocessing.pad_image(preproc_t1w, work_dir, pad_mm=pad)
 
     # Copy the preprocessed T1w to the output
     preproc_t1w_bids = bids_helpers.image_to_bids(preproc_t1w, output_dataset, t1w_bids.get_derivative_rel_path_prefix() +

@@ -59,14 +59,13 @@ def run_parcellation_pipeline():
     ANTsPyNet parcellation schemes
     ------------------------------
 
-    The default parcellations are
+    The available parcellations are
 
         DKT31 - cortical parcellation with 31 labels per hemisphere (https://mindboggle.readthedocs.io/en/latest/labels.html).
+        This can optionally be masked by the thickness image to restrict to cortical GM.
 
         Harvard-Oxford Subcortical - Harvard-Oxford subcortical atlas with 48 labels
         (https://github.com/HOA-2/SubcorticalParcellations).
-
-    Optional parcellations are
 
         Cerebellum - cerebellar segmentation into 3 classes (CSF, GM, WM) and lobular parcellation
         (https://www.cobralab.ca/cerebellum-lobules).
@@ -182,6 +181,9 @@ def run_parcellation_pipeline():
 
     label_parser = parser.add_argument_group('AntsXNet parcellation options')
     label_parser.add_argument("--dkt31", help="Do DKT31 parcellation", action=argparse.BooleanOptionalAction, default=False)
+    label_parser.add_argument("--dkt31-masked", help="Use cortical thickness to mask the DKT31 parcellation to cortical GM only. "
+                                 "Requires a cortical thickness image for the session.", action=argparse.BooleanOptionalAction,
+                                 default=False)
     label_parser.add_argument("--hoa", help="Do Harvard-Oxford atlas parcellation. If you are using atlas labels, this may be "
                               "required", action=argparse.BooleanOptionalAction, default=False)
     label_parser.add_argument("--cerebellum", help="Do cerebellum parcellation", action=argparse.BooleanOptionalAction,
@@ -217,6 +219,10 @@ def run_parcellation_pipeline():
     output_dataset = input_dataset
 
     input_dataset_description = None
+
+    mask_dkt31 = args.dkt31_masked
+    if mask_dkt31:
+        args.dkt31 = True
 
     if os.path.exists(os.path.join(input_dataset, 'dataset_description.json')):
         with open(os.path.join(input_dataset, 'dataset_description.json'), 'r') as f:
@@ -288,9 +294,9 @@ def run_parcellation_pipeline():
                 t1w_thickness_bids = t1w_bids.get_derivative_image("_seg-antsnetct_desc-cortical_thickness.nii.gz")
                 t1w_biascorr_bids = t1w_bids.get_derivative_image("_desc-biascorr_T1w.nii.gz")
 
-                antsnet_parc = antsnet_parcellation(t1w_bids, t1w_brain_mask_bids, working_dir, dkt31=args.dkt31, hoa=args.hoa,
-                                                    cerebellum=args.cerebellum, thickness_bids=t1w_thickness_bids,
-                                                    t1w_biascorr_bids=t1w_biascorr_bids)
+                antsnet_parc = antsnet_parcellation(t1w_bids, t1w_brain_mask_bids, working_dir, dkt31=args.dkt31,
+                                                    mask_dkt31=mask_dkt31, hoa=args.hoa, cerebellum=args.cerebellum,
+                                                    thickness_bids=t1w_thickness_bids, t1w_biascorr_bids=t1w_biascorr_bids)
 
                 # Do atlas-based parcellation if requested
                 if atlas_label_config is not None:
@@ -311,8 +317,8 @@ def run_parcellation_pipeline():
                     shutil.copytree(working_dir, debug_workdir)
 
 
-def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=None, t1w_biascorr_bids=None, dkt31=True, hoa=True,
-                         cerebellum=False):
+def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=None, t1w_biascorr_bids=None, dkt31=True,
+                         mask_dkt31=False, hoa=True, cerebellum=False):
     """Do antsnet parcellation on a T1w image.
 
     Parameters:
@@ -331,6 +337,8 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
         better intensity statistics and QC images.
     dkt31 : bool
         Do DKT31 parcellation.
+    mask_dkt31 : bool
+        Use cortical thickness to mask the DKT31 parcellation to cortical GM only. Requires a cortical thickness image.
     hoa : bool
         Do Harvard-Oxford atlas parcellation.
     cerebellum : bool
@@ -372,11 +380,21 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
             parcellation_results['dkt31']['label_definitions'] = dkt31_bids.get_path().replace('.nii.gz', '.tsv')
         else:
             dkt31_file = ants_helpers.desikan_killiany_tourville_parcellation(t1w, work_dir, brain_mask)
+            dkt31_description = 'ANTsPyNet DKT31'
+
+            if mask_dkt31:
+                if thickness_bids is None:
+                    raise ValueError("Cortical thickness image is required to mask DKT31 parcellation")
+                logger.info("Masking DKT31 parcellation with cortical thickness image")
+                thickness_mask = ants_helpers.threshold_image(thickness_bids.get_path(), work_dir, lower=0.001)
+                dkt31_file = ants_helpers.apply_mask(dkt31_file, thickness_mask, work_dir)
+                dkt31_description = 'ANTsPyNet DKT31 masked with cortical thickness'
+
             dkt31_bids = bids_helpers.image_to_bids(
                 dkt31_file,
                 t1w_bids.get_ds_path(),
                 t1w_bids.get_derivative_rel_path_prefix() + "_seg-dkt31_dseg.nii.gz",
-                metadata={'Description': 'ANTsPyNet DKT31', 'Manual': False, 'Sources': [t1w_bids.get_uri(relative=True)]}
+                metadata={'Description': dkt31_description, 'Manual': False, 'Sources': [t1w_bids.get_uri(relative=True)]}
             )
             parcellation_results['dkt31']['image'] = dkt31_bids
             parcellation_results['dkt31']['label_definitions'] = dkt31_bids.get_path().replace('.nii.gz', '.tsv')
