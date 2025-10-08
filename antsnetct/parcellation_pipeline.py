@@ -71,6 +71,12 @@ def run_parcellation_pipeline():
         (https://www.cobralab.ca/cerebellum-lobules).
 
 
+    As with atlas-based parcellations (see below), these parcellations can be post-processed using the thickness or
+    segmentation images. The DKT31 parcellation can be masked or propagated to cortical GM. Propagation requires HOA labels to
+    be computed first (see "Cortical propagation into hippocampus and amygdala" below). The HOA parcellation can be masked to
+    remove CSF voxels, similar to the "mask_csf" option for atlas labels.
+
+
     Configuration of atlas parcellation
     -----------------------------------
 
@@ -181,11 +187,16 @@ def run_parcellation_pipeline():
 
     label_parser = parser.add_argument_group('AntsXNet parcellation options')
     label_parser.add_argument("--dkt31", help="Do DKT31 parcellation", action=argparse.BooleanOptionalAction, default=False)
-    label_parser.add_argument("--dkt31-masked", help="Use cortical thickness to mask the DKT31 parcellation to cortical GM only. "
-                                 "Requires a cortical thickness image for the session.", action=argparse.BooleanOptionalAction,
-                                 default=False)
+    label_parser.add_argument("--dkt31-masked", help="Use cortical thickness to mask the DKT31 parcellation to cortical GM. "
+                              "Requires a cortical thickness image for the session.", action=argparse.BooleanOptionalAction,
+                              default=False)
+    label_parser.add_argument("--dkt31-propagated", help="Propagate the DKT parcellation to cortical GM. Requires a cortical "
+                              "thickness image for the session.", action=argparse.BooleanOptionalAction,
+                              default=False)
     label_parser.add_argument("--hoa", help="Do Harvard-Oxford atlas parcellation. If you are using atlas labels, this may be "
                               "required", action=argparse.BooleanOptionalAction, default=False)
+    label_parser.add_argument("--hoa-masked", help="Mask out CSF from HOA labels. Requires antsnetct tissue segmentation.",
+                              action=argparse.BooleanOptionalAction, default=False)
     label_parser.add_argument("--cerebellum", help="Do cerebellum parcellation", action=argparse.BooleanOptionalAction,
                               default=False)
 
@@ -317,8 +328,9 @@ def run_parcellation_pipeline():
                     shutil.copytree(working_dir, debug_workdir)
 
 
-def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=None, t1w_biascorr_bids=None, dkt31=True,
-                         mask_dkt31=False, hoa=True, cerebellum=False):
+def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=None, segmentation_bids=None,
+                         t1w_biascorr_bids=None, dkt31=True, mask_dkt31=False, propagate_dkt31=False, hoa=True, mask_hoa=False,
+                         cerebellum=False):
     """Do antsnet parcellation on a T1w image.
 
     Parameters:
@@ -332,6 +344,8 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
         Working directory for the parcellation.
     thickness_bids : BIDSImage
         BIDS image object for the cortical thickness image. This is used for stats.
+    segmentation_bids : BIDSImage
+        BIDS image object for the antsnetct tissue segmentation. This is used to mask the HOA parcellation to remove CSF.
     t1w_biascorr_bids : BIDSImage
         BIDS image object for the N4 bias-corrected T1w image. If None, the input T1w image is used. This is used to get
         better intensity statistics and QC images.
@@ -339,8 +353,13 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
         Do DKT31 parcellation.
     mask_dkt31 : bool
         Use cortical thickness to mask the DKT31 parcellation to cortical GM only. Requires a cortical thickness image.
+    propagate_dkt31 : bool
+        Propagate the DKT31 parcellation to cortical GM. Requires a cortical thickness image. This requires the HOA
+        parcellation to be done first, so if propagate_dkt31 is true, hoa will be set to true.
     hoa : bool
         Do Harvard-Oxford atlas parcellation.
+    mask_hoa : bool
+        Mask out CSF from the HOA parcellation. Requires antsnetct tissue segmentation.
     cerebellum : bool
         Do cerebellum parcellation (requires hoa).
 
@@ -363,11 +382,59 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
 
     brain_mask = brain_mask_bids.get_path()
 
-    # Do the parcellation
     parcellation_results = dict()
+
+    thickness_mask = None
+    not_csf_mask = None
 
     if cerebellum:
         hoa = True  # cerebellum parcellation requires hoa
+    if mask_dkt31 or propagate_dkt31:
+        hoa = True  # dkt31 masking or propagation requires hoa
+        if thickness_bids is None:
+            raise ValueError("Cortical thickness image is required to mask DKT31 parcellation")
+        thickness_mask = ants_helpers.threshold_image(thickness_bids.get_path(), work_dir, lower=0.001)
+    if mask_hoa:
+        if segmentation_bids is None:
+            raise ValueError("antsnetct segmentation is required to mask HOA parcellation")
+        not_csf_mask = ants_helpers.threshold_image(segmentation_bids.get_path(), work_dir, 3, 3, 0, 1)
+
+    if hoa:
+        logger.info("Starting Harvard-Oxford subcortical parcellation")
+        hoa_bids = t1w_bids.get_derivative_image("_seg-hoa_dseg.nii.gz")
+        parcellation_results['hoa'] = dict()
+
+        if hoa_bids is not None:
+            logger.info("Harvard-Oxford parcellation already exists at " + hoa_bids.get_uri(relative=False))
+            parcellation_results['hoa']['image'] = hoa_bids
+            parcellation_results['hoa']['label_definitions'] = hoa_bids.get_path().replace('.nii.gz', '.tsv')
+        else:
+            hoa_file = ants_helpers.harvard_oxford_subcortical_parcellation(t1w, work_dir, brain_mask)
+            hoa_description = 'ANTsPyNet Harvard-Oxford Subcortical'
+            hoa_sources = [t1w_bids.get_uri(relative=True)]
+            if mask_hoa:
+                hoa_file = ants_helpers.apply_mask(hoa_file, not_csf_mask, work_dir)
+                hoa_description = 'ANTsPyNet Harvard-Oxford Subcortical masked with not CSF',
+                hoa_sources.append(segmentation_bids.get_uri(relative=True))
+            hoa_bids = bids_helpers.image_to_bids(
+                hoa_file,
+                t1w_bids.get_ds_path(),
+                t1w_bids.get_derivative_rel_path_prefix() + "_seg-hoa_dseg.nii.gz",
+                metadata={'Description': hoa_description,
+                          'Manual': False,
+                          'Sources': hoa_sources}
+            )
+            parcellation_results['hoa']['image'] = hoa_bids
+            parcellation_results['hoa']['label_definitions'] = hoa_bids.get_path().replace('.nii.gz', '.tsv')
+            copy_file(get_label_definitions_path('hoa_subcortical'),
+                        parcellation_results['hoa']['label_definitions'])
+
+            hoa_scalar_images = [t1w_biascorr_bids]
+            hoa_scalar_descriptions = ['t1wIntensity']
+            hoa_stats = make_label_stats(hoa_bids, parcellation_results['hoa']['label_definitions'], work_dir,
+                                         scalar_images=hoa_scalar_images, scalar_descriptions=hoa_scalar_descriptions)
+
+            make_parcellation_qc_plots(t1w_biascorr_bids, brain_mask_bids, hoa_bids, 'hoa', 'HOA', work_dir)
 
     if dkt31:
         logger.info("Starting DKT31 parcellation")
@@ -381,20 +448,29 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
         else:
             dkt31_file = ants_helpers.desikan_killiany_tourville_parcellation(t1w, work_dir, brain_mask)
             dkt31_description = 'ANTsPyNet DKT31'
-
+            dkt31_sources = [t1w_bids.get_uri(relative=True)]
             if mask_dkt31:
-                if thickness_bids is None:
-                    raise ValueError("Cortical thickness image is required to mask DKT31 parcellation")
                 logger.info("Masking DKT31 parcellation with cortical thickness image")
-                thickness_mask = ants_helpers.threshold_image(thickness_bids.get_path(), work_dir, lower=0.001)
+
                 dkt31_file = ants_helpers.apply_mask(dkt31_file, thickness_mask, work_dir)
                 dkt31_description = 'ANTsPyNet DKT31 masked with cortical thickness'
+                dkt31_sources.extend([thickness_bids.get_uri(relative=True)])
+            if propagate_dkt31:
+                logger.info("Propagating DKT31 parcellation to cortical GM")
+                # Fill hippocampus and amygdala using HOA labels to prevent propagation of cortical labels into these structures
+                [tmp_dkt31, tmp_labels] = ants_helpers.add_labels_to_segmentation(dkt31_file, hoa_file, [20,21,22,23],
+                                                                                         work_dir)
+                tmp_dkt31 = ants_helpers.propagate_labels_through_mask(thickness_mask, tmp_parcellation, work_dir)
+                # Now remove the added labels
+                tmp_dkt31 = ants_helpers.remove_labels(tmp_dkt31, tmp_labels, work_dir)
+                dkt31_description = 'ANTsPyNet DKT31 propagated to cortical thickness mask'
+                dkt31_sources.extend([hoa_bids.get_uri(relative=True), thickness_bids.get_uri(relative=True)])
 
             dkt31_bids = bids_helpers.image_to_bids(
                 dkt31_file,
                 t1w_bids.get_ds_path(),
                 t1w_bids.get_derivative_rel_path_prefix() + "_seg-dkt31_dseg.nii.gz",
-                metadata={'Description': dkt31_description, 'Manual': False, 'Sources': [t1w_bids.get_uri(relative=True)]}
+                metadata={'Description': dkt31_description, 'Manual': False, 'Sources': dkt31_sources}
             )
             parcellation_results['dkt31']['image'] = dkt31_bids
             parcellation_results['dkt31']['label_definitions'] = dkt31_bids.get_path().replace('.nii.gz', '.tsv')
@@ -413,36 +489,6 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
 
             make_parcellation_qc_plots(t1w_biascorr_bids, brain_mask_bids, dkt31_bids, 'dkt31', 'DKT31', work_dir)
 
-    if hoa:
-        logger.info("Starting Harvard-Oxford subcortical parcellation")
-        hoa_bids = t1w_bids.get_derivative_image("_seg-hoa_dseg.nii.gz")
-        parcellation_results['hoa'] = dict()
-
-        if hoa_bids is not None:
-            logger.info("Harvard-Oxford parcellation already exists at " + hoa_bids.get_uri(relative=False))
-            parcellation_results['hoa']['image'] = hoa_bids
-            parcellation_results['hoa']['label_definitions'] = hoa_bids.get_path().replace('.nii.gz', '.tsv')
-        else:
-            hoa_file = ants_helpers.harvard_oxford_subcortical_parcellation(t1w, work_dir, brain_mask)
-            hoa_bids = bids_helpers.image_to_bids(
-                hoa_file,
-                t1w_bids.get_ds_path(),
-                t1w_bids.get_derivative_rel_path_prefix() + "_seg-hoa_dseg.nii.gz",
-                metadata={'Description': 'ANTsPyNet Harvard-Oxford Subcortical',
-                          'Manual': False,
-                          'Sources': [t1w_bids.get_uri(relative=True)]}
-            )
-            parcellation_results['hoa']['image'] = hoa_bids
-            parcellation_results['hoa']['label_definitions'] = hoa_bids.get_path().replace('.nii.gz', '.tsv')
-            copy_file(get_label_definitions_path('hoa_subcortical'),
-                        parcellation_results['hoa']['label_definitions'])
-
-            hoa_scalar_images = [t1w_biascorr_bids]
-            hoa_scalar_descriptions = ['t1wIntensity']
-            hoa_stats = make_label_stats(hoa_bids, parcellation_results['hoa']['label_definitions'], work_dir,
-                                         scalar_images=hoa_scalar_images, scalar_descriptions=hoa_scalar_descriptions)
-
-            make_parcellation_qc_plots(t1w_biascorr_bids, brain_mask_bids, hoa_bids, 'hoa', 'HOA', work_dir)
 
     if cerebellum:
 

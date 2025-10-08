@@ -44,5 +44,3 @@ repository = "https://github.com/ftdc-picsl/antsnetct"
 [project.scripts]
 antsnetct = "antsnetct.run:main"
 antsnetct_parcellate = "antsnetct.run_parcellation:main"
-# To be added later
-# antsnetct_labelstats = "antsnetct.run_label_stats:main"
