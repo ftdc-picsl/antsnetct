@@ -74,7 +74,7 @@ def run_parcellation_pipeline():
     As with atlas-based parcellations (see below), these parcellations can be post-processed using the thickness or
     segmentation images. The DKT31 parcellation can be masked or propagated to cortical GM. Propagation requires HOA labels to
     be computed first (see "Cortical propagation into hippocampus and amygdala" below). The HOA parcellation can be masked to
-    remove CSF voxels, similar to the "mask_csf" option for atlas labels.
+    remove CSF voxels from non-CSF labels, similar to the "mask_csf" option for atlas labels.
 
 
     Configuration of atlas parcellation
@@ -231,8 +231,7 @@ def run_parcellation_pipeline():
 
     input_dataset_description = None
 
-    mask_dkt31 = args.dkt31_masked
-    if mask_dkt31:
+    if args.dkt31_masked or args.dkt31_propagated:
         args.dkt31 = True
 
     if os.path.exists(os.path.join(input_dataset, 'dataset_description.json')):
@@ -304,10 +303,13 @@ def run_parcellation_pipeline():
 
                 t1w_thickness_bids = t1w_bids.get_derivative_image("_seg-antsnetct_desc-cortical_thickness.nii.gz")
                 t1w_biascorr_bids = t1w_bids.get_derivative_image("_desc-biascorr_T1w.nii.gz")
+                seg_bids = t1w_bids.get_derivative_image("_seg-antsnetct_dseg.nii.gz")
 
                 antsnet_parc = antsnet_parcellation(t1w_bids, t1w_brain_mask_bids, working_dir, dkt31=args.dkt31,
-                                                    mask_dkt31=mask_dkt31, hoa=args.hoa, cerebellum=args.cerebellum,
-                                                    thickness_bids=t1w_thickness_bids, t1w_biascorr_bids=t1w_biascorr_bids)
+                                                    mask_dkt31=args.dkt31_masked, propagate_dkt31=args.dkt31_propagated,
+                                                    hoa=args.hoa, mask_hoa=args.hoa_masked, cerebellum=args.cerebellum,
+                                                    segmentation_bids=seg_bids, thickness_bids=t1w_thickness_bids,
+                                                    t1w_biascorr_bids=t1w_biascorr_bids)
 
                 # Do atlas-based parcellation if requested
                 if atlas_label_config is not None:
@@ -397,7 +399,6 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
     if mask_hoa:
         if segmentation_bids is None:
             raise ValueError("antsnetct segmentation is required to mask HOA parcellation")
-        not_csf_mask = ants_helpers.threshold_image(segmentation_bids.get_path(), work_dir, 3, 3, 0, 1)
 
     if hoa:
         logger.info("Starting Harvard-Oxford subcortical parcellation")
@@ -413,8 +414,8 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
             hoa_description = 'ANTsPyNet Harvard-Oxford Subcortical'
             hoa_sources = [t1w_bids.get_uri(relative=True)]
             if mask_hoa:
-                hoa_file = ants_helpers.apply_mask(hoa_file, not_csf_mask, work_dir)
-                hoa_description = 'ANTsPyNet Harvard-Oxford Subcortical masked with not CSF',
+                hoa_file = remove_csf_from_hoa_tissue_labels(hoa_file, segmentation_bids.get_path(), work_dir)
+                hoa_description = 'ANTsPyNet Harvard-Oxford Subcortical, tissue labels masked to remove CSF voxels',
                 hoa_sources.append(segmentation_bids.get_uri(relative=True))
             hoa_bids = bids_helpers.image_to_bids(
                 hoa_file,
@@ -460,9 +461,9 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
                 # Fill hippocampus and amygdala using HOA labels to prevent propagation of cortical labels into these structures
                 [tmp_dkt31, tmp_labels] = ants_helpers.add_labels_to_segmentation(dkt31_file, hoa_file, [20,21,22,23],
                                                                                          work_dir)
-                tmp_dkt31 = ants_helpers.propagate_labels_through_mask(thickness_mask, tmp_parcellation, work_dir)
-                # Now remove the added labels
-                tmp_dkt31 = ants_helpers.remove_labels(tmp_dkt31, tmp_labels, work_dir)
+                tmp_dkt31 = ants_helpers.propagate_labels_through_mask(thickness_mask, tmp_dkt31, work_dir)
+                # Now remove the added labels to make the final output
+                dkt31_file = ants_helpers.remove_labels(tmp_dkt31, tmp_labels, work_dir)
                 dkt31_description = 'ANTsPyNet DKT31 propagated to cortical thickness mask'
                 dkt31_sources.extend([hoa_bids.get_uri(relative=True), thickness_bids.get_uri(relative=True)])
 
@@ -829,3 +830,36 @@ def make_parcellation_qc_plots(t1w_bids, brain_mask_bids, parcellation_bids, col
     system_helpers.copy_file(tiled_ax, parcellation_bids.get_derivative_path_prefix() + f"_desc-{output_desc_ax}.png")
     system_helpers.copy_file(tiled_cor, parcellation_bids.get_derivative_path_prefix() + f"_desc-{output_desc_cor}.png")
 
+
+def remove_csf_from_hoa_tissue_labels(hoa_file, segmentation_file, work_dir):
+    """Masks out CSF from tissue labels in the Harvard-Oxford parcellation using the antsnetct tissue segmentation.
+
+    This does not operate on CSF labels eg (CSF, lateral ventricle) in the HOA parcellation. It only removes CSF voxels from
+    tissue labels.
+
+    Parameters:
+    -----------
+    hoa_file : str
+        Path to the Harvard-Oxford parcellation image
+    segmentation_file : str
+        Path to the antsnetct tissue segmentation image
+    work_dir : str
+        Working directory for intermediate files
+
+    Returns:
+    -------
+    str: path to the modified HOA parcellation with CSF labels removed
+    """
+    # Create a mask of non-CSF voxels from the segmentation
+    not_csf_mask = ants_helpers.threshold_image(segmentation_file, work_dir, 3, 3, 0, 1)
+
+    csf_labels = [1,2,3,4,5,6,18,19]
+    csf_hoa = ants_helpers.retain_labels(hoa_file, csf_labels, work_dir)
+    # Apply the mask to the HOA parcellation
+    hoa_nocsf = ants_helpers.apply_mask(hoa_file, not_csf_mask, work_dir)
+
+    # Add back the CSF labels
+    [hoa_masked_with_csf, hoa_csf_indices] = ants_helpers.add_labels_to_segmentation(hoa_nocsf, csf_hoa, csf_labels, work_dir,
+                                                                                     unique_label_indices=False)
+
+    return hoa_masked_with_csf

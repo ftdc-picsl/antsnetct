@@ -2466,7 +2466,7 @@ def ants_label_statistics(label_image, label_definitions, work_dir, scalar_image
         stats = ants.label_geometry_measures(labels)
         # Output in BIDS snake case, and fix some unfortunate ANTs naming choices
         stats = stats.rename(columns={'Label': 'label', 'VolumeInVoxels': 'voxel_count',
-                                      'VolumeInMillimetersCubed': 'volume_mm3',
+                                      'VolumeInMillimeters': 'volume_mm3',
                                       'SurfaceAreaInMillimetersSquared': 'surface_area_mm2', 'Eccentricity': 'eccentricity',
                                       'Elongation': 'elongation', 'Roundness': 'roundness', 'Flatness': 'flatness'})
 
@@ -2510,7 +2510,7 @@ def numpy_label_statistics(label_image, label_definitions, work_dir, scalar_imag
         # Just do label geometry stats
         stats = ants.label_geometry_measures(label_im)
         stats = stats.rename(columns={'Label': 'label', 'VolumeInVoxels': 'voxel_count',
-                                      'VolumeInMillimetersCubed': 'volume_mm3',
+                                      'VolumeInMillimeters': 'volume_mm3',
                                       'SurfaceAreaInMillimetersSquared': 'surface_area_mm2', 'Eccentricity': 'eccentricity',
                                       'Elongation': 'elongation', 'Roundness': 'roundness', 'Flatness': 'flatness'})
     else:
@@ -2590,10 +2590,7 @@ def retain_labels(label_image, labels_to_keep, work_dir):
     ants.image_write(new_labels, output_label_file)
 
     if get_verbose():
-        if invert:
-            logger.info(f"Retained all labels except {labels_to_keep}")
-        else:
-            logger.info(f"Retained labels {labels_to_keep}")
+        logger.info(f"Retained labels {labels_to_keep}")
         logger.info(f"Output label image saved to {output_label_file}")
 
     return output_label_file
@@ -2655,7 +2652,8 @@ def add_labels_to_segmentation(src_image, label_image, labels_to_add, work_dir, 
         Path to working directory.
     unique_label_indices : bool, optional
         If True, the labels to add are remapped to unique indices starting from max(label_image)+1.
-        If False, the labels are added as-is. Default is True.
+        If False, the labels are added as-is. Default is True, which avoids label collisions. Set to False to add labels
+        that are already defined in the source image.
     background_label : int, optional
         Label value in label_image that is considered background, and can be replaced by the new labels.
 
