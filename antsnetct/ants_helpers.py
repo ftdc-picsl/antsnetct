@@ -2420,7 +2420,7 @@ def cerebellum_parcellation(image, work_dir, cerebellum_mask=None):
 def ants_label_statistics(label_image, label_definitions, work_dir, scalar_image=None):
     """Calculate statistics for each label in a label image. Uses ITK label stats filters (fast, but no median)
 
-    WARNING: untested code - might be best to not use this for now
+    WARNING: untested code - we are using numpy. This doesn't produce any output for missing labels
 
     Parameters:
     -----------
@@ -2440,7 +2440,7 @@ def ants_label_statistics(label_image, label_definitions, work_dir, scalar_image
     """
     tmp_file_prefix = get_temp_file(work_dir, prefix='label_statistics')
 
-    logger.warning("untested prototype code - this uses ITK filters (faster than numpy) but has not been fully tested")
+    logger.warning("Untested prototype code - this uses ITK filters (faster than numpy) but has not been fully tested")
 
     # Load the label image
     labels = ants.image_read(label_image)
@@ -2512,7 +2512,21 @@ def numpy_label_statistics(label_image, label_definitions, work_dir, scalar_imag
         stats = stats.rename(columns={'Label': 'label', 'VolumeInVoxels': 'voxel_count',
                                       'VolumeInMillimeters': 'volume_mm3',
                                       'SurfaceAreaInMillimetersSquared': 'surface_area_mm2', 'Eccentricity': 'eccentricity',
-                                      'Elongation': 'elongation', 'Roundness': 'roundness', 'Flatness': 'flatness'})
+                                      'Elongation': 'elongation', 'Roundness': 'roundness', 'Flatness': 'flatness',
+                                      'Centroid_x': 'centroid_x', 'Centroid_y': 'centroid_y', 'Centroid_z': 'centroid_z',
+                                      'AxesLength_x': 'axes_length_x', 'AxesLength_y': 'axes_length_y',
+                                      'AxesLength_z': 'axes_length_z', 'BoundingBoxLower_x': 'bounding_box_lower_x',
+                                      'BoundingBoxLower_y': 'bounding_box_lower_y',
+                                      'BoundingBoxLower_z': 'bounding_box_lower_z',
+                                      'BoundingBoxUpper_x': 'bounding_box_upper_x',
+                                      'BoundingBoxUpper_y': 'bounding_box_upper_y',
+                                      'BoundingBoxUpper_z': 'bounding_box_upper_z'})
+
+        # Drop unwanted intensity-related columns
+        stats = stats.drop(columns=['MeanIntensity', 'SigmaIntensity', 'MinIntensity', 'MaxIntensity', 'IntegratedIntensity'],
+                           errors='ignore')
+
+        stats = stats.convert_dtypes() # convert_dtypes allows NA for missing labels
     else:
         scalar_im = ants.image_read(scalar_image)
         if not physical_and_voxel_space_consistent(label_im, scalar_im):
@@ -2543,7 +2557,7 @@ def numpy_label_statistics(label_image, label_definitions, work_dir, scalar_imag
             stats_list.append({'label': int(label), 'voxel_count': int(count), 'mean': float(mean), 'std': float(std),
                                 'min': float(min_val), 'max': float(max_val), 'sum': float(sum), 'median': float(median),
                                 'quartile_1': float(q1), 'quartile_3': float(q3)})
-        stats = pd.DataFrame(stats_list)
+        stats = pd.DataFrame(stats_list).convert_dtypes() # convert_dtypes allows NA for missing labels
 
     # Map label values to names
     label_names = [label_definitions.get(label, None) for label in stats['label']]
@@ -2551,6 +2565,27 @@ def numpy_label_statistics(label_image, label_definitions, work_dir, scalar_imag
         raise ValueError(f"Undefined labels present in label image {label_image}")
     stats.insert(stats.columns.get_loc("label") + 1, "label_name", label_names)
     stats['label_name'] = label_names
+
+    # Add rows for labels missing from the image but present in the definitions (exclude 0 for background)
+    defined_labels = {int(k) for k in label_definitions.keys() if int(k) != 0}
+    present_labels = set(map(int, stats['label'].tolist()))
+    missing_labels = sorted(defined_labels - present_labels)
+
+    if missing_labels:
+        # Build NA rows matching current columns
+        cols = list(stats.columns)
+        na_rows = []
+        for lab in missing_labels:
+            row = {c: pd.NA for c in cols}
+            row['label'] = int(lab)
+            row['label_name'] = label_definitions[int(lab)]
+            na_rows.append(row)
+        # Need to tell pandas the dtypes because na_rows has columns that are only NA
+        na_df = pd.DataFrame(na_rows, columns=cols).astype(stats.dtypes.to_dict())
+        stats = pd.concat([stats, na_df], ignore_index=True)
+
+    # sort by label
+    stats = stats.sort_values('label', kind='stable').reset_index(drop=True)
 
     return stats
 

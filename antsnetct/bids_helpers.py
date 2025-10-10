@@ -1126,4 +1126,4 @@ def write_tabular_data(df: pd.DataFrame, path: str):
     path : str
         The path to the TSV file to write.
     """
-    df.to_csv(path, sep='\t', index=False, na_rep='n/a', encoding='utf-8', lineterminator='\n')
+    df.to_csv(path, sep='\t', index=False, na_rep='NA', encoding='utf-8', lineterminator='\n')
