@@ -14,6 +14,7 @@ import json
 import logging
 import numpy as np
 import os
+from PIL import Image, ImageDraw, ImageFont
 import shutil
 import sys
 import tempfile
@@ -140,7 +141,7 @@ def cross_sectional_analysis():
     required_parser = parser.add_argument_group("Required arguments")
     required_parser.add_argument("--input-dataset", help="Input BIDS dataset dir, containing the source images", type=str,
                           required=True)
-    required_parser.add_argument("--participant", help="Participant to process", type=str, required=True)
+    required_parser.add_argument("--participant", "--subject", help="Participant to process", type=str, required=True)
     required_parser.add_argument("--output-dataset", help="Output BIDS dataset dir", type=str, required=True)
 
     optional_parser = parser.add_argument_group("General optional arguments")
@@ -196,7 +197,7 @@ def cross_sectional_analysis():
     segmentation_parser.add_argument("--atropos-n4-iterations", help="Number of iterations of the atropos-n4 loop",
                                      type=int, default=2)
     segmentation_parser.add_argument("--atropos-seg-iterations", help="Number of iterations of the atropos segmentation",
-                                     type=int, default=15)
+                                     type=int, default=10)
     segmentation_parser.add_argument("--atropos-prior-weight", help="Prior weight for Atropos", type=float, default=0.25)
     segmentation_parser.add_argument("--prior-smoothing-sigma", help="Sigma for smoothing the priors, in voxels. Experimental",
                                      type=float, default=0)
@@ -448,7 +449,9 @@ def preprocess_t1w(t1w_bids, output_dataset, work_dir, orient='LPI', trim_neck=T
         logger.info("Trimming neck")
         preproc_t1w = preprocessing.trim_neck(preproc_t1w, work_dir)
 
-    preproc_t1w = preprocessing.pad_image(preproc_t1w, work_dir, pad_mm=pad)
+    if pad > 0:
+        logger.info(f"Padding image by {pad} mm")
+        preproc_t1w = preprocessing.pad_image(preproc_t1w, work_dir, pad_mm=pad)
 
     # Copy the preprocessed T1w to the output
     preproc_t1w_bids = bids_helpers.image_to_bids(preproc_t1w, output_dataset, t1w_bids.get_derivative_rel_path_prefix() +
@@ -895,7 +898,7 @@ def cortical_thickness(seg_n4, work_dir, thickness_iterations=45):
 
     thickness_bids = bids_helpers.image_to_bids(thickness, seg_n4['segmentation_image'].get_ds_path(),
                                                 seg_n4['segmentation_image'].get_derivative_rel_path_prefix() +
-                                                '_desc-thickness.nii.gz', metadata=thickness_metadata)
+                                                '_desc-cortical_thickness.nii.gz', metadata=thickness_metadata)
 
     return thickness_bids
 
@@ -1040,7 +1043,7 @@ def template_space_derivatives(template, template_reg, seg_n4, thickness, work_d
     template_space_bids['thickness'] = bids_helpers.image_to_bids(thickness_template_space, source_image_bids.get_ds_path(),
                                                                   source_image_bids.get_derivative_rel_path_prefix() + '_' +
                                                                   template.get_derivative_space_string() +
-                                                                  '_desc-thickness.nii.gz')
+                                                                  '_desc-cortical_thickness.nii.gz')
 
     # Make the jacobian log determinant image in the template space
     jacobian_template_space = ants_helpers.get_log_jacobian_determinant(template.get_path(), transform, work_dir)
@@ -1048,7 +1051,7 @@ def template_space_derivatives(template, template_reg, seg_n4, thickness, work_d
     template_space_bids['jacobian'] = bids_helpers.image_to_bids(jacobian_template_space, source_image_bids.get_ds_path(),
                                                                  source_image_bids.get_derivative_rel_path_prefix() + '_' +
                                                                  template.get_derivative_space_string() +
-                                                                 '_desc-logjacobian.nii.gz')
+                                                                 '_desc-log_jacdet.nii.gz')
 
     # gray matter probability
     gm_prob_template_space = ants_helpers.apply_transforms(template.get_path(), seg_n4['posteriors'][1].get_path(), transform,
@@ -1076,7 +1079,7 @@ def template_space_derivatives(template, template_reg, seg_n4, thickness, work_d
 def make_segmentation_qc_plots(t1w_bids, mask_bids, seg_bids, work_dir):
     """Generate tiled QC plots for a T1w image with segmentation overlay
 
-    Output is written as a derivative of the t1w_bids image.
+    Output is written as a derivative of the T1w image. The image is resampled to 1mm for consistent visualization.
 
     Parameters:
     -----------
@@ -1097,6 +1100,12 @@ def make_segmentation_qc_plots(t1w_bids, mask_bids, seg_bids, work_dir):
     seg_image = ants_helpers.resample_image_by_spacing(seg_bids.get_path(), [1, 1, 1], work_dir,
                                                        interpolation='NearestNeighbor')
 
+    # Get segmentation entity to make output description label
+    seg_name = seg_bids.get_entity('seg').title()
+
+    output_desc_ax = f"qcSeg{seg_name}Ax"
+    output_desc_cor = f"qcSeg{seg_name}Cor"
+
     # winsorize a bit more aggressively to boost brightness of the brain
     scalar_image = ants_helpers.winsorize_intensity(scalar_image, mask_image, work_dir, lower_percentile=0.0,
                                                     upper_iqr_scale=1.5)
@@ -1107,8 +1116,8 @@ def make_segmentation_qc_plots(t1w_bids, mask_bids, seg_bids, work_dir):
                                                     axis=2, pad=('mask+5'), slice_spec=(3,'mask','mask'))
     tiled_seg_cor = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=seg_rgb, overlay_alpha=0.2,
                                                     axis=1, pad=('mask+5'), slice_spec=(3,'mask','mask'))
-    system_helpers.copy_file(tiled_seg_ax, t1w_bids.get_derivative_path_prefix() + '_desc-segaxqc.png')
-    system_helpers.copy_file(tiled_seg_cor, t1w_bids.get_derivative_path_prefix() + '_desc-segcorqc.png')
+    system_helpers.copy_file(tiled_seg_ax, t1w_bids.get_derivative_path_prefix() + f"_desc-{output_desc_ax}.png")
+    system_helpers.copy_file(tiled_seg_cor, t1w_bids.get_derivative_path_prefix() + f"_desc-{output_desc_cor}.png")
 
 
 def make_thickness_qc_plots(t1w_bids, mask_bids, thick_bids, work_dir):
@@ -1122,8 +1131,6 @@ def make_thickness_qc_plots(t1w_bids, mask_bids, thick_bids, work_dir):
         T1w image object, should be the preprocessed T1w image in the output dataset.
     mask_bids : BIDSImage
         Brain mask for the preprocessed T1w image.
-    seg_bids : BIDSImage
-        Segmentation image in the output dataset.
     thick_bids : BIDSImage
         Cortical thickness image in the output dataset.
     work_dir : str
@@ -1141,7 +1148,7 @@ def make_thickness_qc_plots(t1w_bids, mask_bids, thick_bids, work_dir):
     scalar_image = ants_helpers.winsorize_intensity(scalar_image, mask_image, work_dir, lower_percentile=0.0,
                                                     upper_iqr_scale=1.5)
 
-    thick_mask = ants_helpers.threshold_image(thick_image, work_dir, 0.0001, 1000000.0)
+    thick_mask = ants_helpers.threshold_image(thick_image, work_dir, 0.001, 1000000.0)
 
     if ants_helpers.brain_volume_ml(thick_mask) == 0.0:
         logger.warning("Cortical thickness image is zero (perhaps too few iterations)")
@@ -1150,13 +1157,16 @@ def make_thickness_qc_plots(t1w_bids, mask_bids, thick_bids, work_dir):
     thick_rgb = ants_helpers.convert_scalar_image_to_rgb(thick_image, work_dir, mask=thick_mask, colormap='hot', min_value=0,
                                                          max_value=6)
 
+    output_desc_ax = f"qcThicknessAx"
+    output_desc_cor = f"qcThicknessCor"
+
     tiled_thick_ax = ants_helpers.create_tiled_mosaic(scalar_image, thick_mask, work_dir, overlay=thick_rgb,
                                                       overlay_alpha=1, axis=2, pad=('mask+5'), slice_spec=(3,'mask','mask'))
     tiled_thick_cor = ants_helpers.create_tiled_mosaic(scalar_image, thick_mask, work_dir, overlay=thick_rgb,
                                                        overlay_alpha=1, axis=1, pad=('mask+5'), slice_spec=(3,'mask','mask'))
 
-    system_helpers.copy_file(tiled_thick_ax, t1w_bids.get_derivative_path_prefix() + '_desc-thickaxqc.png')
-    system_helpers.copy_file(tiled_thick_cor, t1w_bids.get_derivative_path_prefix() + '_desc-thickcorqc.png')
+    system_helpers.copy_file(tiled_thick_ax, t1w_bids.get_derivative_path_prefix() + f"_desc-{output_desc_ax}.png")
+    system_helpers.copy_file(tiled_thick_cor, t1w_bids.get_derivative_path_prefix() + f"_desc-{output_desc_cor}.png")
 
 
 def compute_qc_stats(t1w_bids, mask_bids, seg_bids, work_dir, thick_bids=None, template=None, template_brain_mask=None,
@@ -1201,7 +1211,7 @@ def compute_qc_stats(t1w_bids, mask_bids, seg_bids, work_dir, thick_bids=None, t
 
     if thick_bids is not None:
         thick_image = ants_image_read(thick_bids.get_path())
-        gm_thickness = thick_image[cgm_mask]
+        gm_thickness = thick_image[thick_image > 0.001]
         thick_mean = gm_thickness.mean()
         thick_std = gm_thickness.std()
 
@@ -1215,7 +1225,7 @@ def compute_qc_stats(t1w_bids, mask_bids, seg_bids, work_dir, thick_bids=None, t
     non_csf_fraction = 1.0 - csf_vol / mask_vol
 
     # Write the stats to a TSV file
-    with open(t1w_bids.get_derivative_path_prefix() + '_desc-qcstats.tsv', 'w') as f:
+    with open(t1w_bids.get_derivative_path_prefix() + '_desc-qc_brainstats.tsv', 'w') as f:
         f.write("metric\tvalue\n")
         f.write(f"gm_mean_intensity\t{gm_mean_intensity:.4f}\n")
         f.write(f"wm_mean_intensity\t{wm_mean_intensity:.4f}\n")
@@ -1236,4 +1246,121 @@ def compute_qc_stats(t1w_bids, mask_bids, seg_bids, work_dir, thick_bids=None, t
         if template is not None:
             f.write(f"t1w_template_corr\t{t1w_template_corr:.4f}\n")
 
+
+def make_registration_qc_image(template, template_mask, t1w_bids, t1w_to_template_transform, work_dir):
+    # Tile axial slices of the template and the T1w brain in the template space
+    template_ax = ants_helpers.create_tiled_mosaic(template.get_path(), template_mask, work_dir, axis=2,
+                                                   pad=5, slice_spec=(7,'mask','mask'))
+
+    warped = ants_helpers.apply_transforms(template.get_path(), t1w_bids.get_path(), t1w_to_template_transform, work_dir)
+
+    warped_ax = ants_helpers.create_tiled_mosaic(warped, template_mask, work_dir, axis=2, pad=5, slice_spec=(7,'mask','mask'))
+
+    # Create a GIF that flips between the two images
+    gif_path = _create_registration_gif(template_ax, warped_ax, work_dir, fixed_text="Template",
+                                        moving_text="T1w Warped", duration=750, font_size=50)
+
+    system_helpers.copy_file(gif_path, t1w_bids.get_derivative_path_prefix() + f"_desc-qcTemplateRegistration.gif")
+
+
+def _create_registration_gif(fixed_slice_image, moving_slice_image, work_dir, fixed_text="Fixed Image",
+                            moving_text="Moving Image", duration=1000, font_size=60):
+    """
+    Creates an animated GIF that flips between two images, with a title bar at the top containing text.
+
+    Parameters:
+    -----------
+    fixed_slice_image : str
+        Path to the fixed image.
+    moving_slice_image : str
+        Path to the moving image.
+    work_dir : str
+        Path to the working directory.
+    fixed_text : str, optional
+        Text to display on the fixed image.
+    moving_text : str, optional
+        Text to display on the moving image.
+    duration : int, optional
+        Duration to display each image in the GIF, in milliseconds.
+    font_size : int, optional
+        Font size for the text.
+
+    Returns
+    --------
+        str: Path to the saved GIF.
+    """
+    # Load images
+    img1 = Image.open(fixed_slice_image).convert("RGBA")
+    img2 = Image.open(moving_slice_image).convert("RGBA")
+
+    # Ensure same size
+    if img1.size != img2.size:
+        img2 = img2.resize(img1.size)
+
+    # Apply text
+    img1 = _add_text_to_slice(img1, fixed_text, font_size=font_size)
+    img2 = _add_text_to_slice(img2, moving_text, font_size=font_size)
+
+    # Save as animated GIF
+    output_path = system_helpers.get_temp_file(work_dir, 'registrationqc', suffix='.gif')
+
+    img1.save(output_path, save_all=True, append_images=[img2], duration=duration, optimize=True, loop=0)
+
+    return output_path
+
+
+def _add_text_to_slice(image, text, font_size=60):
+    """
+    Expands a 2D image at the top to add a black rectangle with centered text.
+
+    Args:
+        image (PIL.Image): The original image.
+        text (str): Text to overlay.
+        font_size (int): Font size for the text.
+
+    Returns:
+        PIL.Image: New image with the added text bar.
+    """
+    width, height = image.size
+
+    # Load font - try different font families for cross-platform support
+    def _load_font(size):
+        import matplotlib.font_manager as fm
+
+        font_families = ["Arial", "Helvetica", "Liberation Sans", "DejaVu Sans", "Nimbus Sans", "FreeSans"]
+
+        # Get a list of all system fonts
+        system_fonts = fm.findSystemFonts(fontpaths=None, fontext="ttf")
+
+        for font_path in system_fonts:
+            font_name = fm.FontProperties(fname=font_path).get_name()
+            if any(family in font_name for family in font_families):
+                return ImageFont.truetype(font_path, size)
+
+        return ImageFont.truetype(system_fonts[0], size)
+
+
+    font = _load_font(font_size)
+
+    # Draw text box in a dummy image to compute text height
+    temp_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))  # Dummy image for size calc
+    bbox = temp_draw.textbbox((0, 0), text, font=font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+
+    title_bar_height = int(text_height * 2)
+
+    new_height = height + title_bar_height
+
+    # Create a new blank image (black at top, image below)
+    new_img = Image.new("RGBA", (width, new_height), "black")
+    new_img.paste(image, (0, title_bar_height))
+
+    # Draw text centered in title bar
+    draw = ImageDraw.Draw(new_img)
+    text_x = (width - text_width) // 2
+    text_y = (title_bar_height - text_height) // 2
+    draw.text((text_x, text_y), text, font=font, fill="white")
+
+    return new_img
 

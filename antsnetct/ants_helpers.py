@@ -5,6 +5,7 @@ import imageio
 import logging
 import numpy as np
 import os
+import pandas as pd
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -47,6 +48,7 @@ def apply_mask(image, mask, work_dir):
         logger.info(f"Masked image written to {masked_image_file}")
 
     return masked_image_file
+
 
 def smooth_image(image, sigma, work_dir):
     """Smooth an image with a Gaussian kernel
@@ -2037,6 +2039,109 @@ def convert_scalar_image_to_rgb(scalar_image, work_dir, mask=None, colormap='hot
     return rgb_file
 
 
+def convert_segmentation_image_to_rgb(segmentation_image, colormap, work_dir, mask=None):
+    """Convert a segmentation image to an RGB image using a colormap.
+
+    Parameters:
+    -----------
+    segmentation_image : str
+        Path to segmentation image
+    colormap : str or dict
+        Colormap to use. Strings reference pre-defined color maps:
+            'antsct': maps BIDS common segmentation labels to antsct colors.
+            'cerebellum': ANTsPyNet Cerebellar atlas labels.
+            'dkt31': Desikan-Killiany-Tourville 31 cortical labels.
+            'hoa': Harvard-Oxford atlas subcortical labels from ANTsPyNet.
+
+        If a dict, the keys are integer labels in the segmentation image, and the values are RGB triplets.
+        Each triplet should be a list of 3 integers in the range 0-255 for R, G, B. Note that is this different to
+        `convert_scalar_image_to_rgb`, where RGB values are floats in the range 0-1 and the colormap is linearly
+        interpolated across the scalar range. Here, each label is mapped to a specific color.
+    work_dir : str
+        Path to working directory
+    mask : str
+        Path to mask image. If provided, the colormap is only applied to voxels within the mask.
+
+    Returns:
+    --------
+    rgb_image : str
+        Path to RGB image
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='seg_to_rgb')
+
+    builtin_colormaps = {
+        'antsct': {0: [0,0,0], 1: [0,255,0], 2: [0,0,255], 3: [255,0,0], 4: [255,0,0], 5: [255,0,0], 6: [255,0,0], 7: [255,0,0],
+                   8: [0,255,0], 9: [255,255,0], 10: [0,255,255], 11: [255,0,255]},
+        'cerebellum_parcellation': {0: [0, 0, 0], 1: [31, 120, 180], 2: [251, 154, 153], 3: [41, 131, 29], 4: [227, 26, 28],
+                                    5: [178, 223, 138], 6: [255, 127, 0], 7: [166, 206, 227], 8: [202, 178, 214],
+                                    9: [106, 61, 154], 10:  [253, 191, 111], 11:  [255, 255, 153], 12:  [177, 89, 40],
+                                    101: [55, 126, 184], 102: [0, 239, 8], 103: [239, 53, 97], 104: [152, 78, 163],
+                                    105: [230, 159, 0], 106: [166, 86, 40], 107: [247, 129, 191], 108: [77, 158, 234],
+                                    109: [102, 194, 165], 110: [141, 211, 199], 111: [251, 128, 114], 112: [190, 186, 218]},
+        'cerebellum_tissue_segmentation': {0: [0, 0, 0], 1: [0, 255, 0], 2: [0, 0, 255], 3: [255, 0, 0]},
+        'dkt31':{0:[0, 0, 0], 1002: [125, 100, 160], 1003: [100, 25, 0], 1005: [220, 20, 100], 1006: [220, 20, 10],
+                 1007: [180, 220, 140], 1008: [220, 60, 220], 1009: [180, 40, 120], 1010: [140, 20, 140], 1011: [20, 30, 140],
+                 1012: [35, 75, 50], 1013: [225, 140, 140], 1014: [200, 35, 75], 1015: [160, 100, 50], 1016: [20, 220, 60],
+                 1017: [60, 220, 60], 1018: [220, 180, 140], 1019: [20, 100, 50], 1020: [220, 60, 20], 1021: [120, 100, 60],
+                 1022: [220, 20, 20], 1023: [220, 180, 220], 1024: [60, 20, 220], 1025: [160, 140, 180], 1026: [80, 20, 140],
+                 1027: [75, 50, 125], 1028: [20, 220, 160], 1029: [20, 180, 140], 1030: [140, 220, 220], 1031: [80, 160, 20],
+                 1034: [150, 150, 200], 1035: [255, 192, 32], 2002: [125, 100, 160], 2003: [100, 25, 0], 2005: [220, 20, 100],
+                 2006: [220, 20, 10], 2007: [180, 220, 140], 2008: [220, 60, 220], 2009: [180, 40, 120], 2010: [140, 20, 140],
+                 2011: [20, 30, 140], 2012: [35, 75, 50], 2013: [225, 140, 140], 2014: [200, 35, 75], 2015: [160, 100, 50],
+                 2016: [20, 220, 60], 2017: [60, 220, 60], 2018: [220, 180, 140], 2019: [20, 100, 50], 2020: [220, 60, 20],
+                 2021: [120, 100, 60], 2022: [220, 20, 20], 2023: [220, 180, 220], 2024: [60, 20, 220], 2025: [160, 140, 180],
+                 2026: [80, 20, 140], 2027: [75, 50, 125], 2028: [20, 220, 160], 2029: [20, 180, 140], 2030: [140, 220, 220],
+                 2031: [80, 160, 20], 2034: [150, 150, 200], 2035: [255, 192, 32]},
+        'hoa':{0: [0, 0, 0], 1: [120, 18, 134], 2: [120, 18, 134], 3: [175, 135, 175], 4: [204, 182, 142], 5: [42, 204, 164],
+               6: [120, 190, 150], 7: [255, 165, 0], 8: [255, 165, 0], 9: [122, 186, 220], 10: [122, 186, 220],
+               11: [236, 13, 176], 12: [236, 13, 176], 13: [12, 48, 255], 14: [12, 48, 255], 15: [119, 159, 176],
+               16: [0, 118, 14], 17: [0, 118, 14], 18: [196, 58, 250], 19: [196, 58, 250], 20: [220, 216, 20],
+               21: [220, 216, 20], 22: [103, 255, 255], 23: [103, 255, 255], 24: [234, 169, 30], 25: [177, 62, 64],
+               26: [177, 62, 64], 27: [241, 161, 162], 28: [241, 161, 162], 29: [220, 148, 34], 30: [220, 148, 34],
+               31: [220, 248, 164], 32: [220, 248, 164]},
+    }
+
+    color_dict = None
+
+    if isinstance(colormap, str):
+        if colormap.lower() in builtin_colormaps:
+            color_dict = builtin_colormaps[colormap.lower()]
+        else:
+            raise ValueError(f"Colormap {colormap} not recognized. Must be one of: {list(builtin_colormaps.keys())} or a dict.")
+    elif isinstance(colormap, dict):
+        color_dict = colormap
+    else:
+        raise ValueError("Colormap must be a string or a dict.")
+
+    segmentation = ants.image_read(segmentation_image)
+
+    if mask is not None:
+        mask_img = ants.image_read(mask)
+        segmentation = segmentation * mask_img
+
+    # Now iterate over the labels in the color dict and create an RGB image
+    seg_array = segmentation.numpy()
+    rgb_array = np.zeros(segmentation.shape + (3,), dtype=np.uint8)
+
+    # Iterate over voxels in the segmentation image, setting rgb_array values according to the color dict
+    for label, color in color_dict.items():
+        rgb_array[seg_array == label] = np.array(color)
+
+    rgb_image = ants.from_numpy(rgb_array,
+                                origin=segmentation.origin,
+                                spacing=segmentation.spacing,
+                                direction=segmentation.direction,
+                                is_rgb=True)
+
+    output_file = f"{tmp_file_prefix}_rgb.nii.gz"
+    ants.image_write(rgb_image, output_file)
+
+    if get_verbose():
+        logger.info("Segmentation image converted to RGB, saved to {output_file}")
+
+    return output_file
+
+
 def create_tiled_mosaic(scalar_image, mask, work_dir, overlay=None, tile_shape=(-1, -1), overlay_alpha=0.25, axis=2,
                         pad=('mask+4'), slice_spec=(3,'mask+8','mask-8'), flip_spec=(1,1), title_bar_text=None,
                         title_bar_font_size=60):
@@ -2187,3 +2292,534 @@ def image_correlation(image1, image2, work_dir, exclude_background=True):
     corr = np.corrcoef(img1, img2)
 
     return float(corr[0,1])
+
+
+def desikan_killiany_tourville_parcellation(image, work_dir, brain_mask=None):
+    """Does a Desikan-Killiany-Tourville parcellation of the input image using ANTsPyNet.
+
+    Parameters:
+    ----------
+    image : str
+        Path to input image.
+    work_dir : str
+        Path to working directory.
+    brain_mask : str, optional
+        Path to brain mask image. If provided, the parcellation is masked after the fact, but
+        this mask does not affect the parcellation itself.
+    Returns:
+    -------
+    str
+        Path to parcellated image.
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='dkt31')
+
+    parcellated_image_file = f"{tmp_file_prefix}_parcellated.nii.gz"
+
+    # Load the image
+    img = ants.image_read(image)
+
+    dkt31 = antspynet.desikan_killiany_tourville_labeling(img, do_preprocessing=True, return_probability_images=False,
+                                                          do_lobar_parcellation=False, version=1, verbose=get_verbose())
+
+    if brain_mask is not None:
+        # Apply the brain mask to the parcellated image
+        mask_image = ants.image_read(brain_mask)
+        dkt31 = dkt31 * mask_image
+
+    ants.image_write(dkt31, parcellated_image_file)
+
+    return parcellated_image_file
+
+
+def harvard_oxford_subcortical_parcellation(image, work_dir, brain_mask=None):
+    """Does a Harvard-Oxford subcortical parcellation of the input image using ANTsPyNet.
+
+    Parameters:
+    ----------
+    image : str
+        Path to input image.
+    work_dir : str
+        Path to working directory.
+    brain_mask : str, optional
+        Path to brain mask image. If provided, the parcellation is masked after the fact, but
+        this mask does not affect the parcellation itself.
+
+    Returns:
+    -------
+    str
+        Path to parcellated image.
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='harvard_oxford_subcortical')
+
+    parcellated_image_file = f"{tmp_file_prefix}_parcellated.nii.gz"
+
+    # Load the image
+    img = ants.image_read(image)
+
+    results = antspynet.harvard_oxford_atlas_labeling(img, do_preprocessing=True, verbose=get_verbose())
+    hoa_subcortical_image = results['segmentation_image']
+
+    if brain_mask is not None:
+        # Apply the brain mask to the parcellated image
+        mask_image = ants.image_read(brain_mask)
+        hoa_subcortical_image = hoa_subcortical_image * mask_image
+
+    ants.image_write(hoa_subcortical_image, parcellated_image_file)
+
+    return parcellated_image_file
+
+
+def cerebellum_parcellation(image, work_dir, cerebellum_mask=None):
+    """Does a cerebellar parcellation of the input image using ANTsPyNet.
+
+    Parameters:
+    ----------
+    image : str
+        Path to a T1w input image.
+    work_dir : str
+        Path to working directory.
+    cerebellum_mask : str, optional
+        Path to a cerebellum mask image. If provided, the this defines the segmentation mask.
+        Otherwise, the cerebellum is automatically segmented using brain extraction and registration.
+        The cerebellum mask from harvard_oxford_subcortical_parcellation is a good choice.
+
+    Returns:
+    -------
+    dict
+        Dictionary with keys 'parcellation' and 'tissue_segmentation', each containing the path to the respective image.
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='cerebellar_parcellation')
+
+    parcellated_image_file = f"{tmp_file_prefix}_parcellated.nii.gz"
+    tissue_image_file = f"{tmp_file_prefix}_tissue_segmentation.nii.gz"
+
+    # Load the image
+    img = ants.image_read(image)
+
+    if cerebellum_mask is not None:
+        # If a cerebellum mask is provided, use it to define the segmentation mask
+        cerebellum_mask_image = ants.image_read(cerebellum_mask)
+
+    cerebellar_labels = antspynet.cerebellum_morphology(img, do_preprocessing=True, cerebellum_mask=cerebellum_mask_image,
+                                                        compute_thickness_image=False, verbose=get_verbose())
+
+    # Map tissue segmentation BIDS common image-derived labels
+    tissue_segmentation = cerebellar_labels['tissue_segmentation_image']
+
+    bids_tissue_segmentation = tissue_segmentation.clone() * 0
+    # Cerebrospinal fluid == 1
+    bids_tissue_segmentation[tissue_segmentation == 1] = 3
+    # Gray matter == 2
+    bids_tissue_segmentation[tissue_segmentation == 2] = 1
+    # White matter == 3
+    bids_tissue_segmentation[tissue_segmentation == 3] = 2
+
+    ants.image_write(cerebellar_labels['parcellation_segmentation_image'], parcellated_image_file)
+    ants.image_write(bids_tissue_segmentation, tissue_image_file)
+
+    return {'parcellation': parcellated_image_file, 'tissue_segmentation': tissue_image_file}
+
+
+def ants_label_statistics(label_image, label_definitions, work_dir, scalar_image=None):
+    """Calculate statistics for each label in a label image. Uses ITK label stats filters (fast, but no median)
+
+    WARNING: untested code - we are using numpy. This doesn't produce any output for missing labels
+
+    Parameters:
+    -----------
+    label_image : str
+        Path to label image.
+    label_definitions : dict
+        Dictionary mapping label values to names.
+    work_dir : str
+        Path to working directory.
+    scalar_image : str, optional
+        Path to scalar image. If provided, statistics will be calculated for each label in the scalar image.
+
+    Returns:
+    --------
+    pandas.DataFrame
+        DataFrame with statistics for each label.
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='label_statistics')
+
+    logger.warning("Untested prototype code - this uses ITK filters (faster than numpy) but has not been fully tested")
+
+    # Load the label image
+    labels = ants.image_read(label_image)
+
+    if scalar_image is not None:
+        scalar = ants.image_read(scalar_image)
+        if not physical_and_voxel_space_consistent(labels, scalar):
+            raise ValueError("Label and scalar images must have the same physical space and voxel dimensions.")
+        stats = ants.label_stats(scalar, labels)
+        # cast Label to int, as label_stats returns float
+        stats['Label'] = stats['Label'].astype(int)
+
+        # replace variance with std
+        stats['std'] = np.sqrt(stats['Variance'])
+        # remove variance column
+        stats = stats.drop(columns=['Variance', 't']) # we drop t as we do stats in 3D
+        stats = stats.rename(columns={'LabelValue': 'label', 'Mean': 'mean', 'Min': 'min', 'Max': 'max',
+                                      'Count': 'voxel_count', 'Volume': 'volume_mm3', 'Mass': 'sum',
+                                      'x': 'center_of_mass_x', 'y': 'center_of_mass_y', 'z': 'center_of_mass_z'})
+        # label_stats includes background label 0, so remove it to be consistent with label geometry measures
+        stats = stats[stats['label'] != 0].reset_index(drop=True)
+    else:
+        stats = ants.label_geometry_measures(labels)
+        # Output in BIDS snake case, and fix some unfortunate ANTs naming choices
+        stats = stats.rename(columns={'Label': 'label', 'VolumeInVoxels': 'voxel_count',
+                                      'VolumeInMillimeters': 'volume_mm3',
+                                      'SurfaceAreaInMillimetersSquared': 'surface_area_mm2', 'Eccentricity': 'eccentricity',
+                                      'Elongation': 'elongation', 'Roundness': 'roundness', 'Flatness': 'flatness'})
+
+    # Map label values to names
+    label_names = [label_definitions.get(label, None) for label in stats['Label']]
+    if None in label_names:
+        raise ValueError(f"Undefined labels present in label image {label_image}")
+    stats.insert(stats.columns.get_loc("label") + 1, "label_name", label_names)
+
+    return stats
+
+
+def numpy_label_statistics(label_image, label_definitions, work_dir, scalar_image=None):
+    """Calculate statistics for each label in a label image. Uses numpy for scalar stats (slower, but more flexible).
+
+    Parameters:
+    -----------
+    label_image : str
+        Path to label image. Label values should be positive integers representable as uint32. Zero is treated as background,
+        and is ignored.
+    label_definitions : dict
+        Dictionary mapping label values to names.
+    work_dir : str
+        Path to working directory.
+    scalar_image : str, optional
+        Path to scalar image. If provided, statistics will be calculated for each label in the scalar image.
+
+    Returns:
+    --------
+    pandas.DataFrame
+        DataFrame with statistics for each label.
+    """
+    # Load the label image
+    label_im = ants.image_read(label_image)
+
+    # numpy copies where we'll do most of the work
+    labels = label_im.numpy()
+    scalar = None
+
+    if scalar_image is None:
+        # Just do label geometry stats
+        stats = ants.label_geometry_measures(label_im)
+        stats = stats.rename(columns={'Label': 'label', 'VolumeInVoxels': 'voxel_count',
+                                      'VolumeInMillimeters': 'volume_mm3',
+                                      'SurfaceAreaInMillimetersSquared': 'surface_area_mm2', 'Eccentricity': 'eccentricity',
+                                      'Elongation': 'elongation', 'Roundness': 'roundness', 'Flatness': 'flatness',
+                                      'Centroid_x': 'centroid_x', 'Centroid_y': 'centroid_y', 'Centroid_z': 'centroid_z',
+                                      'AxesLength_x': 'axes_length_x', 'AxesLength_y': 'axes_length_y',
+                                      'AxesLength_z': 'axes_length_z', 'BoundingBoxLower_x': 'bounding_box_lower_x',
+                                      'BoundingBoxLower_y': 'bounding_box_lower_y',
+                                      'BoundingBoxLower_z': 'bounding_box_lower_z',
+                                      'BoundingBoxUpper_x': 'bounding_box_upper_x',
+                                      'BoundingBoxUpper_y': 'bounding_box_upper_y',
+                                      'BoundingBoxUpper_z': 'bounding_box_upper_z'})
+
+        # Drop unwanted intensity-related columns
+        stats = stats.drop(columns=['MeanIntensity', 'SigmaIntensity', 'MinIntensity', 'MaxIntensity', 'IntegratedIntensity'],
+                           errors='ignore')
+
+        stats = stats.convert_dtypes() # convert_dtypes allows NA for missing labels
+    else:
+        scalar_im = ants.image_read(scalar_image)
+        if not physical_and_voxel_space_consistent(label_im, scalar_im):
+            raise ValueError("Label and scalar images must have the same physical space and voxel dimensions.")
+        scalar = scalar_im.numpy()
+
+        unique_labels = np.unique(labels)
+        # Remove background label 0
+        unique_labels = unique_labels[unique_labels > 0]
+
+        stats_list = list()
+        all_labels_mask = labels > 0
+        label_flat = labels[all_labels_mask]
+        scalar_flat = scalar[all_labels_mask]
+
+        for label in unique_labels:
+            mask = label_flat == label
+            count = np.sum(mask)
+            values = scalar_flat[mask]
+            mean = np.mean(values)
+            std = np.std(values)
+            min_val = np.min(values)
+            max_val = np.max(values)
+            median = np.median(values)
+            q1 = np.percentile(values, 25)
+            q3 = np.percentile(values, 75)
+            sum = np.sum(values)
+            stats_list.append({'label': int(label), 'voxel_count': int(count), 'mean': float(mean), 'std': float(std),
+                                'min': float(min_val), 'max': float(max_val), 'sum': float(sum), 'median': float(median),
+                                'quartile_1': float(q1), 'quartile_3': float(q3)})
+        stats = pd.DataFrame(stats_list).convert_dtypes() # convert_dtypes allows NA for missing labels
+
+    # Map label values to names
+    label_names = [label_definitions.get(label, None) for label in stats['label']]
+    if None in label_names:
+        raise ValueError(f"Undefined labels present in label image {label_image}")
+    stats.insert(stats.columns.get_loc("label") + 1, "label_name", label_names)
+    stats['label_name'] = label_names
+
+    # Add rows for labels missing from the image but present in the definitions (exclude 0 for background)
+    defined_labels = {int(k) for k in label_definitions.keys() if int(k) != 0}
+    present_labels = set(map(int, stats['label'].tolist()))
+    missing_labels = sorted(defined_labels - present_labels)
+
+    if missing_labels:
+        # Build NA rows matching current columns
+        cols = list(stats.columns)
+        na_rows = []
+        for lab in missing_labels:
+            row = {c: pd.NA for c in cols}
+            row['label'] = int(lab)
+            row['label_name'] = label_definitions[int(lab)]
+            na_rows.append(row)
+        # Need to tell pandas the dtypes because na_rows has columns that are only NA
+        na_df = pd.DataFrame(na_rows, columns=cols).astype(stats.dtypes.to_dict())
+        stats = pd.concat([stats, na_df], ignore_index=True)
+
+    # sort by label
+    stats = stats.sort_values('label', kind='stable').reset_index(drop=True)
+
+    return stats
+
+
+def retain_labels(label_image, labels_to_keep, work_dir):
+    """Retain only specified labels in a label image. Other labels are set to zero.
+
+    Parameters:
+    -----------
+    label_image : str
+        Path to label image.
+    labels_to_keep : list of int
+        List of labels to retain.
+    work_dir : str
+        Path to working directory.
+
+    Returns:
+    --------
+    str
+        Path to output label image with only the specified labels retained.
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='retain_labels')
+
+    output_label_file = f"{tmp_file_prefix}_retained_labels.nii.gz"
+
+    # Load the label image
+    labels = ants.image_read(label_image)
+
+    label_arr = labels.numpy()
+
+    mask = np.isin(label_arr, labels_to_keep)
+
+    label_arr[mask == 0] = 0
+
+    new_labels = ants.from_numpy(label_arr, origin=labels.origin, spacing=labels.spacing, direction=labels.direction)
+
+    ants.image_write(new_labels, output_label_file)
+
+    if get_verbose():
+        logger.info(f"Retained labels {labels_to_keep}")
+        logger.info(f"Output label image saved to {output_label_file}")
+
+    return output_label_file
+
+
+def remove_labels(label_image, labels_to_remove, work_dir):
+    """Remove specified labels from a label image. Other labels are retained.
+
+    Parameters:
+    -----------
+    label_image : str
+        Path to label image.
+    labels_to_remove : list of int
+        List of labels to remove.
+    work_dir : str
+        Path to working directory.
+
+    Returns:
+    --------
+    str
+        Path to output label image with the specified labels removed.
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='remove_labels')
+
+    output_label_file = f"{tmp_file_prefix}_removed_labels.nii.gz"
+
+    # Load the label image
+    labels = ants.image_read(label_image)
+
+    label_arr = labels.numpy()
+
+    mask = np.isin(label_arr, labels_to_remove)
+
+    label_arr[mask] = 0
+
+    new_labels = ants.from_numpy(label_arr, origin=labels.origin, spacing=labels.spacing, direction=labels.direction)
+
+    ants.image_write(new_labels, output_label_file)
+
+    if get_verbose():
+        logger.info(f"Removed labels {labels_to_remove}")
+        logger.info(f"Output label image saved to {output_label_file}")
+
+    return output_label_file
+
+
+def add_labels_to_segmentation(src_image, label_image, labels_to_add, work_dir, unique_label_indices=True, background_label=0):
+    """Add specified labels to a label image. Only adds over a background label.
+
+    Parameters:
+    -----------
+    src_image : str
+        Path to source image, to which labels will be added.
+    label_image : str
+        Path to label image.
+    labels_to_add : list of int
+        List of labels to add.
+    work_dir : str
+        Path to working directory.
+    unique_label_indices : bool, optional
+        If True, the labels to add are remapped to unique indices starting from max(label_image)+1.
+        If False, the labels are added as-is. Default is True, which avoids label collisions. Set to False to add labels
+        that are already defined in the source image.
+    background_label : int, optional
+        Label value in label_image that is considered background, and can be replaced by the new labels.
+
+    Returns:
+    --------
+    list
+        Path to output label image with the specified labels added, and a list of the label indices that were added.
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='add_labels_to_segmentation')
+
+    output_label_file = f"{tmp_file_prefix}_added_labels.nii.gz"
+
+    # Load the label image
+    src_labels = ants.image_read(src_image)
+
+    # Load the label image
+    additional_labels = ants.image_read(label_image)
+
+    # Labels must be in the same voxel and physical space
+    if not physical_and_voxel_space_consistent(src_labels, additional_labels):
+        raise ValueError("Source and label images are not in the same space (voxel and physical space must be identical).")
+
+    addition_mask = src_labels == background_label
+
+    additional_labels = additional_labels * addition_mask
+
+    label_map = dict()
+
+    if unique_label_indices:
+        max_existing_label = int(np.max(src_labels.numpy()))
+        next_label = max_existing_label + 1
+        for label in labels_to_add:
+            label_map[label] = next_label
+            next_label += 1
+    else:
+        for label in labels_to_add:
+            label_map[label] = label
+
+    output_array = src_labels.numpy()
+    add_array = additional_labels.numpy()
+
+    for label_to_add, new_label in label_map.items():
+        # add new label to src_array
+        output_array[add_array == label_to_add] = new_label
+
+    output_img = ants.from_numpy(output_array, origin=src_labels.origin, spacing=src_labels.spacing,
+                               direction=src_labels.direction)
+
+    ants.image_write(output_img, output_label_file)
+
+    if get_verbose():
+        logger.info(f"Added labels {labels_to_add} to {src_image} as {list(label_map.values())}")
+        logger.info(f"Output label image saved to {output_label_file}")
+
+    return output_label_file, list(label_map.values())
+
+
+def physical_and_voxel_space_consistent(image1, image2, tolerance=1e-5):
+    """Check if two images are in the same physical and voxel space.
+
+    Parameters:
+    -----------
+    image1 : ants.ANTsImage or str
+        First image or path to the image.
+    image2 : ants.ANTsImage or str
+        Second image or path to the image.
+    tolerance : float, optional
+        Tolerance for physical space consistency check. Default is 1e-5.
+
+    Returns:
+    --------
+    bool
+        True if the images are in the same physical and voxel space, False otherwise.
+    """
+    if isinstance(image1, str):
+        img1 = ants.image_read(image1)
+    else:
+        img1 = image1
+
+    if isinstance(image2, str):
+        img2 = ants.image_read(image2)
+    else:
+        img2 = image2
+    # physical_space_consistency checks origin, spacing, direction, which is almost always sufficient, but
+    # if shape is not the same we can return immediately, also maybe catch some edge cases
+    return img1.shape == img2.shape and img1.image_physical_space_consistency(img2, tolerance=tolerance)
+
+
+def propagate_labels_through_mask(mask_image, label_image, work_dir, max_propagation_distance=5, topology=0):
+    """Propagate labels through a mask using a fast marching method.
+
+    Parameters:
+    -----------
+    mask_image : str
+        Path to mask image. Labels will be propagated through the non-zero region of this mask.
+    label_image : str
+        Path to label image. Labels should be positive integers representable as uint32. Zero is treated as background.
+    work_dir : str
+        Path to working directory.
+    max_propagation_distance : int, optional
+        Maximum distance to propagate labels, in voxels. Default is 5.
+    topology : int, optional
+        Topology constraint for label propagation. One of 0 (no constraint), 1 (preserve topology), or 2 (no handles).
+
+    Returns:
+    --------
+    str
+        Path to output label image with labels propagated through the mask.
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='propagate_labels')
+
+    output_label_file = f"{tmp_file_prefix}_propagated_labels.nii.gz"
+
+    # Load the label image
+    labels = ants.image_read(label_image)
+
+    # Load the mask image
+    mask = ants.image_read(mask_image)
+
+    if not physical_and_voxel_space_consistent(labels, mask):
+        raise ValueError("Label and mask images must have the same physical space and voxel dimensions.")
+
+    propagated_labels = ants.iMath_propagate_labels_through_mask(mask, labels, max_propagation_distance, topology)
+
+    ants.image_write(propagated_labels, output_label_file)
+
+    if get_verbose():
+        logger.info(f"Labels from {label_image} propagated through {mask_image}")
+        logger.info(f"Output label image saved to {output_label_file}")
+
+    return output_label_file

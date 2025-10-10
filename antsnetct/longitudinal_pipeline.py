@@ -67,7 +67,7 @@ def longitudinal_analysis():
     required_parser.add_argument("--cross-sectional-dataset", "--input-dataset", help="BIDS derivatives dataset dir, "
                                  "containing the cross-sectional analysis", type=str, required=True)
     required_parser.add_argument("--output-dataset", help="Output BIDS dataset dir", type=str, required=True)
-    required_parser.add_argument("--participant", help="Participant to process", type=str)
+    required_parser.add_argument("--participant", "--subject", help="Participant to process", type=str)
 
     optional_parser = parser.add_argument_group('General optional arguments')
     optional_parser.add_argument("-h", "--help", action="help", help="show this help message and exit")
@@ -77,9 +77,9 @@ def longitudinal_analysis():
 
     subject_parser = parser.add_argument_group('Input filtering arguments')
     subject_parser.add_argument("--bids-filter-file", help="BIDS filter to apply to the input dataset", type=str, default=None)
-    subject_parser.add_argument("--participant-images", help="Text file containing a list of participant images to process "
-                                 "relative to the cross-sectional dataset. If not provided, all images for the participant "
-                                 "will be processed.", type=str, default=None)
+    subject_parser.add_argument("--participant-images", "--subject-images", help="Text file containing a list of participant "
+                                "images to process relative to the cross-sectional dataset. If not provided, all images for "
+                                "the participant will be processed.", type=str, default=None)
 
     sst_parser = parser.add_argument_group('Single Subject Template arguments')
     sst_parser.add_argument("--sst-transform", help="SST transform, rigid affine or syn", type=str, default='rigid')
@@ -104,7 +104,7 @@ def longitudinal_analysis():
     segmentation_parser.add_argument("--atropos-n4-iterations", help="Number of iterations of atropos-n4",
                                      type=int, default=2)
     segmentation_parser.add_argument("--atropos-seg-iterations", help="Number of iterations of the atropos segmentation",
-                                     type=int, default=15)
+                                     type=int, default=10)
     segmentation_parser.add_argument("--atropos-prior-weight", help="Prior weight for Atropos in the session space",
                                      type=float, default=0.5)
     segmentation_parser.add_argument("--prior-smoothing-sigma", help="Sigma for smoothing the priors before session "
@@ -138,11 +138,6 @@ def longitudinal_analysis():
 
     system_helpers.set_verbose(args.verbose)
 
-    # If no args, print help and exit
-    if len(sys.argv) == 1:
-        parser.print_help()
-        sys.exit(1)
-
     if args.participant is None:
         raise ValueError('Participant must be defined')
 
@@ -162,12 +157,6 @@ def longitudinal_analysis():
 
     group_template_brain_mask = bids_helpers.TemplateImage(args.template_name, suffix='mask', description='brain',
                                                            resolution=args.template_res, cohort=args.template_cohort)
-
-    system_helpers.set_verbose(args.verbose)
-
-    if len(sys.argv) == 1:
-        parser.print_help()
-        sys.exit(1)
 
     cx_dataset = args.cross_sectional_dataset
 
@@ -922,7 +911,7 @@ def template_space_derivatives(sst, session_sst_transform, seg_n4, thickness, wo
     sst_space_bids = {}
 
     sst_space_bids['thickness'] = bids_helpers.image_to_bids(thickness_sst_space, session_ref_image_bids.get_ds_path(),
-                                                             sst_space_rel_output_prefix + '_desc-thickness.nii.gz')
+                                                             sst_space_rel_output_prefix + '_desc-cortical_thickness.nii.gz')
 
     # Default to None, no jacobian will be produced if the SST transform is linear
     sst_space_bids['jacobian'] = None
@@ -932,7 +921,7 @@ def template_space_derivatives(sst, session_sst_transform, seg_n4, thickness, wo
 
     if jacobian_sst_space is not None:
         sst_space_bids['jacobian'] = bids_helpers.image_to_bids(jacobian_sst_space, session_ref_image_bids.get_ds_path(),
-                                                                sst_space_rel_output_prefix + '_desc-logjacobian.nii.gz')
+                                                                sst_space_rel_output_prefix + '_desc-log_jacdet.nii.gz')
 
     # gray matter probability
     gm_prob_sst_space = ants_helpers.apply_transforms(sst.get_path(), seg_n4['posteriors'][1].get_path(), session_sst_transform,
@@ -972,7 +961,8 @@ def template_space_derivatives(sst, session_sst_transform, seg_n4, thickness, wo
 
 
         group_space_bids['thickness'] = bids_helpers.image_to_bids(thickness_group_space, session_ref_image_bids.get_ds_path(),
-                                                                   group_space_rel_output_prefix + '_desc-thickness.nii.gz')
+                                                                   group_space_rel_output_prefix +
+                                                                   '_desc-cortical_thickness.nii.gz')
 
         # gray matter probability
         gm_prob_group_space = ants_helpers.apply_transforms(group_template.get_path(), seg_n4['posteriors'][1].get_path(),
@@ -1019,9 +1009,9 @@ def make_sst_jacobian_plots(sst_bids, sst_mask_bids, session_sst_jacobian_bids, 
     tiled_jac_cor = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=jac_rgb, overlay_alpha=0.6,
                                                     axis=1, pad=('mask+5'), slice_spec=(3,'mask','mask'))
     system_helpers.copy_file(tiled_jac_ax, session_sst_jacobian_bids.get_derivative_path_prefix() +
-                             '_space-sst_desc-logjacaxqc.png')
+                             '_space-sst_desc-qcLogJacAx.png')
     system_helpers.copy_file(tiled_jac_cor, session_sst_jacobian_bids.get_derivative_path_prefix() +
-                             '_space-sst_desc-logjaccorqc.png')
+                             '_space-sst_desc-qcLogJacCor.png')
 
 
 def compute_qc_stats(t1w_bids, mask_bids, seg_bids, thick_bids, sst_brain_bids, t1w_brain_sst_space_bids, work_dir,
@@ -1069,7 +1059,10 @@ def compute_qc_stats(t1w_bids, mask_bids, seg_bids, thick_bids, sst_brain_bids, 
     wm_gm_contrast = wm_mean_intensity / gm_mean_intensity
 
     thick_image = ants_image_read(thick_bids.get_path())
-    gm_thickness = thick_image[cgm_mask]
+
+    thick_mask = thick_image > 0.001
+
+    gm_thickness = thick_image[thick_mask]
     thick_mean = gm_thickness.mean()
     thick_std = gm_thickness.std()
 
@@ -1085,7 +1078,7 @@ def compute_qc_stats(t1w_bids, mask_bids, seg_bids, thick_bids, sst_brain_bids, 
     non_csf_fraction = 1.0 - csf_vol / mask_vol
 
     # Write the stats to a TSV file
-    with open(t1w_bids.get_derivative_path_prefix() + '_desc-qcstats.tsv', 'w') as f:
+    with open(t1w_bids.get_derivative_path_prefix() + '_desc-qc_brainstats.tsv', 'w') as f:
         f.write("metric\tvalue\n")
         f.write(f"gm_mean_intensity\t{gm_mean_intensity:.4f}\n")
         f.write(f"wm_mean_intensity\t{wm_mean_intensity:.4f}\n")

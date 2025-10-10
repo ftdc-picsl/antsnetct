@@ -1,8 +1,12 @@
+from __future__ import annotations # This allows type hints within class definitions
+
 import bids
 import copy
+import csv
 import filelock
 import json
 import os
+import pandas as pd
 import re
 import templateflow
 
@@ -48,6 +52,7 @@ class BIDSImage:
         self._set_derivative_path_prefix()
         self._derivative_rel_path_prefix = os.path.relpath(self._derivative_path_prefix, self._ds_path)
         self._set_metadata_from_sidecar()
+        self._set_file_entities()
 
 
     def _set_ds_name(self):
@@ -56,7 +61,7 @@ class BIDSImage:
         if not os.path.exists(description_file):
             raise FileNotFoundError("dataset_description.json not found in dataset path")
 
-        with open(description_file, 'r') as f:
+        with open(description_file, 'r', encoding="utf-8") as f:
             ds_description = json.load(f)
 
         if 'Name' not in ds_description:
@@ -65,10 +70,63 @@ class BIDSImage:
         self._ds_name = ds_description['Name']
 
 
+    def _set_file_entities(self):
+        """
+        Parse a BIDS-like filename into entity-label pairs plus 'suffix' and 'extension'.
+
+        Rules:
+        - Split on '_' into N tokens [0..N-1].
+        - For tokens 0..N-2: split on '-' into exactly two parts (entity, label).
+            Both must be strictly alphanumeric (A-Za-z0-9). Otherwise raise ValueError.
+        - For token N-1: split at the FIRST '.' into [suffix, rest].
+            - suffix must be strictly alphanumeric.
+            - extension is '.' + rest, and must match (?:\\.[A-Za-z0-9]+)+ (e.g., '.nii.gz').
+
+        Returns:
+        dict of {'entity': 'label', ..., 'suffix': <suffix>, 'extension': <extension>}
+        """
+        filename = os.path.basename(self._path)
+        if not filename or "_" not in filename:
+            raise ValueError("Filename must contain at least one '_' separating entities from suffix/extension.")
+
+        tokens = filename.split("_")
+        if len(tokens) < 2:
+            raise ValueError("Filename must have at least one entity-label pair and a suffix/extension.")
+
+        file_entities: dict[str, str] = {}
+
+        # Parse entity-label pairs
+        for part in tokens[:-1]:
+            etokens = part.split("-", 1)
+            if len(etokens) != 2:
+                raise ValueError(f"Invalid entity-label pair (missing single '-'): {part}")
+            entity, label = etokens[0], etokens[1]
+            if not (entity.isalnum() and label.isalnum()):
+                raise ValueError(f"Entity and label must be alphanumeric: {part}")
+            file_entities[entity] = label
+
+        # Parse suffix + extension from the last token
+        last = tokens[-1]
+        dtokens = last.split(".", 1)
+        if len(dtokens) != 2:
+            raise ValueError("Final token must contain a '.' separating suffix and extension.")
+        suffix, ext_rest = dtokens[0], dtokens[1]
+        if not suffix.isalnum():
+            raise ValueError(f"Suffix must be alphanumeric: {suffix}")
+
+        extension = f".{ext_rest}"
+        if re.fullmatch(r"(?:\.[A-Za-z0-9]+)+", extension) is None:
+            raise ValueError(f"Extension must be alphanumeric segments prefixed by dots: {extension}")
+
+        file_entities["suffix"] = suffix
+        file_entities["extension"] = extension
+        self._file_entities = file_entities
+
+
     def _set_metadata_from_sidecar(self):
         """Loads metadata from the sidecar JSON file, if present."""
         if os.path.exists(self._sidecar_path):
-            with open(self._sidecar_path, 'r') as f:
+            with open(self._sidecar_path, 'r', encoding="utf-8") as f:
                 self._metadata = json.load(f)
         else:
             self._metadata = None
@@ -114,15 +172,48 @@ class BIDSImage:
                         # the source is within this dataset, replace bids:: with bids:{self.ds_name}
                         dest_metadata['Sources'][idx] = f"bids:{self._ds_name}:{source[6:]}"
 
-            with open(dest_sidecar_path, 'w') as f:
+            with open(dest_sidecar_path, 'w', encoding='utf-8') as f:
                 json.dump(dest_metadata, f, indent=4, sort_keys=True)
 
         return BIDSImage(dest_ds_path, self._rel_path)
 
 
+    def get_file_entities(self):
+        """Returns a copy of the file name entities dictionary.
+
+        Example: {'sub': '01', 'ses': '01', 'suffix': 'T1w', 'extension': '.nii.gz'}
+
+        """
+        return self._file_entities.copy()
+
+
+    def get_entity(self, entity, include_metadata=True):
+        """Returns the value of a specific file or metadata entity. The file name is checked first.
+
+        Parameters:
+        ----------
+        entity : str
+            The name of the file entity to retrieve.
+        include_metadata : bool, optional
+            If True, checks the metadata for the entity if it is not found in the file entities.
+
+        Returns:
+        --------
+            str: The value of the specified file entity, or None if it does not exist.
+        """
+        file_entity = self._file_entities.get(entity, None)
+
+        if file_entity is None and include_metadata:
+            # If the entity is not in the file entities, check the metadata
+            if self._metadata is not None:
+                file_entity = self._metadata.get(entity, None)
+
+        return file_entity
+
+
     def get_metadata(self):
         """
-        Returns a copy of the metadata dictionary.
+        Returns a copy of the metadata dictionary from its sidecar file.
 
         Returns:
             dict: A copy of the image's metadata.
@@ -140,7 +231,7 @@ class BIDSImage:
             A dictionary of metadata.
         """
         self._metadata = copy.deepcopy(metadata)
-        with open(self._sidecar_path, 'w') as f:
+        with open(self._sidecar_path, 'w', encoding="utf-8") as f:
             json.dump(self._metadata, f, indent=4, sort_keys=True)
 
 
@@ -156,7 +247,7 @@ class BIDSImage:
         """
         for key, value in extra_metadata.items():
             self._metadata[key] = value
-        with open(self._sidecar_path, 'w') as f:
+        with open(self._sidecar_path, 'w', encoding="utf-8") as f:
             json.dump(self._metadata, f, indent=4, sort_keys=True)
 
 
@@ -213,6 +304,26 @@ class BIDSImage:
         return self._derivative_path_prefix
 
 
+    def get_derivative_image(self, suffix: str) -> BIDSImage | None:
+        """Get a BIDSImage for a derivative image with the specified suffix, if it exists.
+
+        Parameters:
+        -----------
+        suffix : str
+            The suffix for the derivative file, including the leading underscore and extension, eg '_desc-brain_mask.nii.gz'.
+            Note that this is not a BIDS suffix like `T1w` or `dseg`, but the full suffix to create the file name
+            self.get_derivative_path_prefix() + suffix.
+
+        Returns:
+        --------
+            BIDSImage: the derivative image if it exists, or None if it does not.
+        """
+        deriv_abs_path = self._derivative_path_prefix + suffix
+        if not os.path.exists(deriv_abs_path):
+            return None
+        return BIDSImage(self._ds_path, os.path.relpath(self._derivative_rel_path_prefix + suffix))
+
+
     def get_derivative_rel_path_prefix(self):
         """Get the the prefix for derivatives relative to the dataset
 
@@ -244,7 +355,7 @@ class TemplateImage:
     suffix : str
         BIDS suffix of the required image, eg 'T1w', 'mask'.
     resolution : str, optional
-        Resolution label of the template, eg '01', '1'. If None, the first resolution found in the metadata is used.
+        Resolution label of the template, eg '01', '1'. Ignored if the template does not have a resolution entity.
     description : str, optional
         Description of the template.
     cohort : str, optional
@@ -259,27 +370,28 @@ class TemplateImage:
         # Almost all templates use res-1 or res-01, but if there's no resolution in the metadata, we'll use None
         if not 'res' in template_metadata:
             resolution = None
-
-        res_keys = list(template_metadata['res'].keys())
-
-        template_res_found = False
-
-        if resolution is None or resolution in res_keys:
-            template_res_found = True
         else:
-            # fmriprep allows res=1 for templates where the resolution label is '01'. We'll allow that, and the converse,
-            # by checking the integer representation of the resolution
-            # But only do this if the resolution is numeric
-            if resolution.isnumeric():
-                res_int = int(resolution)
-                metatadata_res_keys_int = [int(k) for k in res_keys]
-                # if we find res_int in metatadata_res_keys_int, then the resolution to use is res_keys at the same index
-                if res_int in metatadata_res_keys_int:
-                    resolution = res_keys[metatadata_res_keys_int.index(res_int)]
-                    template_res_found = True
+            res_keys = list(template_metadata['res'].keys())
 
-        if not template_res_found:
-            raise ValueError(f"Resolution {resolution} not found in template metadata")
+            # True if the resolution is found in the metadata, or is None (some templates don't have res- entities)
+            template_res_identified = False
+
+            if resolution in res_keys:
+                template_res_identified = True
+            else:
+                # fmriprep allows res=1 for templates where the resolution label is '01'. We'll allow that, and the converse,
+                # by checking the integer representation of the resolution
+                # But only do this if the resolution is numeric
+                if resolution.isnumeric():
+                    res_int = int(resolution)
+                    metatadata_res_keys_int = [int(k) for k in res_keys]
+                    # if we find res_int in metatadata_res_keys_int, then the resolution to use is res_keys at the same index
+                    if res_int in metatadata_res_keys_int:
+                        resolution = res_keys[metatadata_res_keys_int.index(res_int)]
+                        template_res_identified = True
+
+            if not template_res_identified:
+                raise ValueError(f"Resolution {resolution} not matched in template metadata")
 
         template_matches = templateflow.api.get(name, resolution=resolution, cohort=cohort, desc=description, suffix=suffix,
                                                 extension=".nii.gz", raise_empty=True, **extra_filters)
@@ -304,7 +416,7 @@ class TemplateImage:
 
         self._derivative_space_string = derivative_string
 
-        self._uri = f"bids:templateflow:tpl-{self._name}/" + os.path.basename(self._path)
+        self._uri = f"bids:Templateflow:tpl-{self._name}/" + os.path.basename(self._path)
 
 
     def get_cohort(self):
@@ -336,7 +448,7 @@ class TemplateImage:
         return self._derivative_space_string
 
     def get_uri(self):
-        """Returns the BIDS URI for the image file."""
+        """Returns the URI for the image file."""
         return self._uri
 
 
@@ -449,7 +561,7 @@ def image_to_bids(src_image, dataset_dir, dest_rel_path, metadata=None, overwrit
     copy_file(src_image, dest_file_path)
 
     if metadata is not None:
-        with open(dest_sidecar_path, 'w') as f:
+        with open(dest_sidecar_path, 'w', encoding="utf-8") as f:
             json.dump(metadata, f, indent=4, sort_keys=True)
 
     return BIDSImage(dataset_dir, dest_rel_path)
@@ -512,11 +624,13 @@ def _get_dataset_links(existing_dataset_links, dataset_link_paths):
     This is used to record links to other datasets. If the dataset link already exists, the URI is checked to ensure it
     matches the existing URI.
 
+    Templateflow is added automatically, if not already present.
+
     Parameters:
     ----------
-        existing_dataset_links : dict
+        existing_dataset_links : dict or None
             The existing DatasetLinks field, if any.
-        dataset_link_paths : str
+        dataset_link_paths : list of str or None
             The new dataset links to add.
 
     Returns:
@@ -533,6 +647,9 @@ def _get_dataset_links(existing_dataset_links, dataset_link_paths):
     else:
         dataset_links = copy.deepcopy(existing_dataset_links)
 
+    if dataset_link_paths is None:
+        dataset_link_paths = {}
+
     for path in dataset_link_paths:
         # Get the dataset name from the dataset_description.json
         path_link = _get_single_dataset_link(path)
@@ -542,10 +659,18 @@ def _get_dataset_links(existing_dataset_links, dataset_link_paths):
 
         if name in dataset_links:
             if dataset_links[name] != uri:
-                raise ValueError(f"Dataset link {name} already exists with URI {existing_dataset_links[name]}, but new URI "
+                raise ValueError(f"Dataset link {name} already exists with URI {dataset_links[name]}, but new URI "
                                  f"{uri} provided")
         else:
             dataset_links[name] = uri
+
+    # Add Templateflow if not already present
+    if 'TemplateFlow' in dataset_links:
+        if dataset_links['TemplateFlow'] != os.path.abspath(templateflow.conf.TF_HOME):
+            raise ValueError(f"Dataset link TemplateFlow already exists with URI {dataset_links['TemplateFlow']}, "
+                             f"but new URI {os.path.abspath(templateflow.conf.TF_HOME)} provided")
+    else:
+        dataset_links['TemplateFlow'] = os.path.abspath(templateflow.conf.TF_HOME)
 
     return dataset_links
 
@@ -567,7 +692,7 @@ def _get_single_dataset_link(dataset_path):
     if not os.path.exists(description_file):
         raise FileNotFoundError(f"dataset_description.json not found in dataset path {dataset_path}")
 
-    with open(description_file, 'r') as f:
+    with open(description_file, 'r', encoding="utf-8") as f:
         ds_description = json.load(f)
 
     if 'Name' not in ds_description:
@@ -583,7 +708,7 @@ def update_output_dataset(output_dataset_dir, output_dataset_name, dataset_link_
 
     This is used to make or update an output dataset. If the dataset exists, its metadata is updated. Specifically, the
     GeneratedBy field is updated to include this pipeline, if needed. If dataset links are provided, they are added to the
-    description if needed.
+    description if needed. Templateflow is added automatically, if needed.
 
     Parameters:
     -----------
@@ -608,17 +733,17 @@ def update_output_dataset(output_dataset_dir, output_dataset_name, dataset_link_
     with filelock.SoftFileLock(lock_file, timeout=30):
         if not os.path.exists(os.path.join(output_dataset_dir, 'dataset_description.json')):
             # Write dataset_description.json
-            output_ds_description = {'Name': output_dataset_name, 'BIDSVersion': '1.8.0',
+            output_ds_description = {'Name': output_dataset_name, 'BIDSVersion': '1.10.1',
                                     'DatasetType': 'derivative', 'GeneratedBy': _get_generated_by()
                                     }
             if (dataset_link_paths is not None):
                 output_ds_description['DatasetLinks'] = _get_dataset_links(None, dataset_link_paths)
             # Write json to output dataset
-            with open(os.path.join(output_dataset_dir, 'dataset_description.json'), 'w') as file_out:
+            with open(os.path.join(output_dataset_dir, 'dataset_description.json'), 'w', encoding="utf-8") as file_out:
                 json.dump(output_ds_description, file_out, indent=4, sort_keys=True)
         else:
             # Get output dataset metadata
-            with open(f"{output_dataset_dir}/dataset_description.json", 'r') as file_in:
+            with open(f"{output_dataset_dir}/dataset_description.json", 'r', encoding="utf-8") as file_in:
                 output_ds_description = json.load(file_in)
             # Check dataset name
             if not 'Name' in output_ds_description:
@@ -630,7 +755,7 @@ def update_output_dataset(output_dataset_dir, output_dataset_name, dataset_link_
             # If this container doesn't already exist in the generated_by list, it will be added
             output_ds_description['GeneratedBy'] = _get_generated_by(old_gen_by)
 
-            old_ds_links = output_ds_description.get('DatasetLinks')
+            old_ds_links = output_ds_description.get('DatasetLinks', )
 
             output_ds_description['DatasetLinks'] = _get_dataset_links(old_ds_links, dataset_link_paths)
 
@@ -643,7 +768,7 @@ def update_output_dataset(output_dataset_dir, output_dataset_name, dataset_link_
                     ds_modified = True
 
             if ds_modified:
-                with open(f"{output_dataset_dir}/dataset_description.json", 'w') as file_out:
+                with open(f"{output_dataset_dir}/dataset_description.json", 'w', encoding="utf-8") as file_out:
                     json.dump(output_ds_description, file_out, indent=4, sort_keys=True)
 
 
@@ -663,18 +788,18 @@ def set_sources(sidecar_path, sources):
     if not isinstance(sources, list):
         sources = [sources]
 
-    with open(sidecar_path, 'r') as f:
+    with open(sidecar_path, 'r', encoding="utf-8") as f:
         sidecar_json = json.load(f)
         sidecar_json['Sources'] = sources
 
-    with open(sidecar_path, 'w') as f:
+    with open(sidecar_path, 'w', encoding="utf-8") as f:
         json.dump(sidecar_json, f, indent=4, sort_keys=True)
 
 
 def find_brain_mask(mask_dataset_directory, input_image):
     """
     Search a mask dataset for a mask for a given image. Returns the first brain mask derived from the input image.
-    Looks for brain mask matching '*desc-brain*_mask.nii.gz' with optional space-orig and res-01 entities.
+    Looks for brain mask matching '*_desc-brain*_mask.nii.gz' with optional space-orig and res-01 entities.
 
     Parameters:
     ----------
@@ -688,11 +813,6 @@ def find_brain_mask(mask_dataset_directory, input_image):
     BIDSImage:
         A BIDSImage object representing the mask, or None if no mask is found.
     """
-    # Load mask dataset_description.json
-    with open(os.path.join(mask_dataset_directory, 'dataset_description.json')) as f:
-        dataset_description = json.load(f)
-        mask_dataset_name = dataset_description['Name']
-
     search_prefix = input_image.get_derivative_rel_path_prefix()
     search_pattern = re.compile(rf"{search_prefix}(?:_space-orig)?(?:_res-01)?_desc-brain_mask.nii.gz")
 
@@ -733,12 +853,6 @@ def find_segmentation_probability_images(seg_dataset_directory, input_image):
         list of BIDSImage
             Images representing the classes in order: CSF, GM, WM, Deep GM, Brainstem, Cerebellum.
     """
-    with open(os.path.join(seg_dataset_directory, 'dataset_description.json')) as f:
-        dataset_description = json.load(f)
-        if 'Name' not in dataset_description:
-            raise ValueError(f"Dataset name not found in dataset_description.json for {seg_dataset_directory}")
-
-
     # the list to be returned, with posteriors in order
     output_posteriors = [None] * 6
 
@@ -908,3 +1022,108 @@ def find_participant_images(input_dataset_dir, participant_label, work_dir, vali
 
     return images
 
+
+def find_template_transform(fixed_template_name, moving_template_name):
+    """Find transforms from a templateflow template to another template. The transform is that which is used to resample
+    an image from the moving template space to the fixed template space.
+
+    Parameters:
+    -----------
+    fixed_template_name : str
+        Name of the fixed template, eg 'MNI152NLin2009cAsym'
+    moving_template_name : str
+        Name of the moving template, eg 'OASIS30ANTs'
+
+    Returns:
+    --------
+    str: a path to the transform file, or None if no transform is found.
+    """
+    # use kwarg dict to allow us to use 'from' as a key
+    transforms = templateflow.api.get(
+        fixed_template_name,
+        **{"from": moving_template_name},
+        suffix="xfm",
+        raise_empty=False
+    )
+
+    if transforms is not None:
+        if isinstance(transforms, list):
+            # return the .h5 warp if both that and a an affine .mat are present
+            for transform in transforms:
+                transform_str = str(transform)
+                if transform_str.endswith('.h5'):
+                    return transform_str
+            # should not get here
+            raise ValueError(f"Cannot choose between multiple transforms from {moving_template_name} to {fixed_template_name}")
+        else:
+            return str(transforms)
+    else:
+        return None
+
+
+def load_label_definitions(path: str) -> dict:
+    """
+    Get a dict of label definitions from a TSV file
+
+    Parameters:
+    -----------
+    path : str
+        Path to the TSV file containing label definitions. The TSV file should have at least two columns: 'index' and 'name'.
+        The 'index' column should contain integer labels, and the 'name' column should contain the corresponding label names.
+
+    Returns:
+    --------
+    dict
+        with integer keys and string values, mapping label indices to label names.
+
+    """
+    if not os.path.exists(path) or not os.path.isfile(path):
+        raise FileNotFoundError(f"Label definition file {path} not found")
+
+    with open(path, 'r', encoding='utf-8', newline='') as f:
+        reader = csv.reader(f, delimiter="\t")
+        # Find the header (skip blank/comment lines)
+        for row in reader:
+            if not row or (row and row[0].lstrip().startswith("#")):
+                continue
+            header = [c.strip().lower() for c in row]
+            break
+        else:
+            return {}
+
+        if len(header) < 2 or header[0] != 'index' or header[1] != 'name':
+            raise ValueError(
+                f"{path}: expected first two header columns to be 'index' and 'name', got {header[:2]}"
+            )
+
+        mapping: dict[int, str] = {}
+        for row in reader:
+            if not row or (row and row[0].lstrip().startswith("#")):
+                continue
+            try:
+                # verify idx is an integer, might be float (discouraged) but if so has to be an integer valued)
+                idxfloat = float(row[0].strip())
+                idx = int(row[0].strip())
+                if idxfloat != idx:
+                    raise ValueError(f"{path}: non-integer index '{row[0].strip()}' in row {row}")
+            except ValueError as e:
+                raise ValueError(f"Non-integer or non-numeric index '{row[0].strip()}' in row {row}") from e
+            lab = row[1].strip()
+            if idx in mapping:
+                raise ValueError(f"{path}: duplicate index {idx} in row {row}")
+            mapping[idx] = lab
+
+    return mapping
+
+
+def write_tabular_data(df: pd.DataFrame, path: str):
+    """Write a pandas DataFrame to a TSV file.
+
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        The DataFrame to write.
+    path : str
+        The path to the TSV file to write.
+    """
+    df.to_csv(path, sep='\t', index=False, na_rep='NA', encoding='utf-8', lineterminator='\n')

@@ -125,13 +125,8 @@ def get_nifti_file_prefix(image_file):
         raise ValueError(f"Image file {image_file} does not end in .nii or .nii.gz")
 
 
-def copy_file(source, destination):
-    """Copy a file from src to dst. User write permission will be added to the destination file if not already present.
-
-    The copy is done by shutil and will work with regular files or symbolic links to regular files.
-
-    User write permission will be added to the destination file if not already present. This prevents errors from being
-    unable to edit or overwrite the destination file if it was copied from a read-only directory.
+def copy_file(source, destination, preserve_mode=False):
+    """Copy a file from src to dst.
 
     Parameters:
     ----------
@@ -139,10 +134,20 @@ def copy_file(source, destination):
         The source file.
     dst : str
         The destination file.
+    preserve_mode : bool, optional
+        If True, preserve the file mode (permissions) of the source file. If False (default), copy with default permissions,
+        however user write permissions will be added if not already present.
 
     Returns:
     -------
     None
+
+    Raises:
+    ------
+    FileNotFoundError : If the source file does not exist.
+    Exception : If the source file is not a file.
+    Exception : If the copy fails.
+    Exception : If setting user write permission on the destination file fails.
 
     Example:
     --------
@@ -154,7 +159,10 @@ def copy_file(source, destination):
         raise Exception(f"The source path {source} is not a file.")
 
     try:
-        shutil.copy(source, destination)
+        if (preserve_mode):
+            shutil.copy(source, destination)
+        else:
+            shutil.copyfile(source, destination)
     except Exception as e:
         raise Exception(f"Failed to copy file {source} to {destination}: {e}")
 
@@ -266,3 +274,44 @@ def get_num_threads():
                                f"'{os.environ['ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS']}'")
     else:
         raise KeyError("ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS is not set in the environment.")
+
+
+def set_num_threads(num_threads=0):
+    """Set the number of threads to use in system calls. This sets environment variables for ITK, OpenMP, OpenBLAS, and other
+    libraries.
+
+    The number of threads to use in ANTs commands is set by the environment variable ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS.
+
+    The number of threads can be set explicitly, or automatically. If num_threads is 0, the number of threads is set
+    automatically to min(system_cores, 8).
+
+    This function should be called before importing ANTsPy or any other library that uses ITK.
+
+    Parameters:
+    ----------
+    num_threads : int, optional
+        The number of threads to use. If 0, the number of threads is set automatically.
+    """
+    if num_threads < 1:
+        num_threads = min(os.cpu_count(), 8)
+
+    os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = str(num_threads)
+    os.environ["OMP_NUM_THREADS"] = str(num_threads)
+    os.environ["OPENBLAS_NUM_THREADS"] = str(num_threads)
+    os.environ["MKL_NUM_THREADS"] = str(num_threads)
+    os.environ["VECLIB_MAXIMUM_THREADS"] = str(num_threads)
+
+
+def set_tf_threads():
+    """Set the number of threads to use in TensorFlow. This can only be set before TensorFlow is initialized.
+
+    The number of threads for tensorflow defaults to 1 but can be overridden by setting the environment variables
+    TF_NUM_INTRAOP_THREADS and TF_NUM_INTEROP_THREADS.
+
+    """
+    intra_threads = int(os.getenv('TF_NUM_INTRAOP_THREADS', '1'))
+    inter_threads = int(os.getenv('TF_NUM_INTEROP_THREADS', '1'))
+
+    tf.config.threading.set_intra_op_parallelism_threads(intra_threads)
+    tf.config.threading.set_inter_op_parallelism_threads(inter_threads)
+
