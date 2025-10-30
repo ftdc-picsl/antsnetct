@@ -724,8 +724,12 @@ def atlas_based_parcellation(t1w_bids, brain_mask_bids, atlas_label_config, work
         make_label_stats(parcellation_bids, label_definitions_file, work_dir, scalar_images=scalar_images,
                            scalar_descriptions=scalar_descriptions)
 
-        # To do QC properly, we need a color table for the atlas - not implemented yet
-        # cross_sectional_pipeline.make_segmentation_qc_plots(t1w_bids, brain_mask_bids, parcellation_bids, work_dir)
+        try:
+            label_color_map = bids_helpers.load_label_color_map(label_definitions_file)
+            make_parcellation_qc_plots(t1w_bids, brain_mask_bids, parcellation_bids, label_color_map, output_atlas_name,
+                                       work_dir)
+        except Exception as e:
+            logger.warning(f"Could not make QC plots for atlas {output_atlas_name}: {type(e)} {str(e)}")
 
     return parcellation_results
 
@@ -793,9 +797,9 @@ def make_parcellation_qc_plots(t1w_bids, brain_mask_bids, parcellation_bids, col
         Brain mask for the T1w image
     parcellation_bids : BIDSImage
         Parcellation image to plot
-    color_map : str
+    color_map : str or dict
         Color map to use for the parcellation. This should be a string supported by
-        ants_helpers.convert_segmentation_image_to_rgb. For example, 'dkt31' or 'hoa'.
+        ants_helpers.convert_segmentation_image_to_rgb, or a dict. For example, 'dkt31' or 'hoa'.
     color_map_title : str
         Used to name the output png file.
     work_dir : str
@@ -822,9 +826,9 @@ def make_parcellation_qc_plots(t1w_bids, brain_mask_bids, parcellation_bids, col
     output_desc_cor = f"qcParcellation{color_map_title}Cor"
 
     tiled_ax = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=parcellation_rgb,
-                                                      overlay_alpha=0.25, axis=2, pad=('mask+5'), slice_spec=(3,'mask','mask'))
+                                                      overlay_alpha=0.3, axis=2, pad=('mask+5'), slice_spec=(3,'mask','mask'))
     tiled_cor = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=parcellation_rgb,
-                                                       overlay_alpha=0.25, axis=1, pad=('mask+5'), slice_spec=(3,'mask','mask'))
+                                                       overlay_alpha=0.3, axis=1, pad=('mask+5'), slice_spec=(3,'mask','mask'))
 
     # Could make these derivatives of T1w or the parcellation, use the latter because that's what we do for the TSV files
     system_helpers.copy_file(tiled_ax, parcellation_bids.get_derivative_path_prefix() + f"_desc-{output_desc_ax}.png")

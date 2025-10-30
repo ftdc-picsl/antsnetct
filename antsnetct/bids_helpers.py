@@ -1116,6 +1116,84 @@ def load_label_definitions(path: str) -> dict:
     return mapping
 
 
+def load_label_color_map(path: str, color_format: str = 'rgb_triplet') -> dict:
+    """
+    Get a dict of label color mappings from a TSV file
+
+    Parameters:
+    -----------
+    path : str
+        Path to a BIDS TSV file containing label color mappings. The TSV file should have
+        the required columns index and name, and the optional column color.
+
+    color_format: str, optional
+        Format of the color values in the returned dict. Either 'rgb_triplet' (default) for a tuple of RGB values (0-255), or
+        'hex' for the original BIDS hex string (eg, #ff53bb).
+
+    Returns:
+    --------
+    dict
+        with integer keys and tuple values, mapping label indices to colors.
+
+    """
+    if not os.path.exists(path) or not os.path.isfile(path):
+        raise FileNotFoundError(f"Label color map file {path} not found")
+
+    with open(path, 'r', encoding='utf-8', newline='') as f:
+        reader = csv.reader(f, delimiter="\t")
+        # Find the header (skip blank/comment lines)
+        for row in reader:
+            if not row or (row and row[0].lstrip().startswith("#")):
+                continue
+            header = [c.strip().lower() for c in row]
+            break
+        else:
+            return {}
+
+        if len(header) < 2 or header[0] != 'index' or header[1] != 'name':
+            raise ValueError(
+                f"{path}: expected first two header columns to be 'index' and 'name', got {header[:2]}"
+            )
+        color_col_idx = None
+        if 'color' in header:
+            color_col_idx = header.index('color')
+        else:
+            raise ValueError(f"{path}: missing required 'color' column in header {header}")
+
+        if (color_format == 'hex'):
+            mapping: dict[int, str] = {}
+        else:
+            mapping: dict[int, tuple[int, int, int]] = {}
+
+        for row in reader:
+            if not row or (row and row[0].lstrip().startswith("#")):
+                continue
+            try:
+                # verify idx is an integer, might be float (discouraged) but if so has to be an integer valued)
+                idxfloat = float(row[0].strip())
+                idx = int(row[0].strip())
+                if idxfloat != idx:
+                    raise ValueError(f"{path}: non-integer index '{row[0].strip()}' in row {row}")
+            except ValueError as e:
+                raise ValueError(f"Non-integer or non-numeric index '{row[0].strip()}' in row {row}") from e
+
+            color_str = row[color_col_idx].strip()
+
+            if color_format == 'hex':
+                mapping[idx] = color_str
+            else:
+                # Convert hex to rgb triplet
+                if not re.match(r'^#([0-9a-fA-F]{6})$', color_str):
+                    raise ValueError(f"{path}: invalid hex color '{color_str}' in row {row}")
+                r = int(color_str[1:3], 16)
+                g = int(color_str[3:5], 16)
+                b = int(color_str[5:7], 16)
+                mapping[idx] = (r, g, b)
+
+    return mapping
+
+
+
 def write_tabular_data(df: pd.DataFrame, path: str):
     """Write a pandas DataFrame to a TSV file.
 
