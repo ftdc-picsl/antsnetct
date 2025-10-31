@@ -407,7 +407,7 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
     if mask_dkt31 or propagate_dkt31:
         dkt31 = True
         hoa = True  # dkt31 masking or propagation requires hoa
-        if thickness_bids is None:
+        if thickness_bids is not None:
             cortical_mask = ants_helpers.threshold_image(thickness_bids.get_path(), work_dir, lower=0.001)
             cortical_mask_source = thickness_bids.get_uri(relative=True)
         elif segmentation_bids is not None:
