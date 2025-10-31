@@ -506,7 +506,8 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
                 )
                 parcellation_results['dkt31_masked'] = dict()
                 parcellation_results['dkt31_masked']['image'] = dkt31_mask_bids,
-                parcellation_results['dkt31_masked']['label_definitions'] = dkt31_bids.get_path().replace('.nii.gz', '.tsv')
+                parcellation_results['dkt31_masked']['label_definitions'] = dkt31_mask_bids.get_path().replace('.nii.gz',
+                                                                                                               '.tsv')
                 copy_file(get_label_definitions_path('dkt31'), parcellation_results['dkt31_masked']['label_definitions'])
 
             if propagate_dkt31:
@@ -529,7 +530,8 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
                 )
                 parcellation_results['dkt31_propagated'] = dict()
                 parcellation_results['dkt31_propagated']['image'] = dkt31_propagated_bids
-                parcellation_results['dkt31_propagated']['label_definitions'] = dkt31_bids.get_path().replace('.nii.gz', '.tsv')
+                parcellation_results['dkt31_propagated']['label_definitions'] = \
+                    dkt31_propagated_bids.get_path().replace('.nii.gz', '.tsv')
                 copy_file(get_label_definitions_path('dkt31'), parcellation_results['dkt31_propagated']['label_definitions'])
 
             dkt_scalar_images = [t1w_biascorr_bids]
@@ -603,7 +605,7 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
                 parcellation_results['cerebellum_masked'] = dict()
                 parcellation_results['cerebellum_masked']['image'] = cerebellum_masked_bids
                 parcellation_results['cerebellum_masked']['label_definitions'] = \
-                    parcellation_results['cerebellum_masked']['image'].get_path().replace('.nii.gz', '.tsv')
+                    cerebellum_masked_bids.get_path().replace('.nii.gz', '.tsv')
                 copy_file(get_label_definitions_path('antspynet_cerebellum'),
                           parcellation_results['cerebellum_masked']['label_definitions'])
 
