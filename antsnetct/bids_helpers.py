@@ -1046,20 +1046,27 @@ def find_template_transform(fixed_template_name, moving_template_name):
         raise_empty=False
     )
 
-    if transforms is not None:
-        if isinstance(transforms, list):
-            # return the .h5 warp if both that and a an affine .mat are present
-            for transform in transforms:
-                transform_str = str(transform)
-                if transform_str.endswith('.h5'):
-                    return transform_str
-            # should not get here
-            raise ValueError(f"Cannot choose between multiple transforms from {moving_template_name} to {fixed_template_name}")
-        else:
-            return str(transforms)
-    else:
-        return None
+    if isinstance(transforms, list) and len(transforms) == 0:
+        # Try the other way
+        transforms = templateflow.api.get(
+            moving_template_name,
+            **{"to": fixed_template_name},
+            suffix="xfm",
+            raise_empty=False
+        )
 
+    if isinstance(transforms, list):
+        if len(transforms) == 0:
+            return None
+        # return the .h5 warp if both that and an affine .mat are present
+        for transform in transforms:
+            transform_str = str(transform)
+            if transform_str.endswith('.h5'):
+                return transform_str
+        # should not get here
+        raise ValueError(f"Cannot choose between multiple transforms from {moving_template_name} to {fixed_template_name}")
+    else:
+        return str(transforms)
 
 def load_label_definitions(path: str) -> dict:
     """
