@@ -248,6 +248,10 @@ def run_parcellation_pipeline():
     logger.info("input dataset path: " + input_dataset)
     logger.info("input dataset name: " + input_dataset_description['Name'])
 
+    # Check we have a derivative dataset
+    if input_dataset_description.get('DatasetType', None) != 'derivative':
+        raise ValueError('input dataset is not a BIDS derivatives dataset')
+
     # add this container to the GeneratedBy, if needed. This also checks the consistency of the templateflow location
     bids_helpers.update_output_dataset(args.input_dataset, input_dataset_description['Name'])
 
