@@ -329,6 +329,7 @@ def run_parcellation_pipeline():
                                             longitudinal=args.longitudinal, thickness_bids=t1w_thickness_bids,
                                             hoa_parcellation_bids=hoa_parc_bids, segmentation_bids=segmentation_bids)
 
+                logger.info("Done processing T1w image: " + t1w_bids.get_uri(relative=False))
             except Exception as e:
                 logger.error(f"Caught {type(e)} during processing of {str(t1w_bids)}")
                 # Print stack trace
@@ -410,7 +411,8 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
 
     if mask_dkt31 or propagate_dkt31:
         dkt31 = True
-        hoa = True  # dkt31 masking or propagation requires hoa
+        if propagate_dkt31:
+            hoa = True  # dkt31 propagation requires hoa
         if thickness_bids is not None:
             cortical_mask = ants_helpers.threshold_image(thickness_bids.get_path(), work_dir, lower=0.001)
             cortical_mask_source = thickness_bids.get_uri(relative=True)
@@ -562,7 +564,6 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
                 make_parcellation_qc_plots(t1w_biascorr_bids, brain_mask_bids, dkt31_propagated_bids, 'dkt31',
                                            'DKT31Propagated', work_dir)
 
-
     if cerebellum:
 
         logger.info("Starting cerebellum parcellation")
@@ -598,7 +599,7 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
                 cerebellum_nocsf_mask = ants_helpers.threshold_image(parcellation_results['hoa_masked']['image'].get_path(),
                                                                      work_dir, 29, 32)
                 cerebellum_masked_file = ants_helpers.apply_mask(cerebellum_segmentations['parcellation'],
-                                                                 cerebellum_nocsf_mask)
+                                                                 cerebellum_nocsf_mask, work_dir)
                 cerebellum_masked_bids = bids_helpers.image_to_bids(
                     cerebellum_masked_file, t1w_bids.get_ds_path(),t1w_bids.get_derivative_rel_path_prefix() +
                     "_seg-cerebellumMasked_dseg.nii.gz",

@@ -28,7 +28,7 @@ classifiers = [
 
 dependencies = [
     "antspynet",
-    "antspyx>=0.5.4",
+    "antspyx>=0.6.1",
     "filelock",
     "imageio",
     "pillow",

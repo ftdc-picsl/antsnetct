@@ -124,6 +124,9 @@ def gamma_correction(image, gamma, work_dir):
     corrected_image: str
         Path to gamma corrected image.
     """
+    if gamma <= 0:
+        raise ValueError("Gamma must be greater than 0.")
+
     img = ants.image_read(image)
 
     corrected_img = ants.image_clone(img)
