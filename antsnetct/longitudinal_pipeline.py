@@ -97,8 +97,10 @@ def longitudinal_analysis():
                                 ['antspynet_atropos', 'antspynet', 'cx_atropos', 'cx'], default='antspynet_atropos')
     sst_parser.add_argument("--legacy-deep-atropos", help="Use the legacy deep_atropos network. Has no effect if deep_atropos "
                             "is not called", action='store_true')
-    sst_parser.add_argument("--sst-atropos-prior-weight", help="Prior weight in the SST segmenation. A higher value "
+    sst_parser.add_argument("--sst-atropos-prior-weight", help="Prior weight in the SST segmentation. A higher value "
                             "gives more weight to the priors", type=float, default=0.25)
+    sst_parser.add_argument("--sst-atropos-mrf-weight", help="MRF weight in the SST segmentation. This encourages more spatial "
+                            "smoothness.", type=float, default=0.1)
 
     segmentation_parser = parser.add_argument_group('Segmentation arguments for session processing')
     segmentation_parser.add_argument("--atropos-n4-iterations", help="Number of iterations of atropos-n4",
@@ -107,6 +109,10 @@ def longitudinal_analysis():
                                      type=int, default=10)
     segmentation_parser.add_argument("--atropos-prior-weight", help="Prior weight for Atropos in the session space",
                                      type=float, default=0.5)
+    segmentation_parser.add_argument("--atropos-mrf-weight", help="MRF weight for Atropos. This encourages more spatial "
+                                     "smoothness.", type=float, default=0.05)
+    segmentation_parser.add_argument("--atropos-likelihood-model", help="Likelihood model for Atropos. Recommended options are "
+                                     "'Gaussian' or 'HistogramParzenWindows'.", type=str, default='Gaussian')
     segmentation_parser.add_argument("--prior-smoothing-sigma", help="Sigma for smoothing the priors before session "
                                      "segmentation, in voxels. Experimental", type=float, default=0)
     segmentation_parser.add_argument("--prior-csf-gamma", help="Gamma value for CSF prior. Experimental",
@@ -426,7 +432,8 @@ def longitudinal_analysis():
 
             sst_seg = segment_sst(sst_bids, unified_mask_sst_bids, sst_prior_seg_probabilities, working_dir,
                                   segmentation_method=sst_segmentation_method,
-                                  atropos_prior_weight=args.sst_atropos_prior_weight)
+                                  atropos_prior_weight=args.sst_atropos_prior_weight,
+                                  atropos_mrf_weight=args.sst_atropos_mrf_weight)
 
             # Normalize SST intensity to aid visual comparison
             sst_winsorized = ants_helpers.winsorize_intensity(sst_bids.get_path(), unified_mask_sst, working_dir,
@@ -475,7 +482,8 @@ def longitudinal_analysis():
                 seg_n4 = cross_sectional_pipeline.segment_and_bias_correct(
                     long_preproc_t1w_bids[idx], brain_mask_bids, t1w_priors, working_dir, denoise=True, do_atropos_n4=True,
                     atropos_n4_iterations=args.atropos_n4_iterations, atropos_iterations=args.atropos_seg_iterations,
-                    atropos_prior_weight=args.atropos_prior_weight)
+                    atropos_prior_weight=args.atropos_prior_weight, atropos_mrf_weight=args.atropos_mrf_weight,
+                    atropos_likelihood_model=args.atropos_likelihood_model)
                 # Compute thickness
                 logger.info(f"Cortical thickness for session {idx + 1}")
                 thickness = cross_sectional_pipeline.cortical_thickness(seg_n4, working_dir,
@@ -782,7 +790,7 @@ def get_cx_sst_segmentation_priors(sst_bids, cx_t1w_preproc_bids, cx_sst_transfo
 
 
 def segment_sst(sst_bids, sst_brain_mask_bids, segmentation_priors, work_dir, segmentation_method='atropos',
-                atropos_prior_weight=0.25):
+                atropos_prior_weight=0.25, atropos_mrf_weight=0.1):
     """Segment the SST
 
     If the segmentation_method is 'none', the prior segmentation, generated with deep_atropos) is copied to the output.
@@ -805,6 +813,8 @@ def segment_sst(sst_bids, sst_brain_mask_bids, segmentation_priors, work_dir, se
     atropos_prior_weight : float, optional
         Prior weight for Atropos. Default is 0.25. Minimum useful value is 0.2, below this the priors are not very well
         constrained and you will see priors that overlap in intensity (like SGM and CBM) appear in the wrong places.
+    atropos_mrf_weight : float, optional
+        MRF weight for Atropos. Default is 0.1. This encourages more spatial smoothness.
 
     Returns:
     --------
@@ -825,7 +835,7 @@ def segment_sst(sst_bids, sst_brain_mask_bids, segmentation_priors, work_dir, se
 
         seg_output = ants_helpers.atropos_segmentation(sst_bids.get_path(), sst_brain_mask_bids.get_path(), work_dir,
                                                        prior_probabilities=atropos_prior_images,
-                                                       prior_weight=atropos_prior_weight)
+                                                       prior_weight=atropos_prior_weight, mrf_weight=atropos_mrf_weight)
 
         # remap the segmentation posteriors to BIDS labels
         seg_output['segmentation_image'] = ants_helpers.posteriors_to_segmentation(seg_output['posteriors'], work_dir)
