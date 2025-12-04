@@ -333,7 +333,7 @@ class BIDSImage:
 
 
     def __str__(self):
-        return f"BIDSImage: {self.get_uri()}"
+        return f"BIDSImage: {self.get_uri(relative=False)}"
 
 
 class TemplateImage:

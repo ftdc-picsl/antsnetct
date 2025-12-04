@@ -931,9 +931,9 @@ def make_parcellation_qc_plots(t1w_bids, brain_mask_bids, parcellation_bids, col
     output_desc_cor = f"qcParcellation{color_map_title}Cor"
 
     tiled_ax = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=parcellation_rgb,
-                                                      overlay_alpha=0.3, axis=2, pad=('mask+5'), slice_spec=(3,'mask','mask'))
+                                                      overlay_alpha=0.3, axis=2, pad='mask+5', slice_spec=(3,'mask','mask'))
     tiled_cor = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=parcellation_rgb,
-                                                       overlay_alpha=0.3, axis=1, pad=('mask+5'), slice_spec=(3,'mask','mask'))
+                                                       overlay_alpha=0.3, axis=1, pad='mask+5', slice_spec=(3,'mask','mask'))
 
     # Could make these derivatives of T1w or the parcellation, use the latter because that's what we do for the TSV files
     system_helpers.copy_file(tiled_ax, parcellation_bids.get_derivative_path_prefix() + f"_desc-{output_desc_ax}.png")

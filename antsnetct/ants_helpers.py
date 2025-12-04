@@ -1924,7 +1924,7 @@ def resample_image_by_spacing(image, target_spacing, work_dir, interpolation='Li
     return resampled_file
 
 
-def pad_image(image, pad_spec, work_dir, pad_to_shape=False):
+def pad_image(image, pad_spec, work_dir, pad_to_shape=False, image_is_rgb=False):
     """Pad an image with zeros
 
     Parameters:
@@ -1932,13 +1932,17 @@ def pad_image(image, pad_spec, work_dir, pad_to_shape=False):
     image : str
         Path to image
     pad_spec : list of int
-        Padding in voxels, e.g. [10, 10, 10] pads by 10 voxels on each side in x, y, z.
+        Total padding in voxels, e.g. [10, 10, 10] pads by 5 voxels on each side in x, y, z, or a target shape,
+        e.g. [128, 128, 128].
 
-        If pad_to_shape=True, the image will be padded until it reaches the specified size. If it is already larger, it will
+        If pad_to_shape=True, the image will be padded until it reaches the specified shape. If it is already larger, it will
         not be altered.
 
         If pad_to_shape=False, this can also be a list of list, e.g. [[0, 10], [10, 10], [5, 0]] to pad different amounts in
         each dimension.
+    image_is_rgb : bool
+        If true, the image is treated as an RGB image with 3 spatial dimensions and 3 color components. If false, a
+        multicomponent image is treated as a regular vector image.
     work_dir : str
         Path to working directory
 
@@ -1951,14 +1955,27 @@ def pad_image(image, pad_spec, work_dir, pad_to_shape=False):
 
     img = ants.image_read(image)
 
-    if pad_to_shape:
-        padded = ants.pad_image(img, shape=pad_spec)
-    else:
-        padded = ants.pad_image(img, pad_width=pad_spec)
-
     padded_file = f"{tmp_file_prefix}_padded.nii.gz"
 
-    ants.image_write(padded, padded_file)
+    if img.has_components:
+        # Need to split and then merge
+        components = ants.split_channels(img)
+        if image_is_rgb and len(components) != 3:
+            raise ValueError("Image is RGB but does not have 3 components.")
+        padded_components = [ ants.pad_image(c, shape=pad_spec) if pad_to_shape else ants.pad_image(c, pad_width=pad_spec)
+                              for c in components ]
+        padded = ants.merge_channels(padded_components)
+        if image_is_rgb:
+            padded = ants.vector_to_rgb(padded)
+
+        ants.image_write(padded, padded_file)
+    else:
+        if pad_to_shape:
+            padded = ants.pad_image(img, shape=pad_spec)
+        else:
+            padded = ants.pad_image(img, pad_width=pad_spec)
+
+        ants.image_write(padded, padded_file)
 
     if get_verbose():
         if pad_to_shape:
@@ -2146,7 +2163,7 @@ def convert_segmentation_image_to_rgb(segmentation_image, colormap, work_dir, ma
 
 
 def create_tiled_mosaic(scalar_image, mask, work_dir, overlay=None, tile_shape=(-1, -1), overlay_alpha=0.25, axis=2,
-                        pad=('mask+4'), slice_spec=(3,'mask+8','mask-8'), flip_spec=(1,1), title_bar_text=None,
+                        pad='mask+4', slice_spec=(3,'mask+8','mask-8'), flip_spec=(1,1), title_bar_text=None,
                         title_bar_font_size=60):
     """Create a tiled mosaic of a scalar image using a colormap.
 
@@ -2159,7 +2176,7 @@ def create_tiled_mosaic(scalar_image, mask, work_dir, overlay=None, tile_shape=(
     work_dir : str
         Path to working directory.
     overlay : str, optional
-        Path to overlay image.
+        Path to an overlay RGB image.
     tile_shape : list, optional
         Shape of the mosaic. Default is (-1,-1), which attempts to tile in a square shape.
     overlay_alpha : float, optional
@@ -2167,7 +2184,8 @@ def create_tiled_mosaic(scalar_image, mask, work_dir, overlay=None, tile_shape=(
     axis : int, optional
         Axis to slice along, one of (0,1,2) for (x,y,z) respectively. Default is 2 = z.
     pad : str, optional
-        Padding for the mosaic tiles. Default is 'mask+4', which puts 4 pixels of space around the bounding box of the mask.
+        Padding for the mosaic tiles. Either 'mask[+-]N' or 'N', where N is an integer. Default is 'mask+4', which puts 4
+        pixels of space around the bounding box of the mask.
     slice_spec : list, optional
         Slice specification in the form (interval, min, max). By default, the interval is 3, and the min and max are set to
         'mask+8' and 'mask-8' respectively. This starts at an offset of +8 from the first slice within the mask, and ends
@@ -2190,12 +2208,37 @@ def create_tiled_mosaic(scalar_image, mask, work_dir, overlay=None, tile_shape=(
 
     mosaic_file = f"{tmp_file_prefix}_mosaic.png"
 
-    cmd = ['CreateTiledMosaic', '-i', scalar_image,  '-x', mask, '-o', mosaic_file, '-t',
+    # If pad contains 'mask', we need to extract the amount and pad the inputs accordingly
+    # This avoids an ANTs bug but has the pleasant side effect of ensuring that the user
+    # can always have as much padding as they request, even if the mask is close to the image boundary
+    scalar_input = scalar_image
+    mask_input = mask
+    overlay_input = overlay
+
+    if isinstance(pad, str) and 'mask' in pad:
+        # pad_image splits the pad_amount between both sides in each dimension
+        # CreateTiledMosaic pads by the specified amount on each side, so we double it here
+        pad_amount = 2 * (int(pad.split('+')[-1]) + 1)
+        pad_spec = [pad_amount, pad_amount, pad_amount]
+        if get_verbose():
+            logger.info(f"Padding inputs for tile mosaic by {pad_amount} voxels")
+        padded_scalar = pad_image(scalar_image, pad_spec, work_dir, pad_to_shape=False)
+        padded_mask = pad_image(mask, pad_spec, work_dir, pad_to_shape=False)
+        padded_overlay = None
+        if overlay is not None:
+            padded_overlay = pad_image(overlay, pad_spec, work_dir, pad_to_shape=False, image_is_rgb=True)
+
+        scalar_input = padded_scalar
+        mask_input = padded_mask
+        overlay_input = padded_overlay
+
+
+    cmd = ['CreateTiledMosaic', '-i', scalar_input,  '-x', mask_input, '-o', mosaic_file, '-t',
            f"{tile_shape[0]}x{tile_shape[1]}", '-p', pad, '-a', str(overlay_alpha), '-s',
            f"[{slice_spec[0]},{slice_spec[1]},{slice_spec[2]}]", '-d', str(axis), "-f", f"{flip_spec[0]}x{flip_spec[1]}"]
 
     if overlay is not None:
-        cmd.extend(['-r', overlay])
+        cmd.extend(['-r', overlay_input])
 
     run_command(cmd)
 
@@ -2401,6 +2444,8 @@ def cerebellum_parcellation(image, work_dir, cerebellum_mask=None):
     if cerebellum_mask is not None:
         # If a cerebellum mask is provided, use it to define the segmentation mask
         cerebellum_mask_image = ants.image_read(cerebellum_mask)
+    else:
+        cerebellum_mask_image = None
 
     cerebellar_labels = antspynet.cerebellum_morphology(img, do_preprocessing=True, cerebellum_mask=cerebellum_mask_image,
                                                         compute_thickness_image=False, verbose=get_verbose())
