@@ -1124,9 +1124,9 @@ def make_segmentation_qc_plots(t1w_bids, mask_bids, seg_bids, work_dir):
     seg_rgb = ants_helpers.convert_scalar_image_to_rgb(seg_image, work_dir, colormap='antsct')
 
     tiled_seg_ax = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=seg_rgb, overlay_alpha=0.2,
-                                                    axis=2, pad=('mask+5'), slice_spec=(3,'mask','mask'))
+                                                    axis=2, pad='mask+5', slice_spec=(3,'mask','mask'))
     tiled_seg_cor = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=seg_rgb, overlay_alpha=0.2,
-                                                    axis=1, pad=('mask+5'), slice_spec=(3,'mask','mask'))
+                                                    axis=1, pad='mask+5', slice_spec=(3,'mask','mask'))
     system_helpers.copy_file(tiled_seg_ax, t1w_bids.get_derivative_path_prefix() + f"_desc-{output_desc_ax}.png")
     system_helpers.copy_file(tiled_seg_cor, t1w_bids.get_derivative_path_prefix() + f"_desc-{output_desc_cor}.png")
 
@@ -1172,9 +1172,9 @@ def make_thickness_qc_plots(t1w_bids, mask_bids, thick_bids, work_dir):
     output_desc_cor = f"qcThicknessCor"
 
     tiled_thick_ax = ants_helpers.create_tiled_mosaic(scalar_image, thick_mask, work_dir, overlay=thick_rgb,
-                                                      overlay_alpha=1, axis=2, pad=('mask+5'), slice_spec=(3,'mask','mask'))
+                                                      overlay_alpha=1, axis=2, pad='mask+5', slice_spec=(3,'mask','mask'))
     tiled_thick_cor = ants_helpers.create_tiled_mosaic(scalar_image, thick_mask, work_dir, overlay=thick_rgb,
-                                                       overlay_alpha=1, axis=1, pad=('mask+5'), slice_spec=(3,'mask','mask'))
+                                                       overlay_alpha=1, axis=1, pad='mask+5', slice_spec=(3,'mask','mask'))
 
     system_helpers.copy_file(tiled_thick_ax, t1w_bids.get_derivative_path_prefix() + f"_desc-{output_desc_ax}.png")
     system_helpers.copy_file(tiled_thick_cor, t1w_bids.get_derivative_path_prefix() + f"_desc-{output_desc_cor}.png")
@@ -1261,11 +1261,11 @@ def compute_qc_stats(t1w_bids, mask_bids, seg_bids, work_dir, thick_bids=None, t
 def make_registration_qc_image(template, template_mask, t1w_bids, t1w_to_template_transform, work_dir):
     # Tile axial slices of the template and the T1w brain in the template space
     template_ax = ants_helpers.create_tiled_mosaic(template.get_path(), template_mask, work_dir, axis=2,
-                                                   pad=5, slice_spec=(7,'mask','mask'))
+                                                   pad='5', slice_spec=(7,'mask','mask'))
 
     warped = ants_helpers.apply_transforms(template.get_path(), t1w_bids.get_path(), t1w_to_template_transform, work_dir)
 
-    warped_ax = ants_helpers.create_tiled_mosaic(warped, template_mask, work_dir, axis=2, pad=5, slice_spec=(7,'mask','mask'))
+    warped_ax = ants_helpers.create_tiled_mosaic(warped, template_mask, work_dir, axis=2, pad='5', slice_spec=(7,'mask','mask'))
 
     # Create a GIF that flips between the two images
     gif_path = _create_registration_gif(template_ax, warped_ax, work_dir, fixed_text="Template",

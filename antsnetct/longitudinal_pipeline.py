@@ -1015,9 +1015,9 @@ def make_sst_jacobian_plots(sst_bids, sst_mask_bids, session_sst_jacobian_bids, 
                                                        min_value=-0.56, max_value=0.56)
 
     tiled_jac_ax = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=jac_rgb, overlay_alpha=0.6,
-                                                    axis=2, pad=('mask+5'), slice_spec=(3,'mask','mask'))
+                                                    axis=2, pad='mask+5', slice_spec=(3,'mask','mask'))
     tiled_jac_cor = ants_helpers.create_tiled_mosaic(scalar_image, mask_image, work_dir, overlay=jac_rgb, overlay_alpha=0.6,
-                                                    axis=1, pad=('mask+5'), slice_spec=(3,'mask','mask'))
+                                                    axis=1, pad='mask+5', slice_spec=(3,'mask','mask'))
     system_helpers.copy_file(tiled_jac_ax, session_sst_jacobian_bids.get_derivative_path_prefix() +
                              '_space-sst_desc-qcLogJacAx.png')
     system_helpers.copy_file(tiled_jac_cor, session_sst_jacobian_bids.get_derivative_path_prefix() +
