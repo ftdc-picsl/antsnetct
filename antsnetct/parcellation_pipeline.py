@@ -330,6 +330,12 @@ def run_parcellation_pipeline():
                                             hoa_parcellation_bids=hoa_parc_bids, segmentation_bids=segmentation_bids)
 
                 logger.info("Done processing T1w image: " + t1w_bids.get_uri(relative=False))
+
+                if args.keep_workdir.lower() == 'always':
+                    complete_workdir = os.path.join(output_dataset, t1w_bids.get_derivative_rel_path_prefix() + "_workdir")
+                    logger.info("Saving working directory to " + complete_workdir)
+                    shutil.copytree(working_dir, complete_workdir, copy_function=shutil.copy)
+
             except Exception as e:
                 logger.error(f"Caught {type(e)} during processing of {str(t1w_bids)}")
                 # Print stack trace
@@ -337,7 +343,8 @@ def run_parcellation_pipeline():
                 debug_workdir = os.path.join(output_dataset, t1w_bids.get_derivative_rel_path_prefix() + "_workdir")
                 if args.keep_workdir.lower() != 'never':
                     logger.info("Saving working directory to " + debug_workdir)
-                    shutil.copytree(working_dir, debug_workdir)
+                    shutil.copytree(working_dir, debug_workdir, copy_function=shutil.copy)
+
 
 
 def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=None, segmentation_bids=None,
