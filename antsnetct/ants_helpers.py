@@ -2192,8 +2192,7 @@ def create_tiled_mosaic(scalar_image, mask, work_dir, overlay=None, tile_shape=(
 
     cmd = ['CreateTiledMosaic', '-i', scalar_image,  '-x', mask, '-o', mosaic_file, '-t',
            f"{tile_shape[0]}x{tile_shape[1]}", '-p', pad, '-a', str(overlay_alpha), '-s',
-           f"[{slice_spec[0]},{slice_spec[1]},{slice_spec[2]}]", '-d', str(axis), '-p', pad,
-           "-f", f"{flip_spec[0]}x{flip_spec[1]}"]
+           f"[{slice_spec[0]},{slice_spec[1]},{slice_spec[2]}]", '-d', str(axis), "-f", f"{flip_spec[0]}x{flip_spec[1]}"]
 
     if overlay is not None:
         cmd.extend(['-r', overlay])

@@ -378,7 +378,7 @@ def cross_sectional_analysis():
                         logger.info("Keeping working directory: " + working_dir)
                         shutil.copytree(working_dir, os.path.join(output_dataset,
                                                                   preproc_t1w_bids.get_derivative_rel_path_prefix() +
-                                                                  "_workdir"))
+                                                                  "_workdir"), copy_function=shutil.copy)
                     continue
 
                 logger.info("Computing cortical thickness")
@@ -410,7 +410,7 @@ def cross_sectional_analysis():
                 if args.keep_workdir.lower() == 'always':
                     logger.info("Keeping working directory: " + working_dir)
                     shutil.copytree(working_dir, os.path.join(output_dataset, preproc_t1w_bids.get_derivative_rel_path_prefix()
-                                                              + "_workdir"))
+                                                              + "_workdir"), copy_function=shutil.copy)
 
                 logger.info(f"Finished processing {t1w_bids.get_uri(relative=False)}")
 
@@ -421,7 +421,7 @@ def cross_sectional_analysis():
                 debug_workdir = os.path.join(output_dataset, t1w_bids.get_derivative_rel_path_prefix() + "_workdir")
                 if args.keep_workdir.lower() != 'never':
                     logger.info("Saving working directory to " + debug_workdir)
-                    shutil.copytree(working_dir, debug_workdir)
+                    shutil.copytree(working_dir, debug_workdir, copy_function=shutil.copy)
 
 
 def preprocess_t1w(t1w_bids, output_dataset, work_dir, orient='LPI', trim_neck=True, pad=10):

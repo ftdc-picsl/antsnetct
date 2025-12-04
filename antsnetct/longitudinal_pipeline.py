@@ -526,7 +526,7 @@ def longitudinal_analysis():
             if args.keep_workdir.lower() == 'always':
                 debug_workdir = os.path.join(args.output_dataset, f"sub-{args.participant}", f"sub-{args.participant}_workdir")
                 logger.info(f"Saving working directory {working_dir} to {debug_workdir}")
-                shutil.copytree(working_dir, debug_workdir)
+                shutil.copytree(working_dir, debug_workdir, copy_function=shutil.copy)
 
         except Exception as e:
             logger.error(f"Caught {type(e)} during processing of {args.participant}")
@@ -535,7 +535,7 @@ def longitudinal_analysis():
             debug_workdir = os.path.join(args.output_dataset, f"sub-{args.participant}", f"sub-{args.participant}_workdir")
             if args.keep_workdir.lower() != 'never':
                 logger.info(f"Saving working directory {working_dir} to {debug_workdir}")
-                shutil.copytree(working_dir, debug_workdir)
+                shutil.copytree(working_dir, debug_workdir, copy_function=shutil.copy)
 
 
 def preprocess_sst_input(cx_biascorr_t1w_bids, group_template, group_template_mask, work_dir, sst_isotropic_res=None):
