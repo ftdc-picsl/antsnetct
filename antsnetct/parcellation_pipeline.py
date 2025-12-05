@@ -317,8 +317,8 @@ def run_parcellation_pipeline():
                 antsnet_parc = antsnet_parcellation(t1w_bids, t1w_brain_mask_bids, working_dir, dkt31=args.dkt31,
                                                     mask_dkt31=args.dkt31_masked, propagate_dkt31=args.dkt31_propagated,
                                                     hoa=args.hoa, mask_hoa=args.hoa_masked, cerebellum=args.cerebellum,
-                                                    segmentation_bids=seg_bids, thickness_bids=t1w_thickness_bids,
-                                                    t1w_biascorr_bids=t1w_biascorr_bids)
+                                                    mask_cerebellum=args.cerebellum_masked, segmentation_bids=seg_bids,
+                                                    thickness_bids=t1w_thickness_bids, t1w_biascorr_bids=t1w_biascorr_bids)
 
                 # Do atlas-based parcellation if requested
                 if atlas_label_config is not None:
@@ -428,7 +428,9 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
             cortical_mask_source = segmentation_bids.get_uri(relative=True)
         else:
             raise ValueError("antsnet thickness or segmentation image is required for DKT31 masking or propagation")
+
     if mask_hoa:
+        hoa = True
         if segmentation_bids is None:
             raise ValueError("antsnetct segmentation is required to mask HOA parcellation")
 
@@ -436,6 +438,9 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
         logger.info("Starting Harvard-Oxford subcortical parcellation")
         hoa_bids = t1w_bids.get_derivative_image("_seg-hoa_dseg.nii.gz")
         parcellation_results['hoa'] = dict()
+
+        hoa_scalar_images = [t1w_biascorr_bids]
+        hoa_scalar_descriptions = ['t1wIntensity']
 
         if hoa_bids is not None:
             logger.info("Harvard-Oxford parcellation already exists at " + hoa_bids.get_uri(relative=False))
@@ -454,38 +459,51 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
             parcellation_results['hoa']['label_definitions'] = hoa_bids.get_path().replace('.nii.gz', '.tsv')
             copy_file(get_label_definitions_path('hoa_subcortical'), parcellation_results['hoa']['label_definitions'])
 
-            if mask_hoa:
-                hoa_mask_file = remove_csf_from_hoa_tissue_labels(hoa_file, segmentation_bids.get_path(), work_dir)
-                hoa_description = 'ANTsPyNet Harvard-Oxford Subcortical, tissue labels masked to remove CSF voxels',
-                hoa_mask_sources = [t1w_bids.get_uri(relative=True), segmentation_bids.get_uri(relative=True)]
-                hoa_mask_bids = bids_helpers.image_to_bids(hoa_mask_file, t1w_bids.get_ds_path(),
-                                                           t1w_bids.get_derivative_rel_path_prefix() +
-                                                           "_seg-hoaMasked_dseg.nii.gz",
-                                                           metadata={'Description': hoa_description, 'Manual': False,
-                                                                     'Sources': hoa_mask_sources})
-                parcellation_results['hoa_masked'] = dict()
-                parcellation_results['hoa_masked']['image'] = hoa_mask_bids
-                parcellation_results['hoa_masked']['label_definitions'] = hoa_mask_bids.get_path().replace('.nii.gz', '.tsv')
-                copy_file(get_label_definitions_path('hoa_subcortical'),
-                          parcellation_results['hoa_masked']['label_definitions'])
-
-            hoa_scalar_images = [t1w_biascorr_bids]
-            hoa_scalar_descriptions = ['t1wIntensity']
-
             make_label_stats(hoa_bids, parcellation_results['hoa']['label_definitions'], work_dir,
                              scalar_images=hoa_scalar_images, scalar_descriptions=hoa_scalar_descriptions)
             make_parcellation_qc_plots(t1w_biascorr_bids, brain_mask_bids, hoa_bids, 'hoa', 'HOA', work_dir)
 
-            if mask_hoa:
+        if mask_hoa:
+            hoa_mask_bids = t1w_bids.get_derivative_image("_seg-hoaMasked_dseg.nii.gz")
+
+            if hoa_mask_bids is not None:
+                logger.info("Masked Harvard-Oxford parcellation already exists at " +
+                            hoa_mask_bids.get_uri(relative=False))
+                parcellation_results['hoa_masked'] = dict()
+                parcellation_results['hoa_masked']['image'] = hoa_mask_bids
+                parcellation_results['hoa_masked']['label_definitions'] = hoa_mask_bids.get_path().replace('.nii.gz', '.tsv')
+            else:
+                hoa_mask_file = remove_csf_from_hoa_tissue_labels(hoa_bids.get_path(), segmentation_bids.get_path(), work_dir)
+                hoa_mask_description = 'ANTsPyNet Harvard-Oxford Subcortical, tissue labels masked to remove CSF voxels',
+                hoa_mask_sources = [t1w_bids.get_uri(relative=True), segmentation_bids.get_uri(relative=True)]
+                hoa_mask_bids = bids_helpers.image_to_bids(hoa_mask_file, t1w_bids.get_ds_path(),
+                                                           t1w_bids.get_derivative_rel_path_prefix() +
+                                                           "_seg-hoaMasked_dseg.nii.gz",
+                                                           metadata={'Description': hoa_mask_description, 'Manual': False,
+                                                                    'Sources': hoa_mask_sources})
+                parcellation_results['hoa_masked'] = dict()
+                parcellation_results['hoa_masked']['image'] = hoa_mask_bids
+                parcellation_results['hoa_masked']['label_definitions'] = hoa_mask_bids.get_path().replace('.nii.gz', '.tsv')
+                copy_file(get_label_definitions_path('hoa_subcortical'),
+                            parcellation_results['hoa_masked']['label_definitions'])
+
                 make_label_stats(hoa_mask_bids, parcellation_results['hoa_masked']['label_definitions'], work_dir,
                                  scalar_images=hoa_scalar_images, scalar_descriptions=hoa_scalar_descriptions)
-                make_parcellation_qc_plots(t1w_biascorr_bids, brain_mask_bids, hoa_mask_bids, 'hoa', 'HOAMasked',
-                                           work_dir)
+                make_parcellation_qc_plots(t1w_biascorr_bids, brain_mask_bids, hoa_mask_bids, 'hoa', 'HOAMasked', work_dir)
 
     if dkt31:
+
         logger.info("Starting DKT31 parcellation")
         dkt31_bids = t1w_bids.get_derivative_image("_seg-dkt31_dseg.nii.gz")
         parcellation_results['dkt31'] = dict()
+
+        dkt_scalar_images = [t1w_biascorr_bids]
+        dkt_scalar_descriptions = ['t1wIntensity']
+
+        if thickness_bids is not None:
+            logger.info("Sampling thickness for DKT31 parcellation")
+            dkt_scalar_images.append(thickness_bids)
+            dkt_scalar_descriptions.append('corticalThickness')
 
         if dkt31_bids is not None:
             logger.info("DKT31 parcellation already exists at " + dkt31_bids.get_uri(relative=False))
@@ -506,31 +524,61 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
             parcellation_results['dkt31']['label_definitions'] = dkt31_bids.get_path().replace('.nii.gz', '.tsv')
             copy_file(get_label_definitions_path('dkt31'), parcellation_results['dkt31']['label_definitions'])
 
-            if mask_dkt31:
-                logger.info("Masking DKT31 parcellation with cortical mask")
+            make_label_stats(dkt31_bids, parcellation_results['dkt31']['label_definitions'], work_dir,
+                             scalar_images=dkt_scalar_images, scalar_descriptions=dkt_scalar_descriptions)
+            make_parcellation_qc_plots(t1w_biascorr_bids, brain_mask_bids, dkt31_bids, 'dkt31', 'DKT31', work_dir)
 
+        if mask_dkt31:
+            logger.info("Masking DKT31 parcellation with cortical mask")
+
+            dkt31_mask_bids = t1w_bids.get_derivative_image("_seg-dkt31Masked_dseg.nii.gz")
+
+            if dkt31_mask_bids is not None:
+                logger.info("Masked DKT31 parcellation already exists at " +
+                            dkt31_mask_bids.get_uri(relative=False))
+                parcellation_results['dkt31_masked'] = dict()
+                parcellation_results['dkt31_masked']['image'] = dkt31_mask_bids
+                parcellation_results['dkt31_masked']['label_definitions'] = \
+                    dkt31_mask_bids.get_path().replace('.nii.gz', '.tsv')
+            else:
                 dkt31_mask_sources = [t1w_bids.get_uri(relative=True), cortical_mask_source]
-                dkt31_mask_file = ants_helpers.apply_mask(dkt31_file, cortical_mask, work_dir)
+                dkt31_mask_file = ants_helpers.apply_mask(dkt31_bids.get_path(), cortical_mask, work_dir)
 
                 dkt31_mask_bids = bids_helpers.image_to_bids(
                     dkt31_mask_file, t1w_bids.get_ds_path(), t1w_bids.get_derivative_rel_path_prefix() +
                     "_seg-dkt31Masked_dseg.nii.gz", metadata={'Description': 'ANTsPyNet DKT31 masked to cortex',
-                                                              'Manual': False, 'Sources': dkt31_mask_sources}
+                                                                'Manual': False, 'Sources': dkt31_mask_sources}
                 )
+
                 parcellation_results['dkt31_masked'] = dict()
                 parcellation_results['dkt31_masked']['image'] = dkt31_mask_bids,
                 parcellation_results['dkt31_masked']['label_definitions'] = dkt31_mask_bids.get_path().replace('.nii.gz',
-                                                                                                               '.tsv')
+                                                                                                                '.tsv')
                 copy_file(get_label_definitions_path('dkt31'), parcellation_results['dkt31_masked']['label_definitions'])
 
-            if propagate_dkt31:
-                logger.info("Propagating DKT31 parcellation to cortical mask")
+                make_label_stats(dkt31_mask_bids, parcellation_results['dkt31_masked']['label_definitions'], work_dir,
+                                 scalar_images=dkt_scalar_images, scalar_descriptions=dkt_scalar_descriptions)
+                make_parcellation_qc_plots(t1w_biascorr_bids, brain_mask_bids, dkt31_mask_bids, 'dkt31', 'DKT31Masked',
+                                           work_dir)
 
+        if propagate_dkt31:
+            logger.info("Propagating DKT31 parcellation to cortical mask")
+
+            dkt31_propagated_bids = t1w_bids.get_derivative_image("_seg-dkt31Propagated_dseg.nii.gz")
+
+            if dkt31_propagated_bids is not None:
+                logger.info("Propagated DKT31 parcellation already exists at " +
+                            dkt31_propagated_bids.get_uri(relative=False))
+                parcellation_results['dkt31_propagated'] = dict()
+                parcellation_results['dkt31_propagated']['image'] = dkt31_propagated_bids
+                parcellation_results['dkt31_propagated']['label_definitions'] = \
+                    dkt31_propagated_bids.get_path().replace('.nii.gz', '.tsv')
+            else:
                 dkt31_propagated_sources = [t1w_bids.get_uri(relative=True), cortical_mask_source,
                                             hoa_bids.get_uri(relative=True)]
                 # Fill hippocampus and amygdala using HOA labels to prevent propagation of cortical labels into these structures
-                [tmp_dkt31, tmp_labels] = ants_helpers.add_labels_to_segmentation(dkt31_file, hoa_bids.get_path(),
-                                                                                  [20,21,22,23], work_dir)
+                [tmp_dkt31, tmp_labels] = ants_helpers.add_labels_to_segmentation(dkt31_bids.get_path(), hoa_bids.get_path(),
+                                                                                    [20,21,22,23], work_dir)
                 tmp_dkt31 = ants_helpers.propagate_labels_through_mask(cortical_mask, tmp_dkt31, work_dir)
                 # Now remove the added labels to make the final output
                 dkt31_propagated_file = ants_helpers.remove_labels(tmp_dkt31, tmp_labels, work_dir)
@@ -539,7 +587,7 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
                     dkt31_propagated_file, t1w_bids.get_ds_path(),
                     t1w_bids.get_derivative_rel_path_prefix() + "_seg-dkt31Propagated_dseg.nii.gz",
                     metadata={'Description': 'ANTsPyNet DKT31 propagated to cortical mask', 'Manual': False,
-                              'Sources': dkt31_propagated_sources}
+                                'Sources': dkt31_propagated_sources}
                 )
                 parcellation_results['dkt31_propagated'] = dict()
                 parcellation_results['dkt31_propagated']['image'] = dkt31_propagated_bids
@@ -547,25 +595,6 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
                     dkt31_propagated_bids.get_path().replace('.nii.gz', '.tsv')
                 copy_file(get_label_definitions_path('dkt31'), parcellation_results['dkt31_propagated']['label_definitions'])
 
-            dkt_scalar_images = [t1w_biascorr_bids]
-            dkt_scalar_descriptions = ['t1wIntensity']
-
-            if thickness_bids is not None:
-                logger.info("Sampling thickness for DKT31 parcellation")
-                dkt_scalar_images.append(thickness_bids)
-                dkt_scalar_descriptions.append('corticalThickness')
-
-            make_label_stats(dkt31_bids, parcellation_results['dkt31']['label_definitions'], work_dir,
-                             scalar_images=dkt_scalar_images, scalar_descriptions=dkt_scalar_descriptions)
-            make_parcellation_qc_plots(t1w_biascorr_bids, brain_mask_bids, dkt31_bids, 'dkt31', 'DKT31', work_dir)
-
-            if mask_dkt31:
-                make_label_stats(dkt31_mask_bids, parcellation_results['dkt31_masked']['label_definitions'], work_dir,
-                             scalar_images=dkt_scalar_images, scalar_descriptions=dkt_scalar_descriptions)
-                make_parcellation_qc_plots(t1w_biascorr_bids, brain_mask_bids, dkt31_mask_bids, 'dkt31', 'DKT31Masked',
-                                           work_dir)
-
-            if propagate_dkt31:
                 make_label_stats(dkt31_propagated_bids, parcellation_results['dkt31_propagated']['label_definitions'],
                                  work_dir, scalar_images=dkt_scalar_images, scalar_descriptions=dkt_scalar_descriptions)
                 make_parcellation_qc_plots(t1w_biascorr_bids, brain_mask_bids, dkt31_propagated_bids, 'dkt31',
@@ -576,6 +605,9 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
         logger.info("Starting cerebellum parcellation")
         cerebellum_bids = t1w_bids.get_derivative_image("_seg-cerebellum_dseg.nii.gz")
         parcellation_results['cerebellum'] = dict()
+
+        cerebellum_scalar_images = [t1w_biascorr_bids]
+        cerebellum_scalar_descriptions = ['t1wIntensity']
 
         if cerebellum_bids is not None:
             logger.info("Cerebellum parcellation already exists at " + cerebellum_bids.get_uri(relative=False))
@@ -594,7 +626,6 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
                         'Sources': [t1w_bids.get_uri(relative=True),
                                     parcellation_results['hoa']['image'].get_uri(relative=True)]}
                 )
-
             parcellation_results['cerebellum']['image'] = cerebellum_bids
             # parcellation_results['cerebellum']['tissue_segmentation_image'] = cerebellum_three_tissue_bids
             parcellation_results['cerebellum']['label_definitions'] = \
@@ -602,39 +633,35 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
             copy_file(get_label_definitions_path('antspynet_cerebellum'),
                       parcellation_results['cerebellum']['label_definitions'])
 
-            if mask_cerebellum:
-                cerebellum_nocsf_mask = ants_helpers.threshold_image(parcellation_results['hoa_masked']['image'].get_path(),
-                                                                     work_dir, 29, 32)
-                cerebellum_masked_file = ants_helpers.apply_mask(cerebellum_segmentations['parcellation'],
-                                                                 cerebellum_nocsf_mask, work_dir)
-                cerebellum_masked_bids = bids_helpers.image_to_bids(
-                    cerebellum_masked_file, t1w_bids.get_ds_path(),t1w_bids.get_derivative_rel_path_prefix() +
-                    "_seg-cerebellumMasked_dseg.nii.gz",
-                    metadata={'Description': 'ANTsPyNet Cerebellum masked to remove CSF voxels', 'Manual': False,
-                              'Sources': [t1w_bids.get_uri(relative=True),
-                                          parcellation_results['hoa_masked']['image'].get_uri(relative=True)]}
-                )
-                parcellation_results['cerebellum_masked'] = dict()
-                parcellation_results['cerebellum_masked']['image'] = cerebellum_masked_bids
-                parcellation_results['cerebellum_masked']['label_definitions'] = \
-                    cerebellum_masked_bids.get_path().replace('.nii.gz', '.tsv')
-                copy_file(get_label_definitions_path('antspynet_cerebellum'),
-                          parcellation_results['cerebellum_masked']['label_definitions'])
-
-            cerebellum_scalar_images = [t1w_biascorr_bids]
-            cerebellum_scalar_descriptions = ['t1wIntensity']
-
             make_label_stats(cerebellum_bids, parcellation_results['cerebellum']['label_definitions'], work_dir,
                              scalar_images=cerebellum_scalar_images, scalar_descriptions=cerebellum_scalar_descriptions)
             make_parcellation_qc_plots(t1w_biascorr_bids, brain_mask_bids, cerebellum_bids, 'cerebellum_parcellation',
                                        'Cerebellum', work_dir)
 
-            if mask_cerebellum:
-                make_label_stats(cerebellum_masked_bids, parcellation_results['cerebellum_masked']['label_definitions'],
-                                 work_dir, scalar_images=cerebellum_scalar_images,
-                                 scalar_descriptions=cerebellum_scalar_descriptions)
-                make_parcellation_qc_plots(t1w_biascorr_bids, brain_mask_bids, cerebellum_masked_bids,
-                                           'cerebellum_parcellation', 'CerebellumMasked', work_dir)
+        if mask_cerebellum:
+            cerebellum_nocsf_mask = ants_helpers.threshold_image(parcellation_results['hoa_masked']['image'].get_path(),
+                                                                    work_dir, 29, 32)
+            cerebellum_masked_file = ants_helpers.apply_mask(cerebellum_bids.get_path(),
+                                                                cerebellum_nocsf_mask, work_dir)
+            cerebellum_masked_bids = bids_helpers.image_to_bids(
+                cerebellum_masked_file, t1w_bids.get_ds_path(),t1w_bids.get_derivative_rel_path_prefix() +
+                "_seg-cerebellumMasked_dseg.nii.gz",
+                metadata={'Description': 'ANTsPyNet Cerebellum masked to remove CSF voxels', 'Manual': False,
+                            'Sources': [t1w_bids.get_uri(relative=True),
+                                        parcellation_results['hoa_masked']['image'].get_uri(relative=True)]}
+            )
+            parcellation_results['cerebellum_masked'] = dict()
+            parcellation_results['cerebellum_masked']['image'] = cerebellum_masked_bids
+            parcellation_results['cerebellum_masked']['label_definitions'] = \
+                cerebellum_masked_bids.get_path().replace('.nii.gz', '.tsv')
+            copy_file(get_label_definitions_path('antspynet_cerebellum'),
+                        parcellation_results['cerebellum_masked']['label_definitions'])
+
+            make_label_stats(cerebellum_masked_bids, parcellation_results['cerebellum_masked']['label_definitions'],
+                             work_dir, scalar_images=cerebellum_scalar_images,
+                             scalar_descriptions=cerebellum_scalar_descriptions)
+            make_parcellation_qc_plots(t1w_biascorr_bids, brain_mask_bids, cerebellum_masked_bids, 'cerebellum_parcellation',
+                                       'CerebellumMasked', work_dir)
 
     return parcellation_results
 
