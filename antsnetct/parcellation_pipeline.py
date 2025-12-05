@@ -639,29 +639,38 @@ def antsnet_parcellation(t1w_bids, brain_mask_bids, work_dir, thickness_bids=Non
                                        'Cerebellum', work_dir)
 
         if mask_cerebellum:
-            cerebellum_nocsf_mask = ants_helpers.threshold_image(parcellation_results['hoa_masked']['image'].get_path(),
+            cerebellum_masked_bids = t1w_bids.get_derivative_image("_seg-cerebellumMasked_dseg.nii.gz")
+
+            if cerebellum_masked_bids is not None:
+                logger.info("Masked cerebellum parcellation already exists at " +
+                            cerebellum_masked_bids.get_uri(relative=False))
+                parcellation_results['cerebellum_masked'] = dict()
+                parcellation_results['cerebellum_masked']['image'] = cerebellum_masked_bids
+                parcellation_results['cerebellum_masked']['label_definitions'] = \
+                    cerebellum_masked_bids.get_path().replace('.nii.gz', '.tsv')
+            else:
+                cerebellum_nocsf_mask = ants_helpers.threshold_image(parcellation_results['hoa_masked']['image'].get_path(),
                                                                     work_dir, 29, 32)
-            cerebellum_masked_file = ants_helpers.apply_mask(cerebellum_bids.get_path(),
-                                                                cerebellum_nocsf_mask, work_dir)
-            cerebellum_masked_bids = bids_helpers.image_to_bids(
+                cerebellum_masked_file = ants_helpers.apply_mask(cerebellum_bids.get_path(), cerebellum_nocsf_mask, work_dir)
+                cerebellum_masked_bids = bids_helpers.image_to_bids(
                 cerebellum_masked_file, t1w_bids.get_ds_path(),t1w_bids.get_derivative_rel_path_prefix() +
                 "_seg-cerebellumMasked_dseg.nii.gz",
                 metadata={'Description': 'ANTsPyNet Cerebellum masked to remove CSF voxels', 'Manual': False,
                             'Sources': [t1w_bids.get_uri(relative=True),
                                         parcellation_results['hoa_masked']['image'].get_uri(relative=True)]}
-            )
-            parcellation_results['cerebellum_masked'] = dict()
-            parcellation_results['cerebellum_masked']['image'] = cerebellum_masked_bids
-            parcellation_results['cerebellum_masked']['label_definitions'] = \
+                )
+                parcellation_results['cerebellum_masked'] = dict()
+                parcellation_results['cerebellum_masked']['image'] = cerebellum_masked_bids
+                parcellation_results['cerebellum_masked']['label_definitions'] = \
                 cerebellum_masked_bids.get_path().replace('.nii.gz', '.tsv')
-            copy_file(get_label_definitions_path('antspynet_cerebellum'),
-                        parcellation_results['cerebellum_masked']['label_definitions'])
+                copy_file(get_label_definitions_path('antspynet_cerebellum'),
+                          parcellation_results['cerebellum_masked']['label_definitions'])
 
-            make_label_stats(cerebellum_masked_bids, parcellation_results['cerebellum_masked']['label_definitions'],
-                             work_dir, scalar_images=cerebellum_scalar_images,
-                             scalar_descriptions=cerebellum_scalar_descriptions)
-            make_parcellation_qc_plots(t1w_biascorr_bids, brain_mask_bids, cerebellum_masked_bids, 'cerebellum_parcellation',
-                                       'CerebellumMasked', work_dir)
+                make_label_stats(cerebellum_masked_bids, parcellation_results['cerebellum_masked']['label_definitions'],
+                                 work_dir, scalar_images=cerebellum_scalar_images,
+                                 scalar_descriptions=cerebellum_scalar_descriptions)
+                make_parcellation_qc_plots(t1w_biascorr_bids, brain_mask_bids, cerebellum_masked_bids,
+                                           'cerebellum_parcellation', 'CerebellumMasked', work_dir)
 
     return parcellation_results
 
