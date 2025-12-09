@@ -773,6 +773,9 @@ def atlas_based_parcellation(t1w_bids, brain_mask_bids, atlas_label_config, work
 
         logger.info(f"Processing atlas labels {output_atlas_name}:\n{json.dumps(atlas_info, indent=4)}")
 
+        # Goes with the seg- key, we may append Masked or Propagated later if appropriate
+        output_seg_label = output_atlas_name
+
         # Get the atlas label image
         label_image = bids_helpers.TemplateImage(external_template_name,
                                                  suffix='dseg',
@@ -822,6 +825,7 @@ def atlas_based_parcellation(t1w_bids, brain_mask_bids, atlas_label_config, work
                                  f"{output_atlas_name}")
             parcellation = ants_helpers.apply_mask(parcellation, cortical_mask, work_dir)
             parcellation_sources.append(cortical_mask_source)
+            output_seg_label += 'Masked'
         if atlas_info.get('propagate_to_cortex', False):
             if hoa_parcellation_bids is None:
                 raise ValueError(f"antsnet parcellation with 'hoa' is required for propagation of atlas {output_atlas_name}")
@@ -833,21 +837,23 @@ def atlas_based_parcellation(t1w_bids, brain_mask_bids, atlas_label_config, work
             # Now remove the added labels
             parcellation = ants_helpers.remove_labels(tmp_parcellation, tmp_labels, work_dir)
             parcellation_sources.extend([cortical_mask_source, hoa_parcellation_bids.get_uri(relative=True)])
-
+            output_seg_label += 'Propagated'
         if atlas_info.get('mask_csf', False):
             if segmentation_bids is None:
                 raise ValueError(f"antsnetct tissue segmentation is required for CSF masking of atlas {output_atlas_name}")
             # Remove CSF voxels from the parcellation
             parcellation = ants_helpers.apply_mask(parcellation, not_csf_mask, work_dir)
             parcellation_sources.append(segmentation_bids.get_uri(relative=True))
+            output_seg_label += 'Masked'
 
         parcellation_bids = bids_helpers.image_to_bids(
             parcellation,
             t1w_bids.get_ds_path(),
-            t1w_bids.get_derivative_rel_path_prefix() + f"_seg-{output_atlas_name}_dseg.nii.gz",
+            t1w_bids.get_derivative_rel_path_prefix() + f"_seg-{output_seg_label}_dseg.nii.gz",
             metadata={'Description': f'antsnetct atlas-based parcellation {output_atlas_name}',
                       'Manual': False,
-                      'Sources': parcellation_sources}
+                      'Sources': parcellation_sources,
+                      'AtlasConfig': atlas_info}
             )
 
         output_label_definitions = parcellation_bids.get_path().replace('.nii.gz', '.tsv')
