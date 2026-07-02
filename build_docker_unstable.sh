@@ -8,8 +8,6 @@ if [[ $# -gt 0 ]] ; then
         echo "usage: $0 [-h] [-f]"
         echo "Builds a docker image from source, and embeds git info. Run from source directory."
         echo
-        echo "The git tag will be used if present, otherwise the docker image tage will be 'unstable'."
-        echo
         echo "By default, the script will not build if the git repository is not clean. Override with -f."
         echo
         exit 1
@@ -47,14 +45,6 @@ dockerVersion="unstable"
 if [[ -z "$gitTag" ]]; then
     echo "No tag found for commit $hash"
     gitTag=${hash:0:7}
-else
-    echo "Tag found: $gitTag"
-    # Check tag is acceptable as a docker version tag, ie lowercase alphanumeric and hyphens only
-    if [[ ! "$gitTag" =~ ^[a-z0-9-]+$ ]] ; then
-        echo "Tag $gitTag is not suitable for use as a docker version tag"
-        exit 1
-    fi
-    dockerVersion="$gitTag"
 fi
 
 dockerTag="cookpa/antsnetct:${dockerVersion}"
