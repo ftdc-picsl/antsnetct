@@ -4,6 +4,8 @@ import sys
 import re
 import subprocess
 
+target_branch = 'ftdc_062_patches'
+
 def run_command(command):
     result = subprocess.run(command, capture_output=True, text=True, shell=True)
     return result.stdout.strip(), result.returncode
@@ -11,19 +13,19 @@ def run_command(command):
 def check_clean_repository():
     output, _ = run_command('git status --porcelain')
     if output:
-        print("Warning: Repository has local modifications.")
+        print("Error: Repository has local modifications.")
         sys.exit(1)
 
 def check_main_branch():
     output, _ = run_command('git branch --show-current')
-    if output != 'main':
-        print("Warning: main branch is not checked out.")
+    if output != target_branch:
+        print(f"Error: {target_branch} is not checked out.")
         sys.exit(1)
 
 def check_existing_tag(tag):
     output, _ = run_command('git tag')
     if tag in output.split('\n'):
-        print(f"Warning: Tag {tag} already exists.")
+        print(f"Error: Tag {tag} already exists.")
         sys.exit(1)
 
 def update_version_in_pyproject(version):
@@ -39,12 +41,13 @@ def update_version_in_pyproject(version):
 
 def main():
     if len(sys.argv) != 2:
-        print("Usage: python git_tag.py vX.Y.Z")
+        print("Usage: python git_tag.py vX.Y.Z_pQ")
+        print("Q should be a patch number, e.g., v1.2.3_p01")
         sys.exit(1)
 
     tag = sys.argv[1]
-    if not re.match(r'^v\d+\.\d+\.\d+$', tag):
-        print("Error: Tag must be of the form vX.Y.Z where X, Y, and Z are integers.")
+    if not re.match(r'^v\d+\.\d+\.\d+_p\d+$', tag):
+        print("Error: Tag must be of the form vX.Y.Z_pQ where X, Y, Z and Q are integers.")
         sys.exit(1)
 
     version = tag[1:]  # Remove the 'v' prefix
@@ -70,7 +73,9 @@ def main():
     # Now update pyproject.toml with the next version development version
     major, minor, patch = version.split('.')
 
-    next_version = f"{major}.{minor}.{int(patch) + 1}dev"
+    patch, post_patch = patch.split('_p')
+
+    next_version = f"{major}.{minor}.{patch}_p{(int(post_patch) + 1):02d}dev"
 
     update_version_in_pyproject(next_version)
 
