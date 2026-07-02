@@ -831,8 +831,8 @@ def cortical_thickness(segmentation, segmentation_posteriors, work_dir, kk_its=4
 def univariate_template_registration(fixed_image, moving_image, work_dir, fixed_mask=None, moving_mask=None,
                                      metric='CC', metric_param_str='2', transform='SyN[0.2,3,0]',
                                      iterations='20x40x60x70x70x10', shrink_factors='8x6x4x3x2x1',
-                                     smoothing_sigmas='5x4x3x2x1x0vox', apply_transforms=True):
-    """Pairwise registration with defaults selected for population template registration, similar to antsCorticalTHickness.sh.
+                                     smoothing_sigmas='5x4x3x2x1x0vox', apply_transforms=True, write_single_precision=True):
+    """Pairwise registration with defaults selected for population template registration, similar to antsCorticalThickness.sh.
 
     Does a linear and non-linear registration of the moving image to the fixed image with antsRegistration. Affine
     parameters are optimized for inter-subject registration.
@@ -868,6 +868,8 @@ def univariate_template_registration(fixed_image, moving_image, work_dir, fixed_
         Smoothing sigmas at each level of the registration. Number of levels must match shrink and iterations parameters.
     apply_transforms : bool
         Apply the resulting transform to the moving and fixed images
+    write_single_precision : bool
+        Write the resulting transforms and deformed images as single precision float. Default is True.
 
     Returns:
     --------
@@ -927,6 +929,31 @@ def univariate_template_registration(fixed_image, moving_image, work_dir, fixed_
     moving_image_warped = None
     fixed_image_warped = None
 
+    if write_single_precision:
+        # Convert to single precision
+        fwd_transform_single = f"{output_root}Composite_float.h5"
+        inv_transform_single = f"{output_root}InverseComposite_float.h5"
+
+        convert_fwd_cmd = [
+            'antsApplyTransforms', '3',
+            '--transform', composite_fwd_transform,
+            '--output', f"CompositeTransform[{fwd_transform_single}]"
+            '--float'
+        ]
+
+        convert_inv_cmd = [
+            'antsApplyTransforms', '3',
+            '--transform', composite_inv_transform,
+            '--output', f"CompositeTransform[{inv_transform_single}]"
+            '--float'
+        ]
+
+        run_command(convert_fwd_cmd)
+        run_command(convert_inv_cmd)
+
+        composite_fwd_transform = fwd_transform_single
+        composite_inv_transform = inv_transform_single
+
     if apply_transforms:
 
         moving_image_warped = f"{output_root}Warped.nii.gz"
@@ -939,6 +966,7 @@ def univariate_template_registration(fixed_image, moving_image, work_dir, fixed_
             '--output', moving_image_warped,
             '--interpolation', 'BSpline',
             '--transform', composite_fwd_transform,
+            '--float', '1' if write_single_precision else '0',
             '--verbose', '1'
         ]
 
@@ -954,6 +982,7 @@ def univariate_template_registration(fixed_image, moving_image, work_dir, fixed_
             '--output', fixed_image_warped,
             '--interpolation', 'BSpline',
             '--transform', composite_inv_transform,
+            '--float', '1' if write_single_precision else '0',
             '--verbose', '1'
         ]
 
@@ -965,7 +994,7 @@ def univariate_template_registration(fixed_image, moving_image, work_dir, fixed_
     return {'forward_transform': composite_fwd_transform, 'inverse_transform': composite_inv_transform}
 
 
-def apply_transforms(fixed_image, moving_image, transforms, work_dir, interpolation='Linear', single_precision=False):
+def apply_transforms(fixed_image, moving_image, transforms, work_dir, interpolation='Linear', single_precision=True):
     """Apply transforms, resampling moving image into fixed image space.
 
     Parameters:
@@ -981,7 +1010,7 @@ def apply_transforms(fixed_image, moving_image, transforms, work_dir, interpolat
     interpolation : str, optional
         Interpolation method, e.g. 'Linear', 'NearestNeighbor'
     single_precision : bool, optional
-        Use single precision for computations. Default is False.
+        Use single precision for computations and output. Default is True.
 
     Returns:
     --------
@@ -1616,7 +1645,7 @@ def build_template(images, work_dir, initial_templates=None, reg_transform='SyN[
 def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fixed_mask=None, moving_mask=None,
                                        metric='CC', metric_param_str='2', metric_weights=None, transform='SyN[0.2,3,0]',
                                        iterations='20x30x70x70x10', shrink_factors='8x6x4x2x1', smoothing_sigmas='4x3x2x1x0vox',
-                                       apply_transforms=True):
+                                       apply_transforms=True, write_single_precision=True):
     """Multivariate pairwise registration of images.
 
     This is a simplified interface to multivariate_registration, with default parameters for pairwise registration. It will
@@ -1659,6 +1688,8 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
         Smoothing sigmas at each level of the registration. Number of levels must match shrink and iterations parameters.
     apply_transforms : bool
         If true, apply the resulting transforms to the images.
+    write_single_precision : bool
+        If true, write the transforms in single precision. Default is True.
 
     Returns:
     --------
@@ -1746,6 +1777,31 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
     forward_transform = f"{transform_prefix}Composite.h5"
     inverse_transform = f"{transform_prefix}InverseComposite.h5"
 
+    if write_single_precision:
+        # Convert to single precision
+        fwd_transform_single = f"{transform_prefix}Composite_float.h5"
+        inv_transform_single = f"{transform_prefix}InverseComposite_float.h5"
+
+        convert_fwd_cmd = [
+            'antsApplyTransforms', '3',
+            '--transform', forward_transform,
+            '--output', f"CompositeTransform[{fwd_transform_single}]"
+            '--float'
+        ]
+
+        convert_inv_cmd = [
+            'antsApplyTransforms', '3',
+            '--transform', inverse_transform,
+            '--output', f"CompositeTransform[{inv_transform_single}]"
+            '--float'
+        ]
+
+        run_command(convert_fwd_cmd)
+        run_command(convert_inv_cmd)
+
+        forward_transform = fwd_transform_single
+        inverse_transform = inv_transform_single
+
     if apply_transforms:
         fwd_warped_images = list()
         inv_warped_images = list()
@@ -1754,7 +1810,11 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
                 work_dir, f"{get_nifti_file_prefix(moving_images[modality_idx])}_to_fixed_{modality_idx}_warped.nii.gz")
             apply_fwd_cmd = ['antsApplyTransforms', '--dimensionality', '3', '--input', moving_images[modality_idx],
                              '--reference-image', fixed_images[modality_idx], '--output', moving_image_warped,
-                             '--interpolation', 'BSpline', '--transform', forward_transform, '--verbose', '1']
+                             '--interpolation', 'Linear', '--transform', forward_transform, '--verbose', '1']
+
+            if write_single_precision:
+                apply_fwd_cmd.extend(['--float'])
+
             run_command(apply_fwd_cmd)
             fwd_warped_images.append(moving_image_warped)
 
@@ -1762,7 +1822,11 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
                 work_dir, f"{get_nifti_file_prefix(fixed_images[modality_idx])}_to_moving_{modality_idx}_warped.nii.gz")
             apply_inv_cmd = ['antsApplyTransforms', '--dimensionality', '3', '--input', fixed_images[modality_idx],
                              '--reference-image', moving_images[modality_idx], '--output', fixed_image_warped,
-                             '--interpolation', 'BSpline', '--transform', inverse_transform, '--verbose', '1']
+                             '--interpolation', 'Linear', '--transform', inverse_transform, '--verbose', '1']
+
+            if write_single_precision:
+                apply_inv_cmd.extend(['--float'])
+
             run_command(apply_inv_cmd)
             inv_warped_images.append(fixed_image_warped)
 
