@@ -1810,7 +1810,7 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
                 work_dir, f"{get_nifti_file_prefix(moving_images[modality_idx])}_to_fixed_{modality_idx}_warped.nii.gz")
             apply_fwd_cmd = ['antsApplyTransforms', '--dimensionality', '3', '--input', moving_images[modality_idx],
                              '--reference-image', fixed_images[modality_idx], '--output', moving_image_warped,
-                             '--interpolation', 'Linear', '--transform', forward_transform, '--verbose', '1']
+                             '--interpolation', 'BSpline', '--transform', forward_transform, '--verbose', '1']
 
             if write_single_precision:
                 apply_fwd_cmd.extend(['--float'])
@@ -1822,7 +1822,7 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
                 work_dir, f"{get_nifti_file_prefix(fixed_images[modality_idx])}_to_moving_{modality_idx}_warped.nii.gz")
             apply_inv_cmd = ['antsApplyTransforms', '--dimensionality', '3', '--input', fixed_images[modality_idx],
                              '--reference-image', moving_images[modality_idx], '--output', fixed_image_warped,
-                             '--interpolation', 'Linear', '--transform', inverse_transform, '--verbose', '1']
+                             '--interpolation', 'BSpline', '--transform', inverse_transform, '--verbose', '1']
 
             if write_single_precision:
                 apply_inv_cmd.extend(['--float'])
