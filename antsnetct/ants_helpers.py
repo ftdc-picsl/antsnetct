@@ -1689,7 +1689,7 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
     apply_transforms : bool
         If true, apply the resulting transforms to the images.
     write_single_precision : bool
-        If true, write the transforms in single precision. Default is True.
+        If true, write the transforms and warped images in single precision. Default is True.
 
     Returns:
     --------
