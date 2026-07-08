@@ -4,7 +4,7 @@ import sys
 import re
 import subprocess
 
-target_branch = 'ftdc_062_patches'
+target_branch = 'release/0.6.2-patches'
 
 def run_command(command):
     result = subprocess.run(command, capture_output=True, text=True, shell=True)
