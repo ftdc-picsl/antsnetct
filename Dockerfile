@@ -1,5 +1,11 @@
 FROM cookpa/antsnetct:0.6.2 AS base
 
+# Need to redefine these otherwise they get inherited from the base image
+ARG DOCKER_IMAGE_TAG="unknown"
+ARG DOCKER_IMAGE_VERSION="unknown"
+ARG GIT_REMOTE="unknown"
+ARG GIT_COMMIT="unknown"
+
 USER root
 
 COPY . /opt/src/antsnetct
