@@ -938,14 +938,14 @@ def univariate_template_registration(fixed_image, moving_image, work_dir, fixed_
             'antsApplyTransforms', '3',
             '--transform', composite_fwd_transform,
             '--output', f"CompositeTransform[{fwd_transform_single}]",
-            '--float', '0'
+            '--float', '1'
         ]
 
         convert_inv_cmd = [
             'antsApplyTransforms', '3',
             '--transform', composite_inv_transform,
             '--output', f"CompositeTransform[{inv_transform_single}]",
-            '--float', '0'
+            '--float', '1'
         ]
 
         run_command(convert_fwd_cmd)
@@ -1786,14 +1786,14 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
             'antsApplyTransforms', '3',
             '--transform', forward_transform,
             '--output', f"CompositeTransform[{fwd_transform_single}]",
-            '--float', '0'
+            '--float', '1'
         ]
 
         convert_inv_cmd = [
             'antsApplyTransforms', '3',
             '--transform', inverse_transform,
             '--output', f"CompositeTransform[{inv_transform_single}]",
-            '--float', '0'
+            '--float', '1'
         ]
 
         run_command(convert_fwd_cmd)
