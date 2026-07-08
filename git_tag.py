@@ -64,7 +64,7 @@ def main():
     update_version_in_pyproject(version)
     run_command('git add pyproject.toml')
     run_command(f'git commit -m "updating version for tag {tag}"')
-    run_command('git push origin main')
+    run_command(f'git push origin {target_branch}')
     run_command(f'git tag -a {tag} -m "{tag}"')
     run_command('git push --tags')
 
@@ -81,7 +81,7 @@ def main():
 
     run_command('git add pyproject.toml')
     run_command(f'git commit -m "updating version for development post {tag}"')
-    run_command('git push origin main')
+    run_command(f'git push origin {target_branch}')
 
 if __name__ == '__main__':
     main()
