@@ -61,7 +61,13 @@ def main():
         print("Exiting without creating tag.")
         sys.exit(0)
 
-    update_version_in_pyproject(version)
+    # Now update pyproject.toml
+
+    major, minor, patch = version.split('.')
+    patch, post_patch = patch.split('_p')
+    python_version = f"{major}.{minor}.{patch}+p{(int(post_patch)):02d}dev"
+
+    update_version_in_pyproject(python_version)
     run_command('git add pyproject.toml')
     run_command(f'git commit -m "updating version for tag {tag}"')
     run_command(f'git push origin {target_branch}')
@@ -70,14 +76,9 @@ def main():
 
     print(f"Tag {tag} has been created.")
 
-    # Now update pyproject.toml with the next version development version
-    major, minor, patch = version.split('.')
+    next_python_version = f"{major}.{minor}.{patch}+p{(int(post_patch) + 1):02d}dev"
 
-    patch, post_patch = patch.split('_p')
-
-    next_version = f"{major}.{minor}.{patch}_p{(int(post_patch) + 1):02d}dev"
-
-    update_version_in_pyproject(next_version)
+    update_version_in_pyproject(next_python_version)
 
     run_command('git add pyproject.toml')
     run_command(f'git commit -m "updating version for development post {tag}"')
