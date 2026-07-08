@@ -6,7 +6,7 @@ if [[ $# -gt 0 ]] ; then
     echo "usage: $0 [-h]"
     echo "Builds a docker image from tagged source, and embeds git info. Run from source directory."
     echo
-    echo "For a tagged commit vX.Y.Z, the docker image will be tagged as X.Y.Z."
+    echo "For a tagged commit vX.Y.Z_pQ, the docker image will be tagged as X.Y.Z_pQ."
     echo
     exit 1
 fi
@@ -34,8 +34,8 @@ if [[ -z "$gitTag" ]]; then
 fi
 
 # Check that the git tag satisfies the format vX.Y.Z
-if [[ ! $gitTag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "Tag $gitTag does not match vX.Y.Z format"
+if [[ ! $gitTag =~ ^v[0-9]+\.[0-9]+\.[0-9]+_p[0-9]{2}$ ]]; then
+    echo "Tag $gitTag does not match vX.Y.Z_pQ format (Q should contain two digits)"
     exit 1
 fi
 
