@@ -1056,8 +1056,7 @@ def compose_transforms(transforms, work_dir, write_single_precision=True):
     work_dir : str
         Path to working directory
     write_single_precision : bool, optional
-        Write the resulting transform as single precision float. Default is True. This only applies to warp fields,
-        affine transforms are always written as double by ITK.
+        Write the resulting transform as single precision float. Default is True.
 
     Returns:
     --------

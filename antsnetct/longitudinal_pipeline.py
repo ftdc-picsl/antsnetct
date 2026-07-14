@@ -269,8 +269,7 @@ def longitudinal_analysis():
 
             for idx in range(num_sessions):
                 # create the output directory for the session
-                # Previously did this but now compute long_preproc_t1w_bids later as we might need to resample to SST
-                long_session_anat_dir = os.path.join(args.output_dataset, f"sub-{args.participant}",
+                long_session_anat_dir = os.path.join(args.output_dataset,
                                                      os.path.dirname(cx_preproc_t1w_bids[idx].get_rel_path()))
                 os.makedirs(long_session_anat_dir, exist_ok=True)
 
@@ -508,9 +507,11 @@ def longitudinal_analysis():
                         # Put this into cx_to_sst_transforms[idx]['forward_transform']
                         # [session_sst_transforms[idx]['forward_transform'],
                         #     orig_long_preproc_t1w_transforms[idx]['forward_transform']]
-                        # cx_to_sst_transforms.append(
-                        #
-                        # )
+                        cx_to_sst_transforms.append(
+                            ants_helpers.compose_transforms(
+                                [session_sst_transforms[idx]['forward_transform'],
+                                 orig_long_preproc_t1w_transforms[idx]['forward_transform']], working_dir)
+                        )
 
                 sst_prior_seg_probabilities = \
                     get_cx_sst_segmentation_priors(sst_bids, cx_preproc_t1w_bids, cx_to_sst_transforms, working_dir,
@@ -721,7 +722,8 @@ def preprocess_sst_input(cx_biascorr_t1w_bids, group_template, group_template_ma
         sst_input_t1w_head_masks.append(sst_input_head_mask_origin_fix)
 
     # These will be used to build the final SST with whatever transform the user has chosen
-    sst_input_dict = {'head_images': sst_input_t1w_heads, 'brain_images': sst_input_t1w_brains}
+    sst_input_dict = {'head_images': sst_input_t1w_heads, 'brain_images': sst_input_t1w_brains, 'initial_sst_head': None,
+                      'initial_sst_brain': None}
 
     # Initialize the SST with low-res rigid registration
 
@@ -737,7 +739,7 @@ def preprocess_sst_input(cx_biascorr_t1w_bids, group_template, group_template_ma
         reg = ants_helpers.multivariate_pairwise_registration(group_template_brain, brain_native, work_dir,
                                                               metric='Mattes', metric_param_str='32', transform='Rigid[0.1]',
                                                               iterations='20x40x20x0', shrink_factors='6x4x3x1',
-                                                              smoothing_sigmas='4x3x2x0vox', apply_transforms=False)
+                                                              smoothing_sigmas='4x3x2x0vox')
         initial_sst_transforms.append(reg['forward_transform'])
 
     avg_inv_affine = ants_helpers.average_affine_transforms(initial_sst_transforms, work_dir, invert_avg=True)
