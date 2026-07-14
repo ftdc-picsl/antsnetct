@@ -102,6 +102,12 @@ def longitudinal_analysis():
     sst_parser.add_argument("--sst-atropos-mrf-weight", help="MRF weight in the SST segmentation. This encourages more spatial "
                             "smoothness.", type=float, default=0.1)
 
+    session_preproc_parser = parser.add_argument_group('Session preprocessing arguments')
+    session_preproc_parser.add_argument("--preproc-rigid-to-sst", help="Rigidly align the session images to the SST space "
+                                        "before processing the session. The final registration, segmentation and thickness "
+                                        "takes place on the resampled image. Similar idea as the '-r' option in "
+                                        "antsLongitudinalCorticalThickness.sh", action='store_true')
+
     segmentation_parser = parser.add_argument_group('Segmentation arguments for session processing')
     segmentation_parser.add_argument("--atropos-n4-iterations", help="Number of iterations of atropos-n4",
                                      type=int, default=2)
@@ -261,13 +267,11 @@ def longitudinal_analysis():
             # output_dataset/sub-123456/ses-MR1/anat - contains session-specific files
             # output_dataset/sub-123456/ses-MR2/anat - contains session-specific files
 
-            # These are just copies of the cross-sectional preprocessed data. They are copied to the output dataset
-            # for reference. They aren't used for the SST construction or registration.
-            long_preproc_t1w_bids = list()
-
             for idx in range(num_sessions):
-                # Write preprocessed T1w images to output dataset - this creates output session directories
-                long_preproc_t1w_bids.append(cx_preproc_t1w_bids[idx].copy_image(args.output_dataset))
+                # create the output directory for the session
+                long_session_anat_dir = os.path.join(args.output_dataset,
+                                                     os.path.dirname(cx_preproc_t1w_bids[idx].get_rel_path()))
+                os.makedirs(long_session_anat_dir, exist_ok=True)
 
             # for antsMultivariateTemplateConstruction2.sh
             sst_build_metric = 'CC[3]'
@@ -304,7 +308,7 @@ def longitudinal_analysis():
             elif args.sst_transform.lower() == 'syn':
                 sst_build_transform = 'SyN[0.2,3,0.5]'
             else:
-                raise ValueError(f"Unknown SST transform {sst_build_transform}")
+                raise ValueError(f"Unknown SST transform {args.sst_transform.lower()}")
 
             sess_reg_iterations = sst_build_iterations
             sess_reg_shrink_factors = sst_build_shrink_factors
@@ -343,20 +347,91 @@ def longitudinal_analysis():
 
             session_sst_transforms = list()
 
+            # T1w images we will use for processing sessions - either session preprocessed images in the native space,
+            # or resampled to SST space if --preproc-rigid-to-sst is set
+            long_preproc_t1w_bids = list()
+
+            # brain masks for the session data - these will be combined in the SST space and then the average will be warped
+            # back to the session space for processing. These are just tempororary masks
+            long_preproc_t1w_masks = list()
+
+            # bias-corrected images to use for the full T1w to SST registration
+            long_preproc_t1w_sst_reg_images = list()
+
+            # Transforms from the original session T1w space to the preproc space, empty if --preproc-rigid-to-sst is not set
+            orig_long_preproc_t1w_transforms = list()
+
+            # If preproc-rigid-to-sst is set, resample the session images to the SST space before processing
+            if args.preproc_rigid_to_sst:
+                logger.info("Resampling session images to SST space")
+                # processing will be on the resampled images
+                for idx in range(num_sessions):
+                    logger.info(f"Resampling session {idx + 1} to SST space")
+                    moving_head = cx_biascorr_t1w_bids[idx].get_path()
+                    moving_brain = ants_helpers.apply_mask(moving_head, cx_brain_mask_bids[idx].get_path(), working_dir)
+                    moving = [moving_head, moving_brain]
+
+                    rigid_sst_transforms = ants_helpers.multivariate_pairwise_registration(
+                        sst_output, moving, working_dir, transform='Rigid[0.1]', iterations='20x20x30x10',
+                        metric='MI', metric_param_str='32', metric_weights=template_weights, shrink_factors='4x3x2x1',
+                        smoothing_sigmas='2x2x1x0vox'
+                        )
+
+                    # apply to the preprocessed image and brain mask
+                    resampled_preproc = ants_helpers.apply_transforms(sst_output[0], cx_preproc_t1w_bids[idx].get_path(),
+                                                                      rigid_sst_transforms['forward_transform'],
+                                                                      working_dir, interpolation='LanczosWindowedSinc')
+                    resampled_preproc_bids = bids_helpers.image_to_bids(
+                        resampled_preproc, args.output_dataset, cx_preproc_t1w_bids[idx].get_rel_path(),
+                        metadata={'Sources': [cx_preproc_t1w_bids[idx].get_uri(relative=False)], 'SkullStripped': False})
+
+                    long_preproc_t1w_bids.append(resampled_preproc_bids)
+
+                    long_preproc_mask = ants_helpers.apply_transforms(sst_output[0], cx_brain_mask_bids[idx].get_path(),
+                                                                      rigid_sst_transforms['forward_transform'],
+                                                                      working_dir, interpolation='NearestNeighbor')
+
+                    long_preproc_t1w_masks.append(long_preproc_mask)
+
+                    resampled_cx_biascorr_t1w = ants_helpers.apply_transforms(sst_output[0],
+                                                                              cx_biascorr_t1w_bids[idx].get_path(),
+                                                                              rigid_sst_transforms['forward_transform'],
+                                                                              working_dir, interpolation='LanczosWindowedSinc')
+
+                    long_preproc_t1w_sst_reg_images.append(resampled_cx_biascorr_t1w)
+
+                    # also save the transforms to and from the original T1w space
+                    forward_transform_path = long_preproc_t1w_bids[idx].get_derivative_path_prefix() + \
+                        f"_from-orig_to-T1w_mode-image_xfm.h5"
+                    system_helpers.copy_file(rigid_sst_transforms['forward_transform'], forward_transform_path)
+
+                    inverse_transform_path = long_preproc_t1w_bids[idx].get_derivative_path_prefix() + \
+                        f"_from-T1w_to-orig_mode-image_xfm.h5"
+                    system_helpers.copy_file(rigid_sst_transforms['inverse_transform'], inverse_transform_path)
+
+                    orig_long_preproc_t1w_transforms.append(rigid_sst_transforms)
+
+            else:
+                # Copy the preprocessed images to the output dataset - processing is in session T1w space
+                for idx in range(num_sessions):
+                    long_preproc_t1w_bids.append(cx_preproc_t1w_bids[idx].copy_image(args.output_dataset))
+                    long_preproc_t1w_masks.append(cx_brain_mask_bids[idx].get_path())
+                    long_preproc_t1w_sst_reg_images.append(cx_biascorr_t1w_bids[idx].get_path())
+
             # Register all subjects to SST
 
             logger.info("Registering all sessions to SST")
             for idx in range(num_sessions):
                 logger.info(f"Registering session {idx + 1} to SST")
-                moving_head = cx_biascorr_t1w_bids[idx].get_path()
-                moving_brain = ants_helpers.apply_mask(moving_head, cx_brain_mask_bids[idx].get_path(), working_dir)
+                moving_head = long_preproc_t1w_sst_reg_images[idx]
+                moving_brain = ants_helpers.apply_mask(moving_head, long_preproc_t1w_masks[idx], working_dir)
                 moving = [moving_head, moving_brain]
                 session_sst_transforms.append(
                     ants_helpers.multivariate_pairwise_registration(sst_output, moving, working_dir,
                                                       transform=sess_reg_transform, iterations=sess_reg_iterations,
                                                       metric=sess_reg_metric, metric_param_str=sess_reg_metric_param_str,
                                                       metric_weights=template_weights, shrink_factors=sess_reg_shrink_factors,
-                                                      smoothing_sigmas=sess_reg_smoothing_sigmas, apply_transforms=False)
+                                                      smoothing_sigmas=sess_reg_smoothing_sigmas)
                 )
                 forward_transform_path = long_preproc_t1w_bids[idx].get_derivative_path_prefix() + \
                     f"_from-T1w_to-sst_mode-image_xfm.h5"
@@ -373,7 +448,7 @@ def longitudinal_analysis():
 
             for idx in range(num_sessions):
                 sst_t1w_masks.append(
-                    ants_helpers.apply_transforms(sst_output[0], cx_brain_mask_bids[idx].get_path(),
+                    ants_helpers.apply_transforms(sst_output[0], long_preproc_t1w_masks[idx],
                                                   session_sst_transforms[idx]['forward_transform'], working_dir,
                                                   interpolation='GenericLabel')
                 )
@@ -397,7 +472,7 @@ def longitudinal_analysis():
             long_brain_mask_bids = list()
 
             for idx in range(num_sessions):
-                session_mask = ants_helpers.apply_transforms(cx_biascorr_t1w_bids[idx].get_path(), unified_mask_sst,
+                session_mask = ants_helpers.apply_transforms(long_preproc_t1w_bids[idx].get_path(), unified_mask_sst,
                                               session_sst_transforms[idx]['inverse_transform'], working_dir,
                                               interpolation='GenericLabel')
                 long_brain_mask_bids.append(
@@ -419,8 +494,27 @@ def longitudinal_analysis():
                                                         use_legacy_deep_atropos=args.legacy_deep_atropos)
             else:
                 logger.info("Segmenting SST with cross-sectional priors")
+
+                cx_to_sst_transforms = session_sst_transforms
+
+                if args.preproc_rigid_to_sst:
+                    # If we resampled the session images to the SST space, then the transforms are from the resampled images
+                    # to the SST. We need to compose with the rigid transform from the original T1w space to the resampled
+                    # image space to get the transform from the original T1w space to the SST space.
+                    cx_to_sst_transforms = list()
+                    for idx in range(num_sessions):
+                        # TODO: compose the transforms to get the transform from the original T1w space to the SST space
+                        # Put this into cx_to_sst_transforms[idx]['forward_transform']
+                        # [session_sst_transforms[idx]['forward_transform'],
+                        #     orig_long_preproc_t1w_transforms[idx]['forward_transform']]
+                        cx_to_sst_transforms.append(
+                            ants_helpers.compose_transforms(
+                                [session_sst_transforms[idx]['forward_transform'],
+                                 orig_long_preproc_t1w_transforms[idx]['forward_transform']], working_dir)
+                        )
+
                 sst_prior_seg_probabilities = \
-                    get_cx_sst_segmentation_priors(sst_bids, cx_preproc_t1w_bids, session_sst_transforms, working_dir,
+                    get_cx_sst_segmentation_priors(sst_bids, cx_preproc_t1w_bids, cx_to_sst_transforms, working_dir,
                                                    prior_csf_gamma=args.prior_csf_gamma,
                                                    prior_smoothing_sigma=args.prior_smoothing_sigma)
 
@@ -464,7 +558,7 @@ def longitudinal_analysis():
             logger.info("Processing sessions using SST priors")
             for idx in range(num_sessions):
                 logger.info(f"Processing session {idx + 1} of {num_sessions}: " + \
-                    f"{cx_preproc_t1w_bids[idx].get_uri(relative=False)}")
+                    f"{long_preproc_t1w_bids[idx].get_uri(relative=False)}")
 
                 brain_mask_bids = long_brain_mask_bids[idx]
                 # Warp priors to the session space
@@ -628,7 +722,8 @@ def preprocess_sst_input(cx_biascorr_t1w_bids, group_template, group_template_ma
         sst_input_t1w_head_masks.append(sst_input_head_mask_origin_fix)
 
     # These will be used to build the final SST with whatever transform the user has chosen
-    sst_input_dict = {'head_images': sst_input_t1w_heads, 'brain_images': sst_input_t1w_brains}
+    sst_input_dict = {'head_images': sst_input_t1w_heads, 'brain_images': sst_input_t1w_brains, 'initial_sst_head': None,
+                      'initial_sst_brain': None}
 
     # Initialize the SST with low-res rigid registration
 
@@ -644,7 +739,7 @@ def preprocess_sst_input(cx_biascorr_t1w_bids, group_template, group_template_ma
         reg = ants_helpers.multivariate_pairwise_registration(group_template_brain, brain_native, work_dir,
                                                               metric='Mattes', metric_param_str='32', transform='Rigid[0.1]',
                                                               iterations='20x40x20x0', shrink_factors='6x4x3x1',
-                                                              smoothing_sigmas='4x3x2x0vox', apply_transforms=False)
+                                                              smoothing_sigmas='4x3x2x0vox')
         initial_sst_transforms.append(reg['forward_transform'])
 
     avg_inv_affine = ants_helpers.average_affine_transforms(initial_sst_transforms, work_dir, invert_avg=True)

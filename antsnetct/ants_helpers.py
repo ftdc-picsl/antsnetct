@@ -831,8 +831,8 @@ def cortical_thickness(segmentation, segmentation_posteriors, work_dir, kk_its=4
 def univariate_template_registration(fixed_image, moving_image, work_dir, fixed_mask=None, moving_mask=None,
                                      metric='CC', metric_param_str='2', transform='SyN[0.2,3,0]',
                                      iterations='20x40x60x70x70x10', shrink_factors='8x6x4x3x2x1',
-                                     smoothing_sigmas='5x4x3x2x1x0vox', apply_transforms=True):
-    """Pairwise registration with defaults selected for population template registration, similar to antsCorticalTHickness.sh.
+                                     smoothing_sigmas='5x4x3x2x1x0vox', write_single_precision=True):
+    """Pairwise registration with defaults selected for population template registration, similar to antsCorticalThickness.sh.
 
     Does a linear and non-linear registration of the moving image to the fixed image with antsRegistration. Affine
     parameters are optimized for inter-subject registration.
@@ -866,8 +866,8 @@ def univariate_template_registration(fixed_image, moving_image, work_dir, fixed_
         Shrink factors at each level of the registration. Number of levels must match iterations and smoothing parameters.
     smoothing_sigmas : str
         Smoothing sigmas at each level of the registration. Number of levels must match shrink and iterations parameters.
-    apply_transforms : bool
-        Apply the resulting transform to the moving and fixed images
+    write_single_precision : bool
+        Write the resulting transforms and deformed images as single precision float. Default is True.
 
     Returns:
     --------
@@ -876,10 +876,6 @@ def univariate_template_registration(fixed_image, moving_image, work_dir, fixed_
             Path to composite forward transform
         'inv_transform' : str
             Path to composite inverse transform
-        'moving_image_warped' : str
-            Path to warped moving image, if apply_transforms is True
-        'fixed_image_warped' : str
-            Path to warped fixed image, if apply_transforms is True
     """
     tmp_file_prefix = get_temp_file(work_dir, prefix="reg")
 
@@ -924,48 +920,35 @@ def univariate_template_registration(fixed_image, moving_image, work_dir, fixed_
     composite_fwd_transform = f"{output_root}Composite.h5"
     composite_inv_transform = f"{output_root}InverseComposite.h5"
 
-    moving_image_warped = None
-    fixed_image_warped = None
+    if write_single_precision:
+        # Convert to single precision
+        fwd_transform_single = f"{output_root}Composite_float.h5"
+        inv_transform_single = f"{output_root}InverseComposite_float.h5"
 
-    if apply_transforms:
-
-        moving_image_warped = f"{output_root}Warped.nii.gz"
-
-        apply_fwd_cmd = [
-            'antsApplyTransforms',
-            '--dimensionality', '3',
-            '--input', moving_image,
-            '--reference-image', fixed_image,
-            '--output', moving_image_warped,
-            '--interpolation', 'BSpline',
+        convert_fwd_cmd = [
+            'antsApplyTransforms', '3',
             '--transform', composite_fwd_transform,
-            '--verbose', '1'
+            '--output', f"CompositeTransform[{fwd_transform_single}]",
+            '--float', '1'
         ]
 
-        run_command(apply_fwd_cmd)
-
-        fixed_image_warped = f"{output_root}InverseWarped.nii.gz"
-
-        apply_inv_cmd = [
-            'antsApplyTransforms',
-            '--dimensionality', '3',
-            '--input', fixed_image,
-            '--reference-image', moving_image,
-            '--output', fixed_image_warped,
-            '--interpolation', 'BSpline',
+        convert_inv_cmd = [
+            'antsApplyTransforms', '3',
             '--transform', composite_inv_transform,
-            '--verbose', '1'
+            '--output', f"CompositeTransform[{inv_transform_single}]",
+            '--float', '1'
         ]
 
-        run_command(apply_inv_cmd)
+        run_command(convert_fwd_cmd)
+        run_command(convert_inv_cmd)
 
-        return {'forward_transform': composite_fwd_transform, 'inverse_transform': composite_inv_transform,
-                'moving_image_warped': moving_image_warped, 'fixed_image_warped': fixed_image_warped}
+        composite_fwd_transform = fwd_transform_single
+        composite_inv_transform = inv_transform_single
 
     return {'forward_transform': composite_fwd_transform, 'inverse_transform': composite_inv_transform}
 
 
-def apply_transforms(fixed_image, moving_image, transforms, work_dir, interpolation='Linear', single_precision=False):
+def apply_transforms(fixed_image, moving_image, transforms, work_dir, interpolation='Linear', single_precision=True):
     """Apply transforms, resampling moving image into fixed image space.
 
     Parameters:
@@ -981,7 +964,7 @@ def apply_transforms(fixed_image, moving_image, transforms, work_dir, interpolat
     interpolation : str, optional
         Interpolation method, e.g. 'Linear', 'NearestNeighbor'
     single_precision : bool, optional
-        Use single precision for computations. Default is False.
+        Use single precision for computations and output. Default is True.
 
     Returns:
     --------
@@ -1061,6 +1044,39 @@ def average_affine_transforms(transforms, work_dir, invert_avg=False):
         run_command(inv_cmd)
 
     return output_transform
+
+
+def compose_transforms(transforms, work_dir, write_single_precision=True):
+    """Compose a list of transforms into a single transform.
+
+    Parameters:
+    -----------
+    transforms : list of str
+        List of paths to transforms. These can be affine or non-linear transforms.
+    work_dir : str
+        Path to working directory
+    write_single_precision : bool, optional
+        Write the resulting transform as single precision float. Default is True.
+
+    Returns:
+    --------
+    composed_transform : str
+        Path to composed transform
+    """
+    tmp_file_prefix = get_temp_file(work_dir, prefix='composed_transform')
+
+    composed_transform = f"{tmp_file_prefix}_composed.h5"
+
+    compose_cmd = ['antsApplyTransforms', '-d', '3', '-o', f"CompositeTransform[{composed_transform}]"]
+
+    compose_cmd.extend([item for t in transforms for item in ('-t', t)])
+
+    if write_single_precision:
+        compose_cmd.extend(['--float', '1'])
+
+    run_command(compose_cmd)
+
+    return composed_transform
 
 
 def reslice_to_reference(reference_image, source_image, work_dir):
@@ -1616,7 +1632,7 @@ def build_template(images, work_dir, initial_templates=None, reg_transform='SyN[
 def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fixed_mask=None, moving_mask=None,
                                        metric='CC', metric_param_str='2', metric_weights=None, transform='SyN[0.2,3,0]',
                                        iterations='20x30x70x70x10', shrink_factors='8x6x4x2x1', smoothing_sigmas='4x3x2x1x0vox',
-                                       apply_transforms=True):
+                                       write_single_precision=True):
     """Multivariate pairwise registration of images.
 
     This is a simplified interface to multivariate_registration, with default parameters for pairwise registration. It will
@@ -1657,8 +1673,8 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
         Shrink factors at each level of the registration. Number of levels must match iterations and smoothing parameters.
     smoothing_sigmas : str
         Smoothing sigmas at each level of the registration. Number of levels must match shrink and iterations parameters.
-    apply_transforms : bool
-        If true, apply the resulting transforms to the images.
+    write_single_precision : bool
+        If true, write the transforms and warped images in single precision. Default is True.
 
     Returns:
     --------
@@ -1667,11 +1683,6 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
             Forward composite transform
         'inverse_transform' : str
             Inverse composite transform
-    if apply_transforms, additional keys are:
-        'moving_images_warped' : list of str
-            List of warped moving images
-        'fixed_images_warped' : list of str
-            List of warped fixed images
     """
     if isinstance(fixed_images, str):
         fixed_images = [fixed_images]
@@ -1746,30 +1757,33 @@ def multivariate_pairwise_registration(fixed_images, moving_images, work_dir, fi
     forward_transform = f"{transform_prefix}Composite.h5"
     inverse_transform = f"{transform_prefix}InverseComposite.h5"
 
-    if apply_transforms:
-        fwd_warped_images = list()
-        inv_warped_images = list()
-        for modality_idx in range(num_modalities):
-            moving_image_warped = os.path.join(
-                work_dir, f"{get_nifti_file_prefix(moving_images[modality_idx])}_to_fixed_{modality_idx}_warped.nii.gz")
-            apply_fwd_cmd = ['antsApplyTransforms', '--dimensionality', '3', '--input', moving_images[modality_idx],
-                             '--reference-image', fixed_images[modality_idx], '--output', moving_image_warped,
-                             '--interpolation', 'BSpline', '--transform', forward_transform, '--verbose', '1']
-            run_command(apply_fwd_cmd)
-            fwd_warped_images.append(moving_image_warped)
+    if write_single_precision:
+        # Convert to single precision
+        fwd_transform_single = f"{transform_prefix}Composite_float.h5"
+        inv_transform_single = f"{transform_prefix}InverseComposite_float.h5"
 
-            fixed_image_warped = os.path.join(
-                work_dir, f"{get_nifti_file_prefix(fixed_images[modality_idx])}_to_moving_{modality_idx}_warped.nii.gz")
-            apply_inv_cmd = ['antsApplyTransforms', '--dimensionality', '3', '--input', fixed_images[modality_idx],
-                             '--reference-image', moving_images[modality_idx], '--output', fixed_image_warped,
-                             '--interpolation', 'BSpline', '--transform', inverse_transform, '--verbose', '1']
-            run_command(apply_inv_cmd)
-            inv_warped_images.append(fixed_image_warped)
+        convert_fwd_cmd = [
+            'antsApplyTransforms', '3',
+            '--transform', forward_transform,
+            '--output', f"CompositeTransform[{fwd_transform_single}]",
+            '--float', '1'
+        ]
 
-        return {'forward_transform': forward_transform, 'inverse_transform': inverse_transform,
-                'moving_images_warped': fwd_warped_images, 'fixed_images_warped': inv_warped_images}
-    else:
-        return {'forward_transform': forward_transform, 'inverse_transform': inverse_transform}
+        convert_inv_cmd = [
+            'antsApplyTransforms', '3',
+            '--transform', inverse_transform,
+            '--output', f"CompositeTransform[{inv_transform_single}]",
+            '--float', '1'
+        ]
+
+        run_command(convert_fwd_cmd)
+        run_command(convert_inv_cmd)
+
+        forward_transform = fwd_transform_single
+        inverse_transform = inv_transform_single
+
+
+    return {'forward_transform': forward_transform, 'inverse_transform': inverse_transform}
 
 
 def multivariate_sst_registration(fixed_images, moving_images, work_dir, **kwargs):
@@ -1796,7 +1810,6 @@ def multivariate_sst_registration(fixed_images, moving_images, work_dir, **kwarg
     kwargs.setdefault('iterations', '30x60x70x10')
     kwargs.setdefault('shrink_factors', '4x3x2x1')
     kwargs.setdefault('smoothing_sigmas', '3x2x1x0vox')
-    kwargs.setdefault('apply_transforms', True)
 
     return multivariate_pairwise_registration(fixed_images, moving_images, work_dir, **kwargs)
 
