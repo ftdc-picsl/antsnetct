@@ -87,8 +87,9 @@ def longitudinal_analysis():
     sst_parser.add_argument("--sst-brain-extracted-weight", help="Relative weighting of brain-extracted images in SST "
                             "construction. 0.0 means only use whole-head images, 1.0 means only use brain-extracted images.",
                             type=float, default=0.5)
-    sst_parser.add_argument("--sst-spacing", help="Isotropic spacing for the SST. If not provided, the smallest voxel length "
-                            "from the input images is used.", type=float, default=None)
+    sst_parser.add_argument("--sst-spacing", help="Spacing for the SST. This can either be a single float in mm, or 'native' "
+                            "to retain the native spacing of the input images. By default ('native'), it is a requirement that "
+                            "all input images have the same spacing.", type=str, default='native')
     sst_parser.add_argument("--sst-reg-quick", help="Do quick registration to the SST", action='store_true')
     sst_parser.add_argument("--sst-segmentation-method", help="Segmentation method to use on the SST. Either "
                             "'antspynet_atropos' (antspynet priors, then atropos) or 'antspynet' (no atropos) or "
@@ -113,6 +114,8 @@ def longitudinal_analysis():
                                      "smoothness.", type=float, default=0.05)
     segmentation_parser.add_argument("--atropos-likelihood-model", help="Likelihood model for Atropos. Recommended options are "
                                      "'Gaussian' or 'HistogramParzenWindows'.", type=str, default='Gaussian')
+    segmentation_parser.add_argument("--no-denoise-session-images", help="Do ANTs NLM denoising before segmentation",
+                                     dest='denoise_session_images', action='store_false')
     segmentation_parser.add_argument("--prior-smoothing-sigma", help="Sigma for smoothing the priors before session "
                                      "segmentation, in voxels. Experimental", type=float, default=0)
     segmentation_parser.add_argument("--prior-csf-gamma", help="Gamma value for CSF prior. Experimental",
@@ -304,7 +307,7 @@ def longitudinal_analysis():
             elif args.sst_transform.lower() == 'syn':
                 sst_build_transform = 'SyN[0.2,3,0.5]'
             else:
-                raise ValueError(f"Unknown SST transform {sst_build_transform}")
+                raise ValueError(f"Unknown SST transform {args.sst_transform}")
 
             sess_reg_iterations = sst_build_iterations
             sess_reg_shrink_factors = sst_build_shrink_factors
@@ -314,7 +317,7 @@ def longitudinal_analysis():
             # SST construction
             logger.info("Preprocessing structural images for SST")
             sst_preproc_input = preprocess_sst_input(cx_biascorr_t1w_bids, group_template, group_template_brain_mask,
-                                                     working_dir, sst_isotropic_res=args.sst_spacing)
+                                                    args.sst_spacing, working_dir)
 
             template_weights = [1.0 - args.sst_brain_extracted_weight, args.sst_brain_extracted_weight]
 
@@ -480,10 +483,11 @@ def longitudinal_analysis():
                 # Segment the session
                 logger.info(f"Segmenting session {idx + 1}")
                 seg_n4 = cross_sectional_pipeline.segment_and_bias_correct(
-                    long_preproc_t1w_bids[idx], brain_mask_bids, t1w_priors, working_dir, denoise=True, do_atropos_n4=True,
-                    atropos_n4_iterations=args.atropos_n4_iterations, atropos_iterations=args.atropos_seg_iterations,
-                    atropos_prior_weight=args.atropos_prior_weight, atropos_mrf_weight=args.atropos_mrf_weight,
-                    atropos_likelihood_model=args.atropos_likelihood_model)
+                    long_preproc_t1w_bids[idx], brain_mask_bids, t1w_priors, working_dir, denoise=args.denoise_session_images,
+                    do_atropos_n4=True, atropos_n4_iterations=args.atropos_n4_iterations,
+                    atropos_iterations=args.atropos_seg_iterations, atropos_prior_weight=args.atropos_prior_weight,
+                    atropos_mrf_weight=args.atropos_mrf_weight, atropos_likelihood_model=args.atropos_likelihood_model
+                    )
                 # Compute thickness
                 logger.info(f"Cortical thickness for session {idx + 1}")
                 thickness = cross_sectional_pipeline.cortical_thickness(seg_n4, working_dir,
@@ -538,14 +542,16 @@ def longitudinal_analysis():
                 shutil.copytree(working_dir, debug_workdir, copy_function=shutil.copy)
 
 
-def preprocess_sst_input(cx_biascorr_t1w_bids, group_template, group_template_mask, work_dir, sst_isotropic_res=None):
+def preprocess_sst_input(cx_biascorr_t1w_bids, group_template, group_template_mask, sst_spacing_spec, work_dir):
     """Preprocess the input images for SST construction.
 
     This function preprocesses the input images for SST construction and provides an initial unbiased SST. The SST is
     initialized using rigid registration only.
 
-    The spacing of the SST is isotropic, following the smallest voxel spacing in the input. So if you have images with spacing
-    1x1x1.2 and 0.9x0.9x1 mm, the SST will have spacing 0.9x0.9x0.9 mm. This can be overridden by the sst_isotropic_res option.
+    The spacing of the SST is either the native resolution of the input, or an isotropic spacing specified by the user.
+    If the native resolution is used, it is a requirement that all input images have the same spacing. If an isotropic spacing
+    is specified, the images will be resampled to that spacing. Mixing longitudinal data with different spatial resolutions,
+    or different sequences in general, is not recommended. Consider preprocessing the input with more advanced methods.
 
     The bounding box of the SST is defined such that the whole head is included, with padding. This is done to prevent edge
     effects in registration or cropping of the images during SST construction.
@@ -565,11 +571,12 @@ def preprocess_sst_input(cx_biascorr_t1w_bids, group_template, group_template_ma
         Template image for registration
     group_template_mask : TemplateImage
         Template brain mask
+    sst_spacing_spec : str or float
+        Spacing specificationfor the SST. This can either be a single float describing isotropic spacing in mm, to which the
+        images will be resampled, or 'native' to retain the native spacing of the input images. With 'native', it is a
+        requirement that all input images have the same spacing.
     work_dir : str
         Working directory
-    sst_isotropic_res : float, optional
-        Isotropic resolution for the SST. Default is None, which will use the smallest voxel spacing along any dimension in the
-        input images.
 
     Returns:
     -------
@@ -587,9 +594,26 @@ def preprocess_sst_input(cx_biascorr_t1w_bids, group_template, group_template_ma
     sst_input_t1w_brains = list()
     sst_input_t1w_head_masks = list()
 
-    smallest_input_spacing_scalar = 1.0e6
-
     largest_input_physical_size = [0, 0, 0]
+
+    sst_spacing = None
+
+    if str(sst_spacing_spec).lower() == 'native':
+        # check that all input images have the same spacing
+        for t1w_bids in cx_biascorr_t1w_bids:
+            spacing = ants_helpers.get_image_spacing(t1w_bids.get_path())
+            if sst_spacing is None:
+                sst_spacing = spacing
+            else:
+                if not np.allclose(spacing, sst_spacing, atol=0.01):
+                    raise PipelineError(f"Input images have different spacing: {t1w_bids.get_uri()} has spacing {spacing}, "
+                                        f"expected {sst_spacing}")
+    else:
+        try:
+            sst_isotropic_spacing = float(sst_spacing_spec)
+        except ValueError:
+            raise PipelineError(f"Invalid sst_spacing {sst_spacing_spec}. Must be 'native' or a float.")
+        sst_spacing = [float(sst_isotropic_spacing)] * 3
 
     for t1w_bids in cx_biascorr_t1w_bids:
         # get the T1w image and mask, and reset their origins to the mask centroid
@@ -600,9 +624,6 @@ def preprocess_sst_input(cx_biascorr_t1w_bids, group_template, group_template_ma
         size = ants_helpers.get_image_size(input_t1w_denoised_image)
 
         for idx in range(len(spacing)):
-            if spacing[idx] < smallest_input_spacing_scalar:
-                smallest_input_spacing_scalar = spacing[idx]
-
             physical_size = spacing[idx] * size[idx]
             if physical_size > largest_input_physical_size[idx]:
                 largest_input_physical_size[idx] = physical_size
@@ -676,12 +697,6 @@ def preprocess_sst_input(cx_biascorr_t1w_bids, group_template, group_template_ma
     initial_sst_head = preprocessing.center_fov_on_head(initial_sst_head, initial_sst_head_mask, work_dir, padding=24)
     initial_sst_brain = preprocessing.center_fov_on_head(initial_sst_brain, initial_sst_head_mask, work_dir, padding=24)
 
-    # Resample the SST to isotropic spacing
-    if sst_isotropic_res is None:
-        sst_isotropic_res = smallest_input_spacing_scalar
-
-    sst_spacing = [sst_isotropic_res] * 3
-
     initial_sst_head = ants_helpers.resample_image_by_spacing(initial_sst_head, sst_spacing, work_dir,
                                                               interpolation='Gaussian')
     initial_sst_brain = ants_helpers.resample_image_by_spacing(initial_sst_brain, sst_spacing, work_dir,
@@ -722,6 +737,9 @@ def get_antsnet_sst_segmentation_priors(sst_bids, work_dir, prior_smoothing_sigm
         List of segmentation priors, in the order CSF, CGM, WM, SGM, BS, CBM
 
     """
+    # We don't really want to denoise the SST, but that will not happen unless using the legacy network
+    # Bias-correction is also probably unnecessary, but may not make a big difference - need to experiment
+    # Turning off N4 would require upstream changes in antspynet
     deep_atropos = ants_helpers.deep_atropos(sst_bids.get_path(), work_dir, use_legacy_network=use_legacy_deep_atropos)
 
     posteriors = deep_atropos['posteriors']
@@ -740,6 +758,7 @@ def get_antsnet_sst_segmentation_priors(sst_bids, work_dir, prior_smoothing_sigm
         atropos_prior_images = posteriors
 
     return atropos_prior_images
+
 
 def get_cx_sst_segmentation_priors(sst_bids, cx_t1w_preproc_bids, cx_sst_transforms, work_dir, prior_csf_gamma=0,
                                    prior_smoothing_sigma=0):
