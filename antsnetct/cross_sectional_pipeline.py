@@ -189,6 +189,8 @@ def cross_sectional_analysis():
     segmentation_parser.add_argument('--segmentation-template-res', help="Resolution of the segmentation template, eg '01', "
                                      "'02', etc. Note this is a templateflow index and not a physical spacing. If the selected "
                                      "template does not define multiple resolutions, this is ignored.", type=str, default='01')
+    segmentation_parser.add_argument("--no-denoise-session-images", help="Do ANTs NLM denoising before segmentation",
+                                     dest='denoise_session_images', action='store_false')
     segmentation_parser.add_argument("--do-ants-atropos-n4", help="Run antsAtroposN4.sh. If this is specified, the "
                                      "segmentation defined by the segmentation dataset, atlas, or deep_atropos is used as a "
                                      "prior.", action='store_true')
@@ -364,7 +366,8 @@ def cross_sectional_analysis():
                                                   atropos_iterations=args.atropos_seg_iterations,
                                                   atropos_prior_weight=args.atropos_prior_weight,
                                                   atropos_mrf_weight=args.atropos_mrf_weight,
-                                                  atropos_likelihood_model=args.atropos_likelihood_model)
+                                                  atropos_likelihood_model=args.atropos_likelihood_model,
+                                                  denoise=args.denoise_session_images)
 
                 if args.longitudinal_preproc:
                     logger.info("Skipping thickness and template registration steps")
