@@ -87,9 +87,8 @@ def longitudinal_analysis():
     sst_parser.add_argument("--sst-brain-extracted-weight", help="Relative weighting of brain-extracted images in SST "
                             "construction. 0.0 means only use whole-head images, 1.0 means only use brain-extracted images.",
                             type=float, default=0.5)
-    sst_parser.add_argument("--sst-spacing", help="Spacing for the SST. This can either be a single float in mm, or 'native' "
-                            "to retain the native spacing of the input images. By default ('native'), it is a requirement that "
-                            "all input images have the same spacing.", type=str, default='native')
+    sst_parser.add_argument("--sst-spacing", help="Spacing for the SST. This can either be a single float in mm, or 'average' "
+                            "to retain the average spacing of the input images.", type=str, default='average')
     sst_parser.add_argument("--sst-reg-quick", help="Do quick registration to the SST", action='store_true')
     sst_parser.add_argument("--sst-segmentation-method", help="Segmentation method to use on the SST. Either "
                             "'antspynet_atropos' (antspynet priors, then atropos) or 'antspynet' (no atropos) or "
@@ -548,10 +547,9 @@ def preprocess_sst_input(cx_biascorr_t1w_bids, group_template, group_template_ma
     This function preprocesses the input images for SST construction and provides an initial unbiased SST. The SST is
     initialized using rigid registration only.
 
-    The spacing of the SST is either the native resolution of the input, or an isotropic spacing specified by the user.
-    If the native resolution is used, it is a requirement that all input images have the same spacing. If an isotropic spacing
-    is specified, the images will be resampled to that spacing. Mixing longitudinal data with different spatial resolutions,
-    or different sequences in general, is not recommended. Consider preprocessing the input with more advanced methods.
+    The spacing of the SST is either the average resolution of the input, or an isotropic spacing specified by the user.
+    Mixing longitudinal data with different spatial resolutions, or different sequences in general, is not recommended.
+    Consider preprocessing the input with more advanced methods.
 
     The bounding box of the SST is defined such that the whole head is included, with padding. This is done to prevent edge
     effects in registration or cropping of the images during SST construction.
@@ -573,8 +571,7 @@ def preprocess_sst_input(cx_biascorr_t1w_bids, group_template, group_template_ma
         Template brain mask
     sst_spacing_spec : str or float
         Spacing specificationfor the SST. This can either be a single float describing isotropic spacing in mm, to which the
-        images will be resampled, or 'native' to retain the native spacing of the input images. With 'native', it is a
-        requirement that all input images have the same spacing.
+        images will be resampled, or 'average' to retain the average spacing of the input images.
     work_dir : str
         Working directory
 
@@ -598,21 +595,20 @@ def preprocess_sst_input(cx_biascorr_t1w_bids, group_template, group_template_ma
 
     sst_spacing = None
 
-    if str(sst_spacing_spec).lower() == 'native':
+    if str(sst_spacing_spec).lower() == 'average':
         # check that all input images have the same spacing
+        session_spacings = list()
+
         for t1w_bids in cx_biascorr_t1w_bids:
-            spacing = ants_helpers.get_image_spacing(t1w_bids.get_path())
-            if sst_spacing is None:
-                sst_spacing = spacing
-            else:
-                if not np.allclose(spacing, sst_spacing, atol=0.01):
-                    raise PipelineError(f"Input images have different spacing: {t1w_bids.get_uri()} has spacing {spacing}, "
-                                        f"expected {sst_spacing}")
+            session_spacings.append(ants_helpers.get_image_spacing(t1w_bids.get_path()))
+
+        sst_spacing = [float(np.mean([s[idx] for s in session_spacings])) for idx in range(3)]
+
     else:
         try:
             sst_isotropic_spacing = float(sst_spacing_spec)
         except ValueError:
-            raise PipelineError(f"Invalid sst_spacing {sst_spacing_spec}. Must be 'native' or a float.")
+            raise PipelineError(f"Invalid sst_spacing {sst_spacing_spec}. Must be 'average' or a float.")
         sst_spacing = [float(sst_isotropic_spacing)] * 3
 
     for t1w_bids in cx_biascorr_t1w_bids:
